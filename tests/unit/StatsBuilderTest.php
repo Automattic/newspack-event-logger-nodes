@@ -2524,20 +2524,20 @@ final class StatsBuilderTest extends TestCase {
 	public function test_the_url_recompute_read_seeks_requests_url(): void {
 		$this->window_world();
 		$this->seed_requests( [ [ 'url' => self::KEA_URL, 'server' => 'kea.example', 'ms' => 413.25 ] ] );
-		$sql  = Core::as_string( ( new \ReflectionMethod( Stats_Builder_Node::class, 'url_window_sql' ) )->invoke( null, 2 ) );
+		$sql  = self::url_window_sql( self::urls_named( 2 ) );
 		$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $sql, 'p0' ), [ 1, 2, 3, \PHP_INT_MAX ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH p0\.requests USING COVERING INDEX requests_url \(url_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
 	}
 
-	/** A rebuild reads every URL's rows in the window through `requests_cover`. */
-	public function test_the_url_rebuild_read_seeks_requests_cover(): void {
+	/** A rebuild batch reads its run of URLs' rows in the window through `requests_url`. */
+	public function test_the_url_rebuild_read_seeks_requests_url(): void {
 		$this->window_world();
 		$this->seed_requests( [ [ 'url' => self::KEA_URL, 'server' => 'kea.example', 'ms' => 413.25 ] ] );
-		$sql  = Core::as_string( ( new \ReflectionMethod( Stats_Builder_Node::class, 'url_window_sql' ) )->invoke( null, 0 ) );
-		$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $sql, 'p0' ), [ 1, \PHP_INT_MAX ] ) );
+		$sql  = self::url_window_sql( 'url_id BETWEEN ? AND ?' );
+		$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $sql, 'p0' ), [ 1, 1000, 7, \PHP_INT_MAX ] ) );
 
-		$this->assertMatchesRegularExpression( '/SEARCH p0\.requests USING COVERING INDEX requests_cover \(bucket>\? AND bucket<\?\)/', $plan );
+		$this->assertMatchesRegularExpression( '/SEARCH p0\.requests USING COVERING INDEX requests_url \(url_id>\? AND url_id<\?\)/', $plan );
 	}
 
 	/**
@@ -2608,6 +2608,245 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( [ 'hook:kaka_init' => [ 6.75, 2, 1 ] ], $this->window() );
 		$this->assertSame( $this->url_window_from_requests(), $this->url_window() );
 		$this->assertCount( 1, $this->url_window() );
+	}
+
+	/** A private constant of the builder. */
+	private static function builder_const( string $name ): int {
+		return Core::as_int( ( new \ReflectionClassConstant( Stats_Builder_Node::class, $name ) )->getValue() );
+	}
+
+	/** A recompute read naming a whole chunk binds no more than SQLite's lowest limit. */
+	public function test_a_full_recompute_read_binds_at_most_999_variables(): void {
+		$sql = self::url_window_sql( self::urls_named( self::builder_const( 'URLS_PER_READ' ) ) );
+
+		$this->assertLessThanOrEqual( 999, \substr_count( $sql, '?' ) );
+	}
+
+	/** The builder's per-URL `requests` read over the URLs `$urls` names. */
+	private static function url_window_sql( string $urls ): string {
+		return Core::as_string( ( new \ReflectionMethod( Stats_Builder_Node::class, 'url_window_sql' ) )->invoke( null, $urls ) );
+	}
+
+	/** The builder's predicate naming `$count` URLs by id. */
+	private static function urls_named( int $count ): string {
+		return Core::as_string( ( new \ReflectionMethod( Stats_Builder_Node::class, 'urls_named' ) )->invoke( null, $count ) );
+	}
+
+	/** A predicate names exactly the ids it binds, a list never read as a range. */
+	public function test_a_predicate_naming_two_urls_is_a_list(): void {
+		$this->assertSame( 'url_id IN ( ?, ? )', self::urls_named( 2 ) );
+	}
+
+	/**
+	 * One expiring bucket holding the max of more URLs than one recompute
+	 * read names recomputes every one of them, across the chunks.
+	 */
+	public function test_an_expiry_moving_more_urls_than_one_read_names_recomputes_them_all(): void {
+		$this->window_world();
+		$moved  = self::builder_const( 'URLS_PER_READ' ) + 2;
+		$oldest = Bucket::id( self::NOW ) - Bucket::window() + 1;
+		$rows   = [];
+		foreach ( \range( 1, $moved ) as $i ) {
+			$url    = "https://kea.example/moa-{$i}";
+			$rows[] = [ 'url' => $url, 'server' => 'kea.example', 'bucket' => $oldest, 'ms' => 900.5 + $i, 'peak_mb' => 60.25 ];
+			$rows[] = [ 'url' => $url, 'server' => 'kea.example', 'bucket' => Bucket::id( self::NOW ), 'ms' => 40.75 + $i, 'peak_mb' => 12.5 ];
+		}
+		$this->seed_requests( $rows );
+		$this->seed_url_window( 0, $oldest - 1 );
+		$sb = $this->window_builder();
+		$sb->flush();
+
+		Core::$now += Bucket::SECONDS;
+		$sb->flush();
+
+		$window = $this->url_window();
+		$this->assertCount( $moved, $window );
+		$this->assertSame( $this->url_window_from_requests(), $window );
+		$this->assertSame( [ 1, 1, 1, 0, 0, 0, 0, 41.75, 12.5, 41.75, 41.75, 12.5 ], \array_slice( $window['/moa-1 0'], 0, 12 ) );
+	}
+
+	/**
+	 * More URLs than one rebuild batch covers, each with requests in the
+	 * window and a URL window row carrying sums no request backs.
+	 *
+	 * @return int The URLs seeded.
+	 */
+	private function seed_urls_past_one_rebuild_batch(): int {
+		$urls = self::builder_const( 'URLS_PER_REBUILD' ) + 3;
+		$rows = [];
+		foreach ( \range( 1, $urls ) as $i ) {
+			$url    = "https://kea.example/huia-{$i}";
+			$rows[] = [ 'url' => $url, 'server' => 'kea.example', 'bucket' => Bucket::id( self::NOW ) - 3, 'ms' => 310.25 + $i, 'peak_mb' => 33.5, 'status' => 404 ];
+			$rows[] = [ 'url' => $url, 'server' => 'kea.example', 'bucket' => Bucket::id( self::NOW ), 'ms' => 7.125, 'peak_mb' => 81.75, 'worker' => $i % 2 ];
+		}
+		$this->seed_requests( $rows );
+		$this->seed_url_window( 0, Bucket::id( self::NOW ) - Bucket::window() );
+		$pdo = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
+		$pdo->exec( 'UPDATE urls_window SET count = count + 7, sum_ms = sum_ms + 999.0, min_ms = 1.5, max_ms = 9999.0' );
+		$pdo->exec( 'DELETE FROM window_expiry' );
+		return $urls;
+	}
+
+	/** A rebuild over more URLs than one batch covers equals `requests`. */
+	public function test_a_rebuild_past_one_batch_equals_requests(): void {
+		$this->window_world();
+		$urls = $this->seed_urls_past_one_rebuild_batch();
+
+		$this->window_builder()->flush();
+
+		$window = $this->url_window();
+		$this->assertCount( 2 * $urls - (int) \floor( $urls / 2 ), $window );
+		$this->assertSame( $this->url_window_from_requests(), $window );
+	}
+
+	/**
+	 * A rebuild writes one batch per run of URLs and its watermark last, so
+	 * a reader after a batch and before the last reads `requests`, and a
+	 * rebuild stopped between them finishes on the next start.
+	 */
+	public function test_a_reader_between_rebuild_batches_reads_requests(): void {
+		$this->window_world();
+		$this->seed_urls_past_one_rebuild_batch();
+		$last = self::builder_const( 'URLS_PER_REBUILD' );
+		$pdo  = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
+		$pdo->exec( "CREATE TRIGGER second_batch BEFORE INSERT ON urls_window WHEN NEW.url_id > ( SELECT id FROM urls ORDER BY id LIMIT 1 OFFSET {$last} - 1 ) BEGIN SELECT RAISE( ABORT, 'second batch refused' ); END" );
+		$sb   = $this->window_builder();
+		$spec = [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [], 'measure' => [ 'count', 'max_ms', 'sum_peak_mb' ], 'buckets' => Bucket::last( Bucket::window(), self::NOW ), 'sort' => 'url', 'limit' => Stats_Query::MAX_LIMIT, 'now' => self::NOW ];
+
+		try {
+			$sb->flush();
+			$this->fail( 'the second batch was written' );
+		} catch ( Worker_Should_Stop $e ) {
+			$why = '';
+			for ( $at = $e; null !== $at; $at = $at->getPrevious() ) {
+				$why .= $at->getMessage() . ' ';
+			}
+			$this->assertStringContainsString( 'second batch refused', $why );
+		}
+
+		$through = Bucket::id( self::NOW ) - Bucket::window();
+		$first   = \array_slice( $this->url_rows( 'SELECT u.path, r.worker, ' . self::URL_WINDOW_OF_REQUESTS . " FROM p0.requests AS r JOIN p0.urls AS u ON u.id = r.url_id WHERE r.bucket > {$through} GROUP BY u.path, r.worker ORDER BY u.path, r.worker" ), 0, 3 );
+		$this->assertCount( 3, $first );
+		$this->assertSame( $first, \array_intersect_key( $this->raw_url_window(), $first ), 'the first batch is written' );
+		$this->assertSame( [ [ null ] ], $this->facts( 'SELECT MAX( bucket ) FROM window_expiry' ), 'no watermark until the last batch' );
+		$between = Stats_Query::run( $spec );
+		$this->assertSame( 'requests', $between['table'] );
+
+		$pdo->exec( 'DROP TRIGGER second_batch' );
+		$this->restarted( $sb )->flush();
+
+		$after = Stats_Query::run( $spec );
+		$this->assertSame( 'urls_window', $after['table'] );
+		$this->assertSame( $between['rows'], $after['rows'] );
+		$this->assertSame( $this->url_window_from_requests(), $this->url_window() );
+	}
+
+	/**
+	 * More `timings_site` groups on one server than one rebuild batch holds,
+	 * a few on a second server, and a category window holding each group's
+	 * sums plus 999 ms no timing backs, with no watermark.
+	 *
+	 * @return int The groups seeded.
+	 */
+	private function seed_groups_past_one_rebuild_batch(): int {
+		$rows = [];
+		foreach ( \range( 1, 81 ) as $c ) {
+			foreach ( \range( 0, 24 ) as $e ) {
+				foreach ( [ 0, 1 ] as $worker ) {
+					$rows[] = [ 'bucket' => Bucket::id( self::NOW ) - 2, 'server' => 'kea.example', 'worker' => $worker, 'category' => "hook:huia_{$c}", 'entry' => 0 === $e ? '' : "entry-{$e}", 'ms' => 2.5 * $c + $e, 'calls' => 3, 'requests' => 2 ];
+				}
+			}
+		}
+		$rows[] = [ 'bucket' => Bucket::id( self::NOW ) - 5, 'server' => 'kea.example', 'worker' => 0, 'category' => 'hook:huia_1', 'entry' => '', 'ms' => 41.25, 'calls' => 7, 'requests' => 4 ];
+		$rows[] = [ 'bucket' => Bucket::id( self::NOW ), 'server' => 'tui.example', 'worker' => 1, 'category' => 'hook:kokako_init', 'entry' => '', 'ms' => 13.75, 'calls' => 5, 'requests' => 3 ];
+		$this->seed_site_timings( $rows );
+		$pdo = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
+		$pdo->exec( 'INSERT INTO category_window SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ) + 999.0, SUM( calls ), SUM( requests ), MAX( bucket ) FROM timings_site GROUP BY server_id, category_id, entry_id, listener, worker' );
+		return \count( $rows ) - 1;
+	}
+
+	/**
+	 * The category window's live rows, or `timings_site` summed over the
+	 * buckets after `$through`, by server, category, entry, listener and
+	 * worker ids.
+	 *
+	 * @param bool $from_timings Whether to sum `timings_site`.
+	 * @param int  $through      The bucket the window starts after.
+	 * @return list<list<mixed>>
+	 */
+	private function category_rows( bool $from_timings, int $through ): array {
+		$sql = $from_timings
+			? 'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM timings_site WHERE bucket > ? GROUP BY server_id, category_id, entry_id, listener, worker ORDER BY 1, 2, 3, 4, 5'
+			: 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM category_window WHERE last_bucket > ? AND requests > 0 ORDER BY 1, 2, 3, 4, 5';
+		$stmt = ( new \PDO( 'sqlite:' . $this->facts_file( 0 ) ) )->prepare( $sql );
+		$stmt->execute( [ $through ] );
+		return $stmt->fetchAll( \PDO::FETCH_NUM );
+	}
+
+	/** A category rebuild batch seeks its rows by key, never scanning past them. */
+	public function test_the_category_rebuild_reads_seek_their_keys(): void {
+		$this->window_world();
+		$this->seed_groups_past_one_rebuild_batch();
+		$sql   = static fn ( string $name ): string => \sprintf( Core::as_string( ( new \ReflectionClassConstant( Stats_Builder_Node::class, $name ) )->getValue() ), 'p0' );
+		$spend = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, $sql( 'CATEGORY_PAGE' ), [ 1, 2, 3, 0, 4000 ] ) );
+		$sums  = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, $sql( 'GROUP_PAGE' ), [ 1, 7, \PHP_INT_MAX, 2, 3, 0, 0, 4000 ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH p0\.category_window USING INDEX sqlite_autoindex_category_window_1 \(\(server_id,category_id,entry_id,worker\)>\(\?,\?,\?,\?\)\)/', $spend );
+		$this->assertMatchesRegularExpression( '/SEARCH p0\.timings_site USING INDEX sqlite_autoindex_timings_site_1 \(server_id=\? AND bucket>\? AND bucket<\?\)/', $sums );
+	}
+
+	/** A category rebuild over more groups than one batch holds equals `timings_site`. */
+	public function test_a_category_rebuild_past_one_batch_equals_timings_site(): void {
+		$this->window_world();
+		$groups  = $this->seed_groups_past_one_rebuild_batch();
+		$through = Bucket::id( self::NOW ) - Bucket::window();
+		$this->assertGreaterThan( self::builder_const( 'REBUILD_OPS' ), $groups );
+
+		$this->window_builder()->flush();
+
+		$window = $this->category_rows( false, $through );
+		$this->assertCount( $groups, $window );
+		$this->assertSame( $this->category_rows( true, $through ), $window );
+		$this->assertSame( [ [ $through ] ], $this->facts( 'SELECT MAX( bucket ) FROM window_expiry' ) );
+	}
+
+	/**
+	 * A reader after one category rebuild batch and before the last reads
+	 * `timings_site`, and a rebuild stopped between them finishes on the
+	 * next start.
+	 */
+	public function test_a_reader_between_category_rebuild_batches_reads_timings_site(): void {
+		$this->window_world();
+		$this->seed_groups_past_one_rebuild_batch();
+		$through = Bucket::id( self::NOW ) - Bucket::window();
+		$pdo     = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
+		$pdo->exec( "CREATE TRIGGER last_category BEFORE INSERT ON category_window WHEN NEW.requests > 0 AND NEW.category_id = ( SELECT id FROM categories WHERE name = 'hook:huia_81' ) BEGIN SELECT RAISE( ABORT, 'second category batch refused' ); END" );
+		$sb = $this->window_builder();
+
+		try {
+			$sb->flush();
+			$this->fail( 'the category batch holding hook:huia_81 was written' );
+		} catch ( Worker_Should_Stop $e ) {
+			$why = '';
+			for ( $at = $e; null !== $at; $at = $at->getPrevious() ) {
+				$why .= $at->getMessage() . ' ';
+			}
+			$this->assertStringContainsString( 'second category batch refused', $why );
+		}
+
+		$first = \array_slice( $this->category_rows( true, $through ), 0, 3 );
+		$this->assertSame( $first, \array_slice( $this->category_rows( false, $through ), 0, 3 ), 'the first batch is written' );
+		$this->assertSame( [ [ null ] ], $this->facts( 'SELECT MAX( bucket ) FROM window_expiry' ), 'no watermark until the last batch' );
+		$between = $this->span_ranking();
+		$this->assertSame( 'timings_site', $between['table'] );
+
+		$pdo->exec( 'DROP TRIGGER last_category' );
+		$this->restarted( $sb )->flush();
+
+		$after = $this->span_ranking();
+		$this->assertSame( 'category_window', $after['table'] );
+		$this->assertSame( $between['rows'], $after['rows'] );
+		$this->assertSame( $this->category_rows( true, $through ), $this->category_rows( false, $through ) );
 	}
 
 	/**

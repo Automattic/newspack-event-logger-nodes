@@ -6,24 +6,40 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.127.0.** Below it the plugin goes
+  dormant behind an admin notice naming both versions. Update the
+  substrate first.
 - **The stats schema is version 11, and a site refills its stats once.** The
   `flame-facts` Row_Table gains `pages`, `timings_page` and `urls_window`,
   its `requests_url` index widens, and `category_window` is keyed by
-  server. A
-  builder that opens a version 9 or 10 file discards it and starts empty,
-  so every chart and table reads only what the builder has written since.
-  Refill them from the retained flames as the version 9 step below does:
-  `wp nodes stop`, delete each `flames:consumer` cursor, then
-  `wp nodes start`. A `query` naming a page and no URL now answers `table`
-  `timings_page` rather than `timings`, and a whole-window `timings` query
-  grouped or filtered by `server` answers `category_window` rather than
+  server. A builder that opens a version 9 file, or a development build's
+  version 10, discards it and starts empty, so every chart and table reads
+  only what the builder has written since. To refill them from the
+  retained flames, hold the fleet with `wp nodes stop`, delete each
+  `flames:consumer` cursor, the directory
+  `<config:offsets_dir>/<topology>.flames.p{partition}` of every
+  partition, and lift the hold with `wp nodes start`. The consumer then
+  starts with no cursor and reads every flame `flames.pN` keeps, which
+  covers the same `min_lifetime` span the stats keep. A flame whose record
+  `requests.pN` has pruned is skipped and counted as `records_gone`.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`
+  also refills them, but it deletes every cursor, so the request builder
+  re-reads the retained firehose and, on `complete`, the job router runs
+  again every retained job younger than the `jobs:sieve` window. A
+  `query` naming a page and no URL now answers `table` `timings_page`
+  rather than `timings`, and a whole-window `timings` query grouped or
+  filtered by `server` answers `category_window` rather than
   `timings_site`. A whole-window `requests` query naming only `url`,
   `page`, `server` and `worker` and measuring only what a URL row of the
   `urls` reply carries, or the distinct `urls` and `pages`, answers
-  `table` `urls_window` rather than
-  `requests`, with the same rows, unless `requests_hourly` answers it, and
-  only while every partition's window has expired through the bucket
-  before the range and holds no row past its end.
+  `table` `urls_window` rather than `requests`, unless `requests_hourly`
+  answers it, and only while every partition's window has expired through
+  the bucket before the range and holds no row past its end. Its counts,
+  extremes and distinct counts equal what `requests` answers; its sums
+  agree to floating-point rounding, since they are added in another order.
+
+## 0.153.0
+
 - **The stats schema is version 9, and a site refills its stats once.** The
   `flame-facts` Row_Table gains `owners`, `owner_timings` and
   `owner_timings_site`. A builder that opens a version 8 file discards it
@@ -55,6 +71,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   The snapshot carries no `owners`, and `OwnerTable` renders nothing for a
   missing list, so the table appears when the overview-prefetch job next
   builds a snapshot.
+
+## 0.152.0
 
 - **Every label that names code leads with its owner.** A wrapped
   listener's category, the `l` of an SQL or HTTP span and a `trace_hooks`

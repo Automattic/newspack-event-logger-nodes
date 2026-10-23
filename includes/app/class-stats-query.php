@@ -50,7 +50,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * an order of its own answers beside the first, from the one statement.
  *
  * @phpstan-type Also array{sort:string, order:string, limit:int}
- * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>,2:?string,3:list<string>}>, ids?:array<string,array{0:string,1:string}>}
+ * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>}>, folds:array<string,array{0:string,1:list<string>}>, ids?:array<string,array{0:string,1:string}>}
  * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also, now:?int}
  */
 final class Stats_Query {
@@ -105,12 +105,6 @@ final class Stats_Query {
 	/** Fields holding integers, so a filter's digits bind as one. */
 	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'profiled', 'listener' ];
 
-	/** The fields `requests_hourly` answers exactly. */
-	private const HOURLY_FIELDS = [ 'hour', 'day', 'server', 'status_class', 'method', 'worker', 'country' ];
-
-	/** The measures `requests_hourly` answers exactly. */
-	private const HOURLY_MEASURES = [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'sum_peak_mb', 'avg_peak_mb', 'errors', 'error_rate' ];
-
 	/** Buckets an hour holds. */
 	private const BUCKETS_PER_HOUR = Bucket::HOUR_SECONDS / Bucket::SECONDS;
 
@@ -123,17 +117,15 @@ final class Stats_Query {
 	/** A status code the builder reads a status class from, as SQL. */
 	private const KNOWN_STATUS = 't.status BETWEEN ' . Stats_Builder_Node::STATUS_MIN . ' AND ' . Stats_Builder_Node::STATUS_MAX;
 
-	/** A measure's aggregate over the arm inputs, in its `measures` tuple. */
-	private const AGGREGATE = 0;
+	/**
+	 * A measure's expression: in its `measures` tuple, its aggregate over the
+	 * arm inputs; in its `folds` tuple, its fold over the per-partition
+	 * partials `q_<name>`.
+	 */
+	private const EXPRESSION = 0;
 
-	/** The arm inputs that aggregate reads. */
-	private const INPUTS = 1;
-
-	/** Its fold over the per-partition partials, null where none composes. */
-	private const COMPOSED = 2;
-
-	/** The measures whose partials that fold reads. */
-	private const FOLDS = 3;
+	/** What that expression reads: arm inputs, or the measures folded. */
+	private const READS = 1;
 
 	/** The measures reading each group's timed requests ranked by `ms`. */
 	private const RANKED = [ 'p50_ms', 'p95_ms', 'p99_ms' ];
@@ -218,11 +210,20 @@ final class Stats_Query {
 
 	/** The timings measures, over either timings or either owner table's arm inputs. */
 	private const TIMING_MEASURES = [
-		'ms'        => [ 'TOTAL( m_ms )', [ 'ms' ], 'TOTAL( q_ms )', [ 'ms' ] ],
-		'calls'     => [ 'COALESCE( SUM( m_calls ), 0 )', [ 'calls' ], 'COALESCE( SUM( q_calls ), 0 )', [ 'calls' ] ],
-		'requests'  => [ 'COALESCE( SUM( m_requests ), 0 )', [ 'requests' ], 'COALESCE( SUM( q_requests ), 0 )', [ 'requests' ] ],
-		'avg_ms'    => [ 'SUM( m_ms ) / NULLIF( SUM( m_requests ), 0 )', [ 'ms', 'requests' ], 'SUM( q_ms ) / NULLIF( SUM( q_requests ), 0 )', [ 'ms', 'requests' ] ],
-		'avg_calls' => [ 'CAST( SUM( m_calls ) AS REAL ) / NULLIF( SUM( m_requests ), 0 )', [ 'calls', 'requests' ], 'CAST( SUM( q_calls ) AS REAL ) / NULLIF( SUM( q_requests ), 0 )', [ 'calls', 'requests' ] ],
+		'ms'        => [ 'TOTAL( m_ms )', [ 'ms' ] ],
+		'calls'     => [ 'COALESCE( SUM( m_calls ), 0 )', [ 'calls' ] ],
+		'requests'  => [ 'COALESCE( SUM( m_requests ), 0 )', [ 'requests' ] ],
+		'avg_ms'    => [ 'SUM( m_ms ) / NULLIF( SUM( m_requests ), 0 )', [ 'ms', 'requests' ] ],
+		'avg_calls' => [ 'CAST( SUM( m_calls ) AS REAL ) / NULLIF( SUM( m_requests ), 0 )', [ 'calls', 'requests' ] ],
+	];
+
+	/** The timings measures' folds, for every timings and owner table. */
+	private const TIMING_FOLDS = [
+		'ms'        => [ 'TOTAL( q_ms )', [ 'ms' ] ],
+		'calls'     => [ 'COALESCE( SUM( q_calls ), 0 )', [ 'calls' ] ],
+		'requests'  => [ 'COALESCE( SUM( q_requests ), 0 )', [ 'requests' ] ],
+		'avg_ms'    => [ 'SUM( q_ms ) / NULLIF( SUM( q_requests ), 0 )', [ 'ms', 'requests' ] ],
+		'avg_calls' => [ 'CAST( SUM( q_calls ) AS REAL ) / NULLIF( SUM( q_requests ), 0 )', [ 'calls', 'requests' ] ],
 	];
 
 	/** The timing inputs either timings table's arm projects. */
@@ -248,6 +249,7 @@ final class Stats_Query {
 		],
 		'inputs'   => self::TIMING_INPUTS,
 		'measures' => self::TIMING_MEASURES,
+		'folds'    => self::TIMING_FOLDS,
 	];
 
 	/**
@@ -256,14 +258,14 @@ final class Stats_Query {
 	 * where nothing was timed, as `requests` answers it.
 	 */
 	private const SUMMED = [
-		'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
-		'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
-		'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
-		'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
-		'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
-		'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
-		'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
-		'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+		'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ] ],
+		'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ] ],
+		'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ] ],
+		'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
+		'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ] ],
+		'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ] ],
+		'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
+		'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ] ],
 	];
 
 	/**
@@ -273,8 +275,33 @@ final class Stats_Query {
 	 * whole.
 	 */
 	private const DISTINCT = [
-		'urls'  => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
-		'pages' => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ], null, [] ],
+		'urls'  => [ 'COUNT( DISTINCT m_url )', [ 'url' ] ],
+		'pages' => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ] ],
+	];
+
+	/**
+	 * Each request measure's fold, which depends on the measure alone, so
+	 * one table serves `requests`, `requests_hourly` and `urls_window`; a
+	 * measure it lacks composes from no partials.
+	 */
+	private const REQUEST_FOLDS = [
+		'count'       => [ 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
+		'timed'       => [ 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
+		'sum_ms'      => [ 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
+		'avg_ms'      => [ 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
+		'max_ms'      => [ 'MAX( q_max_ms )', [ 'max_ms' ] ],
+		'min_ms'      => [ 'MIN( q_min_ms )', [ 'min_ms' ] ],
+		'sum_peak_mb' => [ 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
+		'avg_peak_mb' => [ 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
+		'max_peak_mb' => [ 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
+		'errors'      => [ 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+		'error_rate'  => [ 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
+		'last_seen'   => [ 'MAX( q_last_seen )', [ 'last_seen' ] ],
+		'count_2xx'   => [ 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
+		'count_3xx'   => [ 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
+		'count_4xx'   => [ 'COALESCE( SUM( q_count_4xx ), 0 )', [ 'count_4xx' ] ],
+		'count_5xx'   => [ 'COALESCE( SUM( q_count_5xx ), 0 )', [ 'count_5xx' ] ],
+		'worker'      => [ 'MAX( q_worker )', [ 'worker' ] ],
 	];
 
 	/** The stored sums `SUMMED` reads, as an arm projects them. */
@@ -309,11 +336,9 @@ final class Stats_Query {
 	 * `e`: the column its bucket ranges read and how many buckets one of its
 	 * units holds; each field's expression; the join a field or input needs, by
 	 * name, or the joins in order, as `urls_window`'s server reads its URL's;
-	 * each input an arm projects as `m_<name>`; and each measure's
-	 * aggregate over those inputs, with the inputs it reads, its
-	 * `{error_kinds}` the builder's `ERROR_KINDS`, then its fold over the
-	 * per-partition partials `q_<name>`, null where none composes, with the
-	 * measures whose partials that fold reads.
+	 * each input an arm projects as `m_<name>`; each measure's aggregate
+	 * over those inputs, with the inputs it reads, its `{error_kinds}` the
+	 * builder's `ERROR_KINDS`; and the `folds` its measures compose by.
 	 */
 	private const TABLES = [
 		'requests'           => [
@@ -365,29 +390,30 @@ final class Stats_Query {
 				'method'      => 't.method',
 			],
 			'measures' => [
-				'count'       => [ 'COUNT( * )', [], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
-				'timed'       => [ 'COUNT( m_ms )', [ 'ms' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
-				'sum_ms'      => [ 'TOTAL( m_ms )', [ 'ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
-				'avg_ms'      => [ 'AVG( m_ms )', [ 'ms' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
-				'max_ms'      => [ 'MAX( m_ms )', [ 'ms' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
-				'min_ms'      => [ 'MIN( m_ms )', [ 'ms' ], 'MIN( q_min_ms )', [ 'min_ms' ] ],
-				'p50_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 50 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
-				'p95_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 95 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
-				'p99_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 99 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
-				'sum_peak_mb' => [ 'TOTAL( m_peak_mb )', [ 'peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
-				'avg_peak_mb' => [ 'AVG( m_peak_mb )', [ 'peak_mb' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
-				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
-				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
-				'error_rate'  => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END ) * 1.0 / NULLIF( COUNT( * ), 0 )', [ 'error' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
+				'count'       => [ 'COUNT( * )', [] ],
+				'timed'       => [ 'COUNT( m_ms )', [ 'ms' ] ],
+				'sum_ms'      => [ 'TOTAL( m_ms )', [ 'ms' ] ],
+				'avg_ms'      => [ 'AVG( m_ms )', [ 'ms' ] ],
+				'max_ms'      => [ 'MAX( m_ms )', [ 'ms' ] ],
+				'min_ms'      => [ 'MIN( m_ms )', [ 'ms' ] ],
+				'p50_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 50 + 99 ) / 100 THEN m_ms END )', [ 'ms' ] ],
+				'p95_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 95 + 99 ) / 100 THEN m_ms END )', [ 'ms' ] ],
+				'p99_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 99 + 99 ) / 100 THEN m_ms END )', [ 'ms' ] ],
+				'sum_peak_mb' => [ 'TOTAL( m_peak_mb )', [ 'peak_mb' ] ],
+				'avg_peak_mb' => [ 'AVG( m_peak_mb )', [ 'peak_mb' ] ],
+				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ] ],
+				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ] ],
+				'error_rate'  => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END ) * 1.0 / NULLIF( COUNT( * ), 0 )', [ 'error' ] ],
 				'urls'        => self::DISTINCT['urls'],
 				'pages'       => self::DISTINCT['pages'],
-				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
-				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
-				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
-				'count_4xx'   => [ 'COUNT( CASE WHEN m_class = 4 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_4xx ), 0 )', [ 'count_4xx' ] ],
-				'count_5xx'   => [ 'COUNT( CASE WHEN m_class = 5 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_5xx ), 0 )', [ 'count_5xx' ] ],
-				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
+				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ] ],
+				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ] ],
+				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ] ],
+				'count_4xx'   => [ 'COUNT( CASE WHEN m_class = 4 THEN 1 END )', [ 'class' ] ],
+				'count_5xx'   => [ 'COUNT( CASE WHEN m_class = 5 THEN 1 END )', [ 'class' ] ],
+				'worker'      => [ 'MAX( m_worker )', [ 'worker' ] ],
 			],
+			'folds'    => self::REQUEST_FOLDS,
 		],
 		'requests_hourly'    => [
 			'range'    => [ 't.hour', self::BUCKETS_PER_HOUR ],
@@ -403,8 +429,9 @@ final class Stats_Query {
 			'joins'    => [ 'server' => self::SERVER_JOIN ],
 			'inputs'   => self::SUMMED_INPUTS,
 			'measures' => self::SUMMED + [
-				'error_rate' => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
+				'error_rate' => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ] ],
 			],
+			'folds'    => self::REQUEST_FOLDS,
 		],
 		'timings'            => [
 			'fields' => [
@@ -451,6 +478,7 @@ final class Stats_Query {
 			],
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
+			'folds'    => self::TIMING_FOLDS,
 		],
 		'owner_timings_site' => [
 			'range'    => [ 't.bucket', 1 ],
@@ -467,6 +495,7 @@ final class Stats_Query {
 			],
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
+			'folds'    => self::TIMING_FOLDS,
 		],
 		'category_window'    => [
 			'range'    => [ 't.last_bucket', 1 ],
@@ -480,6 +509,7 @@ final class Stats_Query {
 			'joins'    => [ 'server' => self::SEEKING_SERVER_JOIN ] + self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
+			'folds'    => self::TIMING_FOLDS,
 		],
 		'urls_window'        => [
 			'range'    => [ 't.last_bucket', 1 ],
@@ -508,17 +538,18 @@ final class Stats_Query {
 				'server'      => self::URL_FIELDS['url']['parts']['server'],
 			],
 			'measures' => self::SUMMED + [
-				'count_2xx'   => [ 'COALESCE( SUM( m_count_2xx ), 0 )', [ 'count_2xx' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
-				'count_3xx'   => [ 'COALESCE( SUM( m_count_3xx ), 0 )', [ 'count_3xx' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
-				'count_4xx'   => [ 'COALESCE( SUM( m_count_4xx ), 0 )', [ 'count_4xx' ], 'COALESCE( SUM( q_count_4xx ), 0 )', [ 'count_4xx' ] ],
-				'count_5xx'   => [ 'COALESCE( SUM( m_count_5xx ), 0 )', [ 'count_5xx' ], 'COALESCE( SUM( q_count_5xx ), 0 )', [ 'count_5xx' ] ],
-				'min_ms'      => [ 'MIN( m_min_ms )', [ 'min_ms' ], 'MIN( q_min_ms )', [ 'min_ms' ] ],
-				'max_peak_mb' => [ 'MAX( m_max_peak_mb )', [ 'max_peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
-				'last_seen'   => [ 'MAX( m_last_seen )', [ 'last_seen' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
-				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
+				'count_2xx'   => [ 'COALESCE( SUM( m_count_2xx ), 0 )', [ 'count_2xx' ] ],
+				'count_3xx'   => [ 'COALESCE( SUM( m_count_3xx ), 0 )', [ 'count_3xx' ] ],
+				'count_4xx'   => [ 'COALESCE( SUM( m_count_4xx ), 0 )', [ 'count_4xx' ] ],
+				'count_5xx'   => [ 'COALESCE( SUM( m_count_5xx ), 0 )', [ 'count_5xx' ] ],
+				'min_ms'      => [ 'MIN( m_min_ms )', [ 'min_ms' ] ],
+				'max_peak_mb' => [ 'MAX( m_max_peak_mb )', [ 'max_peak_mb' ] ],
+				'last_seen'   => [ 'MAX( m_last_seen )', [ 'last_seen' ] ],
+				'worker'      => [ 'MAX( m_worker )', [ 'worker' ] ],
 				'urls'        => self::DISTINCT['urls'],
 				'pages'       => self::DISTINCT['pages'],
 			],
+			'folds'    => self::REQUEST_FOLDS,
 		],
 	];
 
@@ -757,8 +788,8 @@ final class Stats_Query {
 		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ] ) );
 		$named    = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$composes = self::composes( $def, $named );
-		$folded   = $composes ? self::gathered( $def, $named, self::FOLDS ) : [];
-		$arm      = self::arm( $spec, $table, $fields, self::gathered( $def, $composes ? $folded : $named, self::INPUTS ), $composes );
+		$folded   = $composes ? self::gathered( $def['folds'], $named ) : [];
+		$arm      = self::arm( $spec, $table, $fields, self::gathered( $def['measures'], $composes ? $folded : $named ), $composes );
 
 		[ $from, $binds ] = self::union( $composes ? self::grouped( $arm, $spec, $def, $folded ) : $arm, $aliases );
 
@@ -994,8 +1025,8 @@ final class Stats_Query {
 			return self::whole_window( $spec ) && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
 		}
 		$hourly = ! $by_url
-			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
-			&& [] === \array_diff( $measures, self::HOURLY_MEASURES )
+			&& [] === \array_diff( $named, \array_keys( self::TABLES['requests_hourly']['fields'] ) )
+			&& [] === \array_diff( $measures, \array_keys( self::TABLES['requests_hourly']['measures'] ) )
 			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
 		if ( $hourly ) {
 			return 'requests_hourly';
@@ -1035,22 +1066,22 @@ final class Stats_Query {
 		if ( null === $def || ! isset( $def['measures'][ $name ] ) || ! self::composes( $def, [ $name ] ) ) {
 			throw new \InvalidArgumentException( \esc_html( "{$table} folds no {$name} from partials" ) );
 		}
-		return [ self::outer( $def, $name, true ), self::gathered( $def, [ $name ], self::FOLDS ) ];
+		return [ self::outer( $def, $name, true ), self::gathered( $def['folds'], [ $name ] ) ];
 	}
 
 	/**
-	 * The names one slot of each named measure lists, each once: its arm
-	 * inputs, or the measures its fold reads.
+	 * What each named measure's expression reads, each name once: from its
+	 * `measures` tuple, its arm inputs; from its `folds` tuple, the measures
+	 * its fold reads.
 	 *
-	 * @param Measured     $def   The table answering the spec.
-	 * @param list<string> $named The measures.
-	 * @param self::INPUTS|self::FOLDS $slot Its inputs, or its folded measures.
+	 * @param array<string,array{0:string,1:list<string>}> $tuples The table's `measures` or `folds`.
+	 * @param list<string>                                 $named  The measures.
 	 * @return list<string>
 	 */
-	private static function gathered( array $def, array $named, int $slot ): array {
+	private static function gathered( array $tuples, array $named ): array {
 		$names = [];
 		foreach ( $named as $name ) {
-			\array_push( $names, ...$def['measures'][ $name ][ $slot ] );
+			\array_push( $names, ...$tuples[ $name ][ self::READS ] );
 		}
 		return \array_values( \array_unique( $names ) );
 	}
@@ -1064,7 +1095,7 @@ final class Stats_Query {
 	 * @param bool     $composes Whether the spec reads partials.
 	 */
 	private static function outer( array $def, string $name, bool $composes ): string {
-		return $composes ? Core::as_string( $def['measures'][ $name ][ self::COMPOSED ] ) : self::aggregate( $def, $name );
+		return $composes ? $def['folds'][ $name ][ self::EXPRESSION ] : self::aggregate( $def, $name );
 	}
 
 	/**
@@ -1074,7 +1105,7 @@ final class Stats_Query {
 	 * @param string   $name The measure.
 	 */
 	private static function aggregate( array $def, string $name ): string {
-		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Stats_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Stats_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::EXPRESSION ] );
 	}
 
 	/**
@@ -1086,7 +1117,7 @@ final class Stats_Query {
 	 */
 	private static function composes( array $def, array $named ): bool {
 		foreach ( $named as $name ) {
-			if ( null === $def['measures'][ $name ][ self::COMPOSED ] ) {
+			if ( ! isset( $def['folds'][ $name ] ) ) {
 				return false;
 			}
 		}
