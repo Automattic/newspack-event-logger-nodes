@@ -119,7 +119,7 @@ class ProfilerMuPluginTest extends TestCase {
 		$lm->flush_php_errors();
 		$entries = $this->logged_entries();
 		$this->assertCount( 100, self::entries_of( $entries, 'php (notice)' ) );
-		$this->assertSame( [ '2 notice /kea/7746.php:1, 4 dropped before boot' ], \array_column( self::entries_of( $entries, Log_Manager::PHP_ERRORS ), 'm' ) );
+		$this->assertSame( [ "2 notice /kea/7746.php:1\n4 dropped before boot" ], \array_column( self::entries_of( $entries, Log_Manager::PHP_ERRORS ), 'm' ) );
 	}
 
 	/** Unclaimed by the logger at `plugins_loaded`'s end, the drop-in stands down. */

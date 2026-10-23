@@ -283,7 +283,7 @@ final class PhpErrorsTest extends TestCase {
 		$entries = $this->logged_entries();
 		$this->assertSame( [ 'php (deprecated)', 'php (warning)', 'php (notice)' ], \array_column( self::rows( $entries ), 0 ) );
 		$this->assertSame( 'kea 7746 deprecated key 0', self::rows( $entries )[0][1] );
-		$this->assertSame( [ "10000 deprecated {$file}:7, 3 warning {$file}:8" ], \array_column( self::entries_of( $entries, Log_Manager::PHP_ERRORS ), 'm' ) );
+		$this->assertSame( [ "10000 deprecated {$file}:7\n3 warning {$file}:8" ], \array_column( self::entries_of( $entries, Log_Manager::PHP_ERRORS ), 'm' ) );
 		$kinds = \array_column( $entries, 'k' );
 		$this->assertSame( [ Log_Manager::PHP_ERRORS, Log_Manager::REQUEST_COMPLETE ], \array_slice( $kinds, -2 ), 'the count row is the close, ahead of the terminal' );
 		$this->assertArrayHasKey( Log_Manager::PHP_ERRORS, Log_Manager::CLOSE_ROWS );
@@ -300,8 +300,8 @@ final class PhpErrorsTest extends TestCase {
 
 		$row = self::entries_of( $this->logged_entries(), Log_Manager::PHP_ERRORS )[0];
 		$this->assertArrayNotHasKey( 'truncated', $row );
-		$this->assertStringStartsWith( '7 notice ' . self::plugin_file() . ':400, 2 notice ', $row['m'] );
-		$this->assertMatchesRegularExpression( '/, \d+ more$/', $row['m'] );
+		$this->assertStringStartsWith( '7 notice ' . self::plugin_file() . ":400\n2 notice ", $row['m'] );
+		$this->assertMatchesRegularExpression( '/\n\d+ more$/', $row['m'] );
 	}
 
 	/**
