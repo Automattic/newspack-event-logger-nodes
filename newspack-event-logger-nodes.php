@@ -82,13 +82,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant below the 2.122.0 floor. check-substrate-floor.sh holds
+	// @longform Dormant below the 2.126.0 floor. check-substrate-floor.sh holds
 	// it to the substrate PHP this plugin calls; a floor that a topology, a
 	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
 	// why each raise was made. A floor set too low wires the plugin up against
 	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.122.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.126.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
