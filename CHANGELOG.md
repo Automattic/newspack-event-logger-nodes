@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.153.0] - 2026-10-22
+
 ### Changed
 - **The rule editor keeps each logging checkbox's description in a tooltip.** An info button beside each of the ten switches carries the description as its label, so hover, keyboard focus and a screen reader all reach it, and each switch takes one line. "Select Hooks", "Select Events" and "Measure plugin time" share one width, the widest's, in one grid, the last with room either side of its label.
 - **Time by owner draws a share bar, totals what was profiled, and both breakdown tables sort.** `ShareBar`, the Time Breakdown's bar pulled out of `RequestProfile`, draws one segment per owner above the Time by owner table, each row carrying a matching swatch. An owner's colour is the `chartColor()` series colour its name hashes to, the same in every view and at every rank; `(unowned)` is #9e9e9e and `(unmeasured)` the darker Neutral 600, #6c6c6c. A bar with no selectable segment, as the owner bar is, is hidden from a screen reader, since its table carries the same numbers. The owner table's Total Profiled row sums every owner but `(unmeasured)`. Every column of both tables sorts, through `useColumnSort()`, beside `SortHeaderButton`: a second click flips the sorted column, and a new column sorts descending. A breakdown row keeps its bar segment's colour wherever it sorts.
