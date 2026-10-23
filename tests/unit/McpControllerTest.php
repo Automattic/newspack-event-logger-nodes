@@ -155,7 +155,7 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'no request row in the 25 buckets the rows keep', $arg( 'dump_url', 'bucket' ) );
 		$this->assertStringContainsString( 'one row per completed request, 25 buckets of them', $tools['performance_query']['description'] );
 		$this->assertStringContainsString( 'hook time, 25 buckets of it', $tools['performance_query']['description'] );
-		$this->assertStringContainsString( '25 for either source', $arg( 'performance_query', 'bucket' ) );
+		$this->assertStringContainsString( '25 for any source', $arg( 'performance_query', 'bucket' ) );
 		$this->assertStringContainsString( 'Omitted, the last 13.', $arg( 'performance_query', 'bucket' ) );
 		$this->assertStringContainsString( 'no row of the last 25 buckets names that rid', $tools['dump_request']['description'] );
 		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'performance_ask', 'bucket' ) );
@@ -678,7 +678,7 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'inclusive', $tools[ $tool ]['args']['bucket'], $tool );
 			$this->assertStringContainsString( 'at most {window} buckets', $tools[ $tool ]['args']['bucket'], $tool );
 		}
-		$this->assertStringContainsString( '{kept} for either source', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
+		$this->assertStringContainsString( '{kept} for any source', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
 	}
 
 	public function test_a_json_false_reaches_the_verb_as_false(): void {

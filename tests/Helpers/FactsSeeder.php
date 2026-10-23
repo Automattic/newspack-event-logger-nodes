@@ -126,6 +126,28 @@ trait FactsSeeder {
 	}
 
 	/**
+	 * One `owner_timings` row: an owner's time on a URL over one bucket.
+	 *
+	 * @param array<string,mixed> $over      Columns by name, plus `url` and `owner`.
+	 * @param int                 $partition The partition file it lands in.
+	 */
+	protected function seed_owner_timing( array $over = [], int $partition = 0 ): void {
+		$server = Core::as_string( $over['server'] ?? self::$seed_server );
+		$this->seed_rows( $partition, [ [ 'add', 'owner_timings', $over + [ 'url' => "https://{$server}/seed-path/" ] + self::owner_defaults( $server ) ] ] );
+	}
+
+	/**
+	 * One `owner_timings_site` row: an owner's time over one bucket, no URL.
+	 *
+	 * @param array<string,mixed> $over      Columns by name, plus `owner`.
+	 * @param int                 $partition The partition file it lands in.
+	 */
+	protected function seed_owner_site_timing( array $over = [], int $partition = 0 ): void {
+		$server = Core::as_string( $over['server'] ?? self::$seed_server );
+		$this->seed_rows( $partition, [ [ 'add', 'owner_timings_site', $over + self::owner_defaults( $server ) + [ 'worker' => 0 ] ] ] );
+	}
+
+	/**
 	 * The query plan SQLite chooses for a statement, one line per step.
 	 *
 	 * @param Row_Reader        $db    The connection that would run it.
@@ -262,6 +284,23 @@ trait FactsSeeder {
 			'category' => 'seed-category',
 			'entry'    => '',
 			'listener' => 0,
+			'ms'       => 10.0,
+			'calls'    => 1,
+			'requests' => 1,
+		];
+	}
+
+	/**
+	 * The defaults an owner timing row of either table takes.
+	 *
+	 * @param string $server The server it files under.
+	 * @return array<string,mixed>
+	 */
+	private static function owner_defaults( string $server ): array {
+		return [
+			'bucket'   => Bucket::id( (int) Core::$now ),
+			'server'   => $server,
+			'owner'    => 'seed-owner',
 			'ms'       => 10.0,
 			'calls'    => 1,
 			'requests' => 1,
