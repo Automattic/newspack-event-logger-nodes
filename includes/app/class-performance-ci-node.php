@@ -49,6 +49,7 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Overview_Prefetch_Tick_Node;
+use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
@@ -1445,8 +1446,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `overview` verb's answer over the chart's `Bucket::window()`: the
 	 * non-worker requests' totals, their exact distinct URLs, every server
-	 * with traffic there, worker traffic counted, busiest first, and the
-	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
+	 * with traffic there, worker traffic counted, busiest first, the
+	 * leaderboard and each owner's time. A server scopes the totals, the
+	 * leaderboard and the owners; `servers`
 	 * stays whole, so a scoped dashboard can still name the rest. A list
 	 * handed in stands in for it, unless a scoped server has traffic the list
 	 * lacks, worker traffic counted as the list counts it; only a live read
@@ -1457,7 +1459,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string           $server  Server to scope to; '' is every server.
 	 * @param int              $now     The reply's clock.
 	 * @param list<mixed>|null $servers The `servers` to name; null reads them.
-	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
+	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, owners: list<array{owner:string,ms_per_request:float,share:float,calls:int}>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
 		$chart   = Bucket::last( Bucket::window(), $now );
@@ -1499,8 +1501,54 @@ class Performance_CI_Node extends Service_CI_Node {
 			'slots'       => \array_map( Bucket::key( ... ), \range( $chart[0][1], $chart[0][0] ) ),
 			'servers'     => $servers,
 			'leaderboard' => self::site_leaderboard( $server, $now ),
+			'owners'      => self::owner_board( self::scope( $server, false ), $chart, $now ),
 			'available'   => $answer['available'],
 		];
+	}
+
+	/**
+	 * Each owner's time over `$buckets` of the owner rows `$filter` selects,
+	 * dearest per request first: `ms_per_request` is its summed `ms` over the
+	 * `requests` of the `(unmeasured)` row, which counts every request
+	 * folded, and `share` its `ms` over every owner's. Empty over no folded
+	 * request.
+	 *
+	 * @param array<string,list<scalar>> $filter  Fields the `owners` source holds.
+	 * @param list<array{0:int,1:int}>   $buckets The board's buckets.
+	 * @param int                        $now     The reply's clock.
+	 * @return list<array{owner:string,ms_per_request:float,share:float,calls:int}>
+	 */
+	private static function owner_board( array $filter, array $buckets, int $now ): array {
+		$rows     = self::timing_rows(
+			[ 'owner' ],
+			[
+				'source'  => 'owners',
+				'filter'  => $filter,
+				'measure' => [ 'ms', 'calls', 'requests' ],
+				'buckets' => $buckets,
+				'now'     => $now,
+			]
+		);
+		$requests = 0;
+		$total    = 0.0;
+		foreach ( $rows as [ $owner, $ms, , $folded ] ) {
+			$requests += Owner::UNMEASURED === $owner ? Core::num_int( $folded ) : 0;
+			$total    += Core::num_float( $ms );
+		}
+		if ( 0 === $requests ) {
+			return [];
+		}
+		$board = [];
+		foreach ( $rows as [ $owner, $ms, $calls ] ) {
+			$board[] = [
+				'owner'          => Core::as_string( $owner ),
+				'ms_per_request' => Core::num_float( $ms ) / $requests,
+				'share'          => 0.0 < $total ? Core::num_float( $ms ) / $total : 0.0,
+				'calls'          => Core::num_int( $calls ),
+			];
+		}
+		\usort( $board, static fn ( array $a, array $b ): int => $b['ms_per_request'] <=> $a['ms_per_request'] );
+		return $board;
 	}
 
 	/**
@@ -2409,6 +2457,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'aggregate_flame'    => $flame,
 					'flame_cut'          => $rebuilt && null === $flame,
 					'aggregate_profiles' => self::url_profile( $hash, self::scope( $server, true ), $now ),
+					'aggregate_owners'   => self::owner_board( self::scope( $server, true ) + [ 'url' => [ $hash ] ], Bucket::last( Stats_Query::retention( 'owners' ), $now ), $now ),
 				];
 					},
 				],
