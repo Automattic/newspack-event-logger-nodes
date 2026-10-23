@@ -435,4 +435,30 @@ describe( 'RequestDetailView', () => {
 		] );
 		unmount();
 	} );
+
+	it( 'mounts the owner table from the request owners', async () => {
+		const { container, unmount } = await renderAsync(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					owners: [
+						{
+							owner: 'plugin:ibis-forms',
+							ms: 61.5,
+							share: 0.3,
+							calls: 9,
+						},
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'plugin:ibis-forms' );
+		expect( container.textContent ).toContain( '61.5ms' );
+		expect( container.textContent ).not.toContain( 'ms per request' );
+		unmount();
+	} );
 } );

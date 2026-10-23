@@ -22,6 +22,7 @@ import { __ } from '@wordpress/i18n';
 
 import RequestSummary from '../../components/RequestSummary';
 import RequestProfile, { profileOrder } from '../RequestProfile';
+import OwnerTable from '../OwnerTable';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
 import FindingList from './FindingList';
@@ -151,6 +152,9 @@ export default function RequestDetailView( {
 					/>
 				</div>
 			) }
+
+			{ /* Time by owner */ }
+			<OwnerTable owners={ requestDetail.owners } />
 
 			{ /* Log Entries Table, or what a folded request kept instead */ }
 			{ hasEntries && (

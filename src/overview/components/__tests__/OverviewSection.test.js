@@ -791,4 +791,28 @@ describe( 'OverviewSection', () => {
 		).toBeNull();
 		unmount();
 	} );
+
+	it( "mounts the owner table from the overview's owners", () => {
+		const { container, unmount } = mount( {
+			owners: [
+				{
+					owner: 'mu:egret-cache',
+					ms_per_request: 17.5,
+					share: 0.37,
+					calls: 22,
+				},
+			],
+		} );
+		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'mu:egret-cache' );
+		expect( container.textContent ).toContain( 'ms per request' );
+		expect( container.textContent ).toContain( '17.5ms' );
+		unmount();
+	} );
+
+	it( 'mounts no owner table from a snapshot that predates owners', () => {
+		const { container, unmount } = mount( {} );
+		expect( container.textContent ).not.toContain( 'Time by owner' );
+		unmount();
+	} );
 } );

@@ -34,6 +34,7 @@ import CategoryTimeChart from '../CategoryTimeChart';
 import { breakdownState } from '../AggregateTimeChart';
 import { answerSlots, chartDims } from '../chartSlots';
 import { ProfileWithCaption } from '../RequestProfile';
+import OwnerTable from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
@@ -369,6 +370,8 @@ export default function OverviewSection( {
 							serverName={ serverFilter }
 						/>
 					) }
+
+					<OwnerTable owners={ overview.owners } perRequest />
 				</CardBody>
 			</Card>
 		</div>
