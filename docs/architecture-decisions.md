@@ -78,7 +78,7 @@ The one application setting a hub pushes, the ruleset, rides the substrate's set
 
 ## Decision 5: A stats schema change is a version bump and a rebuild, and nothing in this code migrates
 
-`Flame_Facts_Row_Schema::version()`, 8, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
+`Flame_Facts_Row_Schema::version()`, 9, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
 
 ```bash
 wp nodes stop && wp nodes deactivate performance && wp nodes gc --force && wp nodes memcache flush && wp nodes activate performance && wp nodes start
@@ -358,15 +358,17 @@ Each narration line is a write to the firehose Partition, and a Partition write 
 
 Memcache evicts, so stats kept there need a mirror, a sweep and a probe to repair each loss. A SQLite file evicts nothing before the window its schema declares, so the stats live there and nothing repairs a loss.
 
-**One Row_Table per partition, declared in the topology.** [`stats-builder.tsl`](../topologies/stats-builder.tsl) declares `make_node Row_Table flame-facts Flame_Facts` ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), and [`Flame_Facts_Row_Schema`](../includes/class-flame-facts-row-schema.php) declares thirteen tables in `{base}/tables/flame-facts.p{N}.sqlite`:
+**One Row_Table per partition, declared in the topology.** [`stats-builder.tsl`](../topologies/stats-builder.tsl) declares `make_node Row_Table flame-facts Flame_Facts` ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), and [`Flame_Facts_Row_Schema`](../includes/class-flame-facts-row-schema.php) declares sixteen tables in `{base}/tables/flame-facts.p{N}.sqlite`:
 
 | Table | One row per | Key | Window |
 |---|---|---|---|
 | `requests` | completed request: its `rid`, `bucket`, `finished_at`, `started_at`, the log position its record sits at (`partition`, `segment`, `offset`, `length`), `server_id`, `url_id`, `status`, `method`, `country`, `ua_id`, `ja4_id`, `from_id`, `worker`, `profiled`, `error`, `ms` (NULL when untimed) and `peak_mb` | `rid` | the span plus an hour |
 | `urls` | URL: `id`, `hash` (`Log_Manager::url_hash()` of its `Url_Parts::identity()`), `server_id`, `path` (the spelling and scheme of the first request the partition filed), `page` (its lowercased host and path) and `page_hash` (`Log_Manager::url_hash()` of the page), with an FTS5 index over `path` and the index `urls_page` on `( page_hash, server_id )` | `hash` | while a `requests` or `timings` row names it |
-| `servers`, `agents`, `ja4s`, `froms`, `categories`, `entries` | name a row repeats: `id`, `name` | `name` | while a row names it |
+| `servers`, `agents`, `ja4s`, `froms`, `categories`, `entries`, `owners` | name a row repeats: `id`, `name` | `name` | while a row names it |
 | `timings` | bucket, server, URL, category and entry, with `listener` and the summed `ms`, `calls` and `requests` | `bucket`, `server_id`, `url_id`, `category_id`, `entry_id` | the span plus an hour |
 | `timings_site` | bucket, server, worker, category and entry, with `listener` and the same sums | `server_id`, `bucket`, `worker`, `category_id`, `entry_id` | the span plus an hour |
+| `owner_timings` | bucket, server, URL and owner, with the summed self-time `ms`, `calls` and `requests` | `bucket`, `server_id`, `url_id`, `owner_id` | the span plus an hour |
+| `owner_timings_site` | bucket, server, worker and owner, with the same sums | `server_id`, `bucket`, `worker`, `owner_id` | the span plus an hour |
 | `requests_hourly` | hour, server, status class, method, worker and country, with the summed `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` and the greatest `max_ms` | its six fields | the hours covering the span plus an hour |
 | `category_window` | category, entry and worker, with `listener` and the summed `ms`, `calls` and `requests` and the greatest `last_bucket` | `category_id`, `entry_id`, `worker` | the span plus an hour, by `last_bucket` |
 | `window_expiry` | bucket expired, so a replayed expiry subtracts nothing twice; the newest is the window's watermark | `bucket` | the span plus an hour |

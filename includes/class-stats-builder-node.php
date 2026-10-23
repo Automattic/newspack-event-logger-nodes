@@ -44,6 +44,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Event_Logger_Nodes\App\Findings;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Idle_Reporter;
 use Newspack_Nodes\Log_Position;
@@ -261,7 +262,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 		[ $request, $url, $server, $rid ] = Request_Builder_Node::checked_record( $request );
 		// A replayed record's row is ignored by its rid, its rollups with it.
-		$this->buffer_request( $request, $rid, $place, $url, Url_Parts::hash( $url ), $server );
+		$this->buffer_request( $request, $rid, $place, $url, Url_Parts::hash( $url ), $server, $flame );
 		if ( $this->buffered >= self::BUFFERED_REQUESTS_LIMIT || $this->ops >= self::BUFFERED_OPS_LIMIT ) {
 			$this->flush();
 		}
@@ -373,9 +374,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string                 $url      The request's URL.
 	 * @param string                 $url_hash The hash of its identity, `Url_Parts::hash()`.
 	 * @param string                 $server   Its host.
+	 * @param array<array-key,mixed> $flame    Its flame tree root.
 	 * @throws \LogicException When no partition is bound, so a row can not name one.
 	 */
-	private function buffer_request( array $request, string $rid, array $place, string $url, string $url_hash, string $server ): void {
+	private function buffer_request( array $request, string $rid, array $place, string $url, string $url_hash, string $server, array $flame ): void {
 		$partition = Core::bound_partition() ?? throw new \LogicException( 'Stats_Builder: no partition is bound, so a request row can not name one' );
 		$duration  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$error     = $request['error_status'] ?? '-';
@@ -424,6 +426,11 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					$then[] = [ ...self::window_op( [ null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named ) ];
 				}
 			}
+		}
+		foreach ( $timed ? Findings::owners( $flame, $duration ) : [] as $owner ) {
+			$named  = [ 'owner_id' => $this->named_at( 'owner_id', $owner['owner'] ) ];
+			$then[] = [ 'add', 'owner_timings', [ $bucket, null, null, null, $owner['ms'], $owner['calls'], 1 ], [], self::ids_at( 'owner_timings', $named + $page ) ];
+			$then[] = [ 'add', 'owner_timings_site', [ $bucket, null, $worker, null, $owner['ms'], $owner['calls'], 1 ], [], self::ids_at( 'owner_timings_site', $named + $site ) ];
 		}
 		$this->op(
 			[

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The stats schema is version 9, and a site rebuilds its stats once.** `Flame_Facts_Row_Schema` adds `owners`, a lookup naming each owner once, and `owner_timings` and `owner_timings_site`, each owner's summed self time per bucket by URL and by site with `calls` and `requests`, retained as `timings` is. `Stats_Builder_Node` writes one row of each per owner `Findings::owners()` finds in a timed request's flame, `(unmeasured)` always among them, as `then` ops of the request's `ignore` by rid, so a replay adds nothing. A builder opening a version 8 file discards it (decision 5); `upgrading.md` gives the replay that refills it. Revert: install the previous release; its builder discards the version 9 file in turn and rebuilds from what the logs retain.
+
 ### Added
 - **`dump_request` answers each owner's self time.** `Findings::owners()` sums a request flame's self time by the owner its frames name: `Owner::of_label()` reads the `[<owner>] ` a label carries, after a `<base>: ` or at the start, and gives a `<slug> plugin` load span to `<slug>`. A frame naming no owner takes its nearest owned ancestor's, so a hook timed inside a plugin's listener stays that plugin's time, and with none it is `(unowned)`. `(unmeasured)` is the duration less every top-level span, always present. Each row carries `owner`, `ms`, `share` of the duration and `calls`, the calls counting only frames that name the owner; self time is never below zero. `dump_request` returns them as `owners`, and the MCP tool's description names the field.
 
