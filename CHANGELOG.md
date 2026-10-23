@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The `php errors` row lists one error a line.** Its counts were joined by `, ` into one long line, which ran off the request log; they are joined by newlines, which the log table's message cell breaks on. The byte budget is unchanged, since a newline JSON-encodes to as many bytes as `, `.
 - **The MCP tool descriptions teach an agent that has never seen the plugin.** An agent handed only the endpoint read `performance_urls` sorted by `avg_ms` as the slowest pages, when every top row averaged one request and `slowest` was that same ranking whatever the sort. The `performance_urls` summary now says nothing weights that sort by `count`, so a URL seen once can lead it and `slowest`. The `filter` arg of `urls`, `dump_url` and `ask` names every field it takes and how each value is spelled, generated from `Stats_Query::FIELDS['requests']`, and says which argument owns `server`, `bucket`, `url` and `page`; the MCP tools read that same text in place of a pointer to `performance_query`, so the CLI, the console and MCP describe one filter. `initialize`'s instructions carry a glossary of URL shape, page, error, owner with its `(unowned)` and `(unmeasured)` rows, profile category and bucket. The `performance_overview` summary ends with the calls that drill down from it. No verb's behaviour or arguments changed.
 
 ### Fixed

@@ -564,10 +564,10 @@ class Log_Manager {
 
 	/**
 	 * The `php errors` row's `m`: `<times> <level> <file>:<line>` for each PHP
-	 * error raised more than once, the most repeated first, joined by `, ` as
-	 * pyrobase's stats rows join their counts, `<n> more` for those
-	 * `PHP_ERRORS_BUDGET` leaves no room for, and `<n> dropped before boot`
-	 * for what the profiler drop-in counted past its cap. '' when neither.
+	 * error raised more than once, the most repeated first, one a line,
+	 * `<n> more` for those `PHP_ERRORS_BUDGET` leaves no room for, and
+	 * `<n> dropped before boot` for what the profiler drop-in counted past its
+	 * cap. '' when neither.
 	 */
 	private function php_error_counts(): string {
 		$repeated = \array_filter( $this->php_errors, static fn ( array $seen ): bool => $seen[0] > 1 );
@@ -582,7 +582,7 @@ class Log_Manager {
 			if ( $size + $bytes > self::PHP_ERRORS_BUDGET ) {
 				break;
 			}
-			// Its quotes are the `, ` that joins it.
+			// Its quotes are the two bytes the joining `\n` encodes to.
 			$size   += $bytes;
 			$parts[] = $part;
 		}
@@ -590,7 +590,7 @@ class Log_Manager {
 		if ( $more > 0 ) {
 			$parts[] = "{$more} more";
 		}
-		return \implode( ', ', [ ...$parts, ...$dropped ] );
+		return \implode( "\n", [ ...$parts, ...$dropped ] );
 	}
 
 	/**
