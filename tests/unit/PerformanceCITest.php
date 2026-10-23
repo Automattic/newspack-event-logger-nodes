@@ -2326,6 +2326,75 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $reply['available'] );
 	}
 
+	/**
+	 * The overview's totals, the site's and each server's, read the URL
+	 * window and answer what `requests` does: a URL under both worker flags
+	 * counts once, and a window row no request backs counts in them.
+	 */
+	public function test_the_overview_totals_read_the_url_window(): void {
+		$latest = self::latest();
+		$kea    = [ 'server' => 'kea-8140.example' ];
+		$huia   = [ 'server' => 'huia-8140.example' ];
+		$this->seed_requests(
+			[
+				$kea + [ 'url' => 'https://kea-8140.example/tieke-8140/', 'ms' => 140.75, 'peak_mb' => 31.5, 'bucket' => $latest - 3 ],
+				$kea + [ 'url' => 'https://kea-8140.example/tieke-8140/', 'ms' => 59.5, 'peak_mb' => 12.75, 'bucket' => $latest - 9 ],
+				$kea + [ 'url' => 'https://kea-8140.example/tieke-8140/', 'ms' => 4400.0, 'peak_mb' => 80.0, 'worker' => 1 ],
+				$huia + [ 'url' => 'https://huia-8140.example/piopio-8140/', 'ms' => null, 'peak_mb' => 16.5, 'error' => 'F', 'bucket' => $latest - 1 ],
+				$huia + [ 'url' => 'https://huia-8140.example/aged-8140/', 'ms' => 7.0, 'bucket' => $latest - Bucket::window() ],
+			]
+		);
+		$totals = static fn ( string $args ): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $args )['totals'];
+		$scopes = [ '', '--server=kea-8140.example', '--server=huia-8140.example' ];
+		$before = \array_map( $totals, $scopes );
+
+		$this->seed_url_window( 0, $latest - Bucket::window() );
+
+		$this->assertSame(
+			[
+				[ 'requests' => 3, 'timed' => 2, 'avg_ms' => 100.125, 'avg_peak_mb' => 20.25, 'errors' => 1, 'urls' => 2 ],
+				[ 'requests' => 2, 'timed' => 2, 'avg_ms' => 100.125, 'avg_peak_mb' => 22.125, 'errors' => 0, 'urls' => 1 ],
+				[ 'requests' => 1, 'timed' => 0, 'avg_ms' => null, 'avg_peak_mb' => 16.5, 'errors' => 1, 'urls' => 1 ],
+			],
+			$before
+		);
+		$this->assertSame( $before, \array_map( $totals, $scopes ), 'the window answers what requests does' );
+
+		$this->seed_rows(
+			0,
+			[
+				[
+					'add',
+					'urls_window',
+					[
+						'url'         => 'https://kea-8140.example/kokako-8140/',
+						'server'      => 'kea-8140.example',
+						'worker'      => 0,
+						'count'       => 6,
+						'timed'       => 6,
+						'count_2xx'   => 6,
+						'count_3xx'   => 0,
+						'count_4xx'   => 0,
+						'count_5xx'   => 0,
+						'errors'      => 0,
+						'sum_ms'      => 1200.0,
+						'sum_peak_mb' => 60.0,
+						'min_ms'      => 150.0,
+						'max_ms'      => 250.0,
+						'max_peak_mb' => 11.0,
+						'last_seen'   => (float) ( $latest * Bucket::SECONDS ),
+						'last_bucket' => $latest,
+					],
+				],
+			]
+		);
+		$after = \array_map( $totals, $scopes );
+
+		$this->assertSame( [ 9, 3 ], [ $after[0]['requests'], $after[0]['urls'] ] );
+		$this->assertSame( [ 8, 2 ], [ $after[1]['requests'], $after[1]['urls'] ] );
+		$this->assertSame( $before[2], $after[2], 'another server\'s row leaves huia alone' );
+	}
+
 	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
 		$board = Performance_CI_Node::leaderboard_of( [ 'wpdb' => [ 'sum_time' => 9.0, 'sum_count' => 4.0, 'samples' => 3 ] ], 0, 0.0 );
 

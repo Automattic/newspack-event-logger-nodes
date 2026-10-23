@@ -287,7 +287,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( 'urls_window', Stats_Query::table_for( $snapshot ) );
 		$this->assertSame( 'urls_window', Stats_Query::table_for( self::url_spec( [ 'group' => [ 'page', 'server' ], 'filter' => Performance_CI_Node::scope( self::KEA, false ) ] ) ) );
 		$this->assertSame( 'urls_window', Stats_Query::table_for( self::url_spec( [ 'group' => [ 'url' ], 'filter' => [ 'page' => [ Log_Manager::url_hash( self::TUI_PAGE ) ] ] + Performance_CI_Node::scope( '', true ) ] ) ) );
-		foreach ( Performance_CI_Node::URL_MEASURES as $measure ) {
+		foreach ( [ ...Performance_CI_Node::URL_MEASURES, ...Performance_CI_Node::URL_TOTALS ] as $measure ) {
 			$this->assertSame( 'urls_window', Stats_Query::table_for( [ 'measure' => [ $measure ] ] + $snapshot ), $measure );
 		}
 
@@ -300,7 +300,7 @@ final class StatsQueryTest extends TestCase {
 			'a country group'               => [ 'group' => [ 'url', 'country' ] ],
 			'a bucket group'                => [ 'group' => [ 'bucket', 'url' ] ],
 			'a p95_ms measure'              => [ 'measure' => [ 'count', 'p95_ms' ] ],
-			'a urls measure'                => [ 'measure' => [ 'urls' ] ],
+			'an error_rate measure'         => [ 'measure' => [ 'urls', 'error_rate' ] ],
 			'a search'                      => [ 'search' => 'tui' ],
 			'a rid'                         => [ 'filter' => [ 'rid' => [ 'rid-seed-1' ] ] ],
 		];
@@ -348,6 +348,58 @@ final class StatsQueryTest extends TestCase {
 		$urls = \array_column( Stats_Query::run( $specs['the snapshot group'] )['rows'], 1 );
 		$this->assertCount( 5, $urls, 'every URL of the window, the spent one left out' );
 		$this->assertNotContains( 'https://kea-7110.example/spent-7110/', $urls );
+	}
+
+	/**
+	 * The window counts a URL once however many partitions filed it and
+	 * under both worker flags, and a page once per server: by the URL's hash
+	 * and the page's hash with its server, never by a partition's own id or
+	 * by window rows, and never summed across partitions.
+	 */
+	public function test_urls_window_counts_distinct_urls_and_pages_across_partitions(): void {
+		$now  = Bucket::id( self::NOW );
+		$moho = 'https://kea-7130.example/moho-7130/';
+		$kea  = [ 'server' => 'kea-7130.example' ];
+		$kaka = [ 'server' => 'kaka-7130.example' ];
+		$this->seed_requests(
+			[
+				$kea + [ 'url' => $moho, 'bucket' => $now - 6, 'ms' => 41.5, 'peak_mb' => 31.25 ],
+				$kea + [ 'url' => "{$moho}?q=?", 'bucket' => $now - 2, 'ms' => 63.25, 'peak_mb' => 18.5 ],
+				$kaka + [ 'url' => 'https://kaka-7130.example/moho-7130/', 'bucket' => $now - 1, 'ms' => 17.75 ],
+			],
+			0
+		);
+		$this->seed_requests(
+			[
+				$kaka + [ 'url' => 'https://kaka-7130.example/takahe-7130/', 'bucket' => $now - 4, 'ms' => 230.5, 'worker' => 1 ],
+				$kea + [ 'url' => $moho, 'bucket' => $now - 3, 'ms' => 88.75, 'peak_mb' => 41.75 ],
+				$kea + [ 'url' => $moho, 'bucket' => $now, 'ms' => 12.25, 'worker' => 1 ],
+			],
+			2
+		);
+		$through = $now - Bucket::window();
+		$this->seed_url_window( 0, $through );
+		$this->seed_url_window( 2, $through );
+		$counted = static fn ( array $over ): array => self::url_spec( $over + [ 'group' => [], 'measure' => [ 'urls', 'pages' ] ] );
+
+		$expected = [
+			'the site, workers counted'      => [ [], [ [ 4, 3 ] ] ],
+			'the site, workers left out'     => [ [ 'filter' => Performance_CI_Node::scope( '', false ) ], [ [ 3, 2 ] ] ],
+			'kea, workers counted'           => [ [ 'filter' => Performance_CI_Node::scope( 'kea-7130.example', true ) ], [ [ 2, 1 ] ] ],
+			'kaka, workers left out'         => [ [ 'filter' => Performance_CI_Node::scope( 'kaka-7130.example', false ) ], [ [ 1, 1 ] ] ],
+			'by server, workers counted'     => [ [ 'group' => [ 'server' ], 'sort' => 'server' ], [ [ 'kaka-7130.example', 2, 2 ], [ 'kea-7130.example', 2, 1 ] ] ],
+			'by worker flag'                 => [ [ 'group' => [ 'worker' ], 'sort' => 'worker' ], [ [ 0, 3, 2 ], [ 1, 2, 2 ] ] ],
+			'the listing totals, kea scoped' => [ [ 'filter' => Performance_CI_Node::scope( 'kea-7130.example', false ), 'measure' => Performance_CI_Node::URL_TOTALS ], [ [ 3, 64.5, 30.5, 2, 0, 1 ] ] ],
+		];
+		foreach ( $expected as $name => [ $over, $rows ] ) {
+			$window   = Stats_Query::run( $counted( $over ) );
+			$requests = Stats_Query::run( [ 'now' => null ] + $counted( $over ) );
+
+			$this->assertSame( 'urls_window', $window['table'], $name );
+			$this->assertSame( 'requests', $requests['table'], $name );
+			$this->assertSame( $rows, $window['rows'], $name );
+			$this->assertSame( $requests['rows'], $window['rows'], $name );
+		}
 	}
 
 	/** While any partition's watermark lags the window's start, the URL window is not read. */
@@ -472,6 +524,32 @@ final class StatsQueryTest extends TestCase {
 		$this->assertNotContains( 'https://kea-7110.example/tui-7110/?y=2', $names( $listing( "--page={$page}" ) ) );
 		$this->seed_rows( 0, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/tui-7110/?y=2', Bucket::id( self::NOW ) ) ] ] );
 		$this->assertContains( 'https://kea-7110.example/tui-7110/?y=2', $names( $listing( "--page={$page}" ) ) );
+	}
+
+	/**
+	 * The live listing's totals and each listed page's URL count read the
+	 * URL window too: a window row no request backs, a third shape of a page
+	 * of two, counts in the URLs, the requests and that page's shapes, and
+	 * adds no page.
+	 */
+	public function test_the_live_listings_totals_and_page_shapes_read_the_url_window(): void {
+		$this->seed_url_traffic();
+		$this->seed_url_window( 0, Bucket::id( self::NOW ) - Bucket::window() );
+		$this->seed_url_window( 2, Bucket::id( self::NOW ) - Bucket::window() );
+		$listing = static fn (): array => Core::arr( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '' ) );
+		$shapes  = static fn ( array $answer ): array => \array_column( Core::arr( $answer['data'] ), 'shapes', 'page_hash' );
+		$page    = Log_Manager::url_hash( self::TUI_PAGE );
+		$before  = $listing();
+
+		$this->seed_rows( 2, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/tui-7110/?y=2', Bucket::id( self::NOW ) ) ] ] );
+		$after = $listing();
+
+		$this->assertSame( 2, $shapes( $before )[ $page ] );
+		$this->assertSame( 3, $shapes( $after )[ $page ] );
+		$this->assertSame( $before['totals']['urls'] + 1, $after['totals']['urls'] );
+		$this->assertSame( $before['totals']['requests'] + 7, $after['totals']['requests'] );
+		$this->assertSame( $before['totals']['pages'], $after['totals']['pages'] );
+		$this->assertSame( $before['rows'], $after['rows'] );
 	}
 
 	/**

@@ -266,6 +266,17 @@ final class Stats_Query {
 		'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
 	];
 
+	/**
+	 * The distinct URLs and pages a selection holds, counted by the URL's
+	 * hash and the page's hash with its server: a partition files a URL
+	 * under its own id, so no partial composes and every arm's rows read
+	 * whole.
+	 */
+	private const DISTINCT = [
+		'urls'  => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
+		'pages' => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ], null, [] ],
+	];
+
 	/** The stored sums `SUMMED` reads, as an arm projects them. */
 	private const SUMMED_INPUTS = [
 		'count'       => 't.count',
@@ -368,8 +379,8 @@ final class Stats_Query {
 				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
 				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
 				'error_rate'  => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END ) * 1.0 / NULLIF( COUNT( * ), 0 )', [ 'error' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
-				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
-				'pages'       => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ], null, [] ],
+				'urls'        => self::DISTINCT['urls'],
+				'pages'       => self::DISTINCT['pages'],
 				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
 				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
 				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
@@ -492,6 +503,9 @@ final class Stats_Query {
 				'max_peak_mb' => 't.max_peak_mb',
 				'last_seen'   => 't.last_seen',
 				'worker'      => 't.worker',
+				'url'         => self::URL_FIELDS['url']['hash'],
+				'page'        => self::URL_FIELDS['page']['hash'],
+				'server'      => self::URL_FIELDS['url']['parts']['server'],
 			],
 			'measures' => self::SUMMED + [
 				'count_2xx'   => [ 'COALESCE( SUM( m_count_2xx ), 0 )', [ 'count_2xx' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
@@ -502,6 +516,8 @@ final class Stats_Query {
 				'max_peak_mb' => [ 'MAX( m_max_peak_mb )', [ 'max_peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
 				'last_seen'   => [ 'MAX( m_last_seen )', [ 'last_seen' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
 				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
+				'urls'        => self::DISTINCT['urls'],
+				'pages'       => self::DISTINCT['pages'],
 			],
 		],
 	];
@@ -957,7 +973,8 @@ final class Stats_Query {
 	 * every field and measure it names, its `top_by` among them, and every
 	 * bucket range covers whole hours; else `urls_window` when it reads the
 	 * same whole window, searches nothing, and names only the fields and
-	 * measures a URL's window row keeps; else `requests`.
+	 * measures a URL's window row keeps or the URLs and pages its rows count;
+	 * else `requests`.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string, now?:int|null} $spec
 	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
