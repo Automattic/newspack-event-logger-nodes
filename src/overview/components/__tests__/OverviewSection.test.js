@@ -832,7 +832,13 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).toContain( 'per request' );
 		expect( container.textContent ).toContain( '17.5ms' );
 		expect( container.textContent ).toContain( 'Count' );
-		expect( container.textContent ).toContain( '4.8' );
+		const row = [ ...container.querySelectorAll( 'tbody tr' ) ].find(
+			( tr ) => tr.textContent.startsWith( 'mu:egret-cache' )
+		);
+		// A whole count, as the Time Breakdown rounds its averages.
+		expect( [ ...row.querySelectorAll( 'td' ) ].pop().textContent ).toBe(
+			'5'
+		);
 		unmount();
 	} );
 

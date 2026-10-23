@@ -1255,7 +1255,13 @@ describe( 'UrlDetailView', () => {
 		expect( container.textContent ).toContain( '33.5ms' );
 		expect( container.textContent ).toContain( '61.0%' );
 		expect( container.textContent ).toContain( 'Count' );
-		expect( container.textContent ).toContain( '2.3' );
+		const row = [ ...container.querySelectorAll( 'tbody tr' ) ].find(
+			( tr ) => tr.textContent.startsWith( 'theme:rail' )
+		);
+		// A whole count, as the Time Breakdown rounds its averages.
+		expect( [ ...row.querySelectorAll( 'td' ) ].pop().textContent ).toBe(
+			'2'
+		);
 		unmount();
 	} );
 

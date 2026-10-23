@@ -81,7 +81,8 @@ describe( 'OwnerTable', () => {
 			'plugin:heron-gallery',
 			'188.5ms',
 			'42.4%',
-			'13.7',
+			// A whole count, as the Time Breakdown rounds its averages.
+			'14',
 		] );
 		expect(
 			Array.from( container.querySelectorAll( 'th' ) ).map( ( th ) =>
