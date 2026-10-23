@@ -317,12 +317,23 @@ A tool's visibility follows its verb's declared `capability`, and each property'
 the schema's `required` list come from the verb's own declared args: an `int` is an `integer`, a `float` a `number`, a `bool` a `boolean`, a variadic arg
 such as `ask`'s `context` an array of its type, and every other type a `string`.
 
-![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 while all 20 of the handle's slots are held, each claimed by an atomic cache add() and freed one 10-second window after its call, or 503 rate_limit_unavailable when neither memcached nor APCu answers, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees nine tools, a tune session two more, and five verbs have no tool at all: performance.list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
+![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals, and 401 when Command_Auth::admits_resource() refuses a session an OAuth grant minted for another resource than MCP_Controller::resource(), every 401 carrying WWW-Authenticate: Bearer resource_metadata naming where to sign in; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 while all 20 of the handle's slots are held, each claimed by an atomic cache add() and freed one 10-second window after its call, or 503 rate_limit_unavailable when neither memcached nor APCu answers, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees nine tools, a tune session two more, and five verbs have no tool at all: performance.list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
 **Permission**: an `Authorization: Bearer <handle>.<secret>` header naming a live command
-session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`.
+session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`,
+or minted by the substrate's OAuth token endpoint for a connection a user approved.
 Authority comes from the minting user, and the session's scope only ever subtracts from it: a
 manage-scoped session minted by someone who can do nothing still does nothing.
+
+The door is an OAuth protected resource. `MCP_Controller::resource()` is its canonical URI, its
+REST URL over https, whatever the request's own scheme, with the host lowercased and no trailing
+slash, so consent in wp-admin and the door in REST spell it alike. The plugin declares it
+on the substrate's `newspack_nodes/oauth_resources` filter, so the substrate serves its RFC 9728
+metadata. Every 401 the door answers carries
+`WWW-Authenticate: Bearer resource_metadata="https://<DOMAIN>/.well-known/oauth-protected-resource/wp-json/newspack-event-logger-nodes/v1/mcp"`,
+built by `Oauth_Server::resource_metadata_url()`, which tells an MCP client where to sign in. A
+session an OAuth grant minted for any other resource answers 401 `mcp_unauthorized`; a session
+issued by hand names no resource and is admitted.
 
 Eleven tools, one per verb:
 
@@ -353,8 +364,12 @@ own, each with how its value is spelled and, for `url` and `page`, when the subj
 A spelling for a field the vocabulary lacks, or a field with none, throws `LogicException`
 when the schema is read.
 
-**Connecting a client**. Register the endpoint with the handle and key that session issued.
-`<ID>` is the local name the client files it under:
+**Connecting a client**. A client running the MCP authorization flow, such as a Claude
+custom connector, needs only the URL: it reads the 401's header, registers itself, and sends
+the user to the site to sign in, pick `read` or `tune`, name the connection and approve it. The
+site must be reachable from the public internet, because the connector's requests come from
+Anthropic's servers. Any other client registers the endpoint with the handle and key a session
+issued. `<ID>` is the local name the client files it under:
 
 ```
 claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp --header "Authorization: Bearer <HANDLE>.<KEY>"
@@ -551,10 +566,12 @@ on nothing; with the plugin inactive it goes unread.
 | Hook | Callback |
 |------|----------|
 | `newspack_nodes/declare_config_keys` | `Config::register_config_keys` — registered at file scope with a literal name, because this plugin loads first. |
-| `Newspack_Nodes\Config::RESET_ACTION` | `Config::reset_local_cache` — not `reset()`, which would re-enter the substrate. |
+| `Newspack_Nodes\Config::RESET_ACTION` | `Config::reset_local_cache` — not `reset()`, which would re-enter the substrate; then `Log_Manager::reload_rules` at 11, so the open records re-read the saved ruleset. |
 | `newspack_nodes/job_worker/before_job` (filter, 4 args) | `App\Overview_Prefetch::admit` at priority 5, which declines an overtaken overview-prefetch job and passes one the tick could not have queued to its handler to refuse; then `Log_Manager::begin_job_context_filter` at 10 |
 | `newspack_nodes/job_worker/after_job` (action, 3 args) | `Log_Manager::end_job_context` |
+| `newspack_nodes/job_handlers` (filter) | An anonymous callback adding `App\Overview_Prefetch::HANDLER` → `App\Overview_Prefetch::run`, the job that stores the Overview's default answers (decision 37). |
 | `newspack_nodes/worker_identified` (action, 2 args) | `Log_Manager::identify_worker` — writes `worker_type` and `worker_partition` again with the worker a spawn request validated, so its record moves to that worker's own URL row. |
+| `newspack_nodes/oauth_resources` (filter) | An anonymous callback appending `MCP_Controller::resource()`, so the substrate serves the MCP door's RFC 9728 metadata and its OAuth server issues grants for it. |
 | `newspack_nodes/settings_sync/value` (filter, 2 args) | `newspack_event_logger_nodes_resolve_settings_sync_value` — resolves a blank or absent value to the OWNING config's default, and hydrates a pointer rule's hooks so the ruleset ships hook-complete to spokes. |
 | `newspack_nodes/registered_log_producers` | `newspack_event_logger_nodes_register_log_producers` — adds `Log_Manager::firehose_dir_template()`, so the dirs written and the dirs the log GC declares are one statement. |
 | `newspack_nodes/before_reconcile` / `newspack_nodes/after_reconcile` | An anonymous pair sharing an `$entered` flag, giving the minute-cadence reconcile pass its own `/jobs/newspack-nodes` request context. |

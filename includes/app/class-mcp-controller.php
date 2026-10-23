@@ -36,6 +36,7 @@ use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Oauth_Server;
 use Newspack_Nodes\Rate_Limit;
 
 \defined( 'ABSPATH' ) || exit;
@@ -472,6 +473,9 @@ class MCP_Controller {
 		if ( null === $record || ! \hash_equals( $record['key'], $m[2] ) ) {
 			return new \WP_Error( 'mcp_unauthorized', 'That session is unknown or expired.', [ 'status' => 401 ] );
 		}
+		if ( ! Command_Auth::admits_resource( $record, self::resource() ) ) {
+			return new \WP_Error( 'mcp_unauthorized', 'That session was issued for another resource.', [ 'status' => 401 ] );
+		}
 		if ( \function_exists( 'wp_set_current_user' ) ) {
 			// Whose authority is being spent. The scope only ever narrows it.
 			\wp_set_current_user( $record['user'] );
@@ -483,6 +487,41 @@ class MCP_Controller {
 			Rate_Limit::THROTTLED   => new \WP_Error( 'rate_limited', 'Too many MCP calls; please slow down.', [ 'status' => 429 ] ),
 			Rate_Limit::UNAVAILABLE => new \WP_Error( 'rate_limit_unavailable', 'MCP calls are metered in memcached or APCu, and neither answered.', [ 'status' => 503 ] ),
 		};
+	}
+
+	/**
+	 * Name, on each 401 the door answers, where the client reads the door's
+	 * protected-resource metadata (RFC 9728), which points it to sign-in.
+	 *
+	 * @api Hooked on `rest_post_dispatch` by the plugin bootstrap.
+	 * @param mixed            $response The response REST dispatch built.
+	 * @param \WP_REST_Server  $server   The REST server.
+	 * @param \WP_REST_Request $request  The request answered.
+	 * @return mixed The response, carrying `WWW-Authenticate` when it is the door's 401.
+	 */
+	public static function point_to_sign_in( mixed $response, \WP_REST_Server $server, \WP_REST_Request $request ): mixed {
+		// WordPress matches a route case-insensitively.
+		if ( $response instanceof \WP_REST_Response && 401 === $response->get_status()
+			&& 0 === \strcasecmp( '/' . self::REST_NAMESPACE . self::ROUTE, $request->get_route() ) ) {
+			$response->header( 'WWW-Authenticate', 'Bearer resource_metadata="' . Oauth_Server::resource_metadata_url( self::resource() ) . '"' );
+		}
+		return $response;
+	}
+
+	/**
+	 * The door's canonical URI, the OAuth resource it serves: its REST URL
+	 * over https, whatever the request's own scheme, with the host lowercased
+	 * and no trailing slash, as RFC 8707 has a client name it. Consent in
+	 * wp-admin and the door in REST must spell it alike, and every OAuth
+	 * endpoint refuses plain HTTP.
+	 *
+	 * @api The plugin bootstrap declares it on `newspack_nodes/oauth_resources`.
+	 * @throws \LogicException When the authority cannot be lowercased.
+	 */
+	public static function resource(): string {
+		$url = \rtrim( \rest_url( self::REST_NAMESPACE . self::ROUTE, 'https' ), '/' );
+		return \preg_replace_callback( '#^\w+://[^/?\#]+#', static fn ( array $m ): string => \strtolower( $m[0] ), $url )
+			?? throw new \LogicException( 'could not lowercase the MCP door\'s authority' );
 	}
 
 	/**

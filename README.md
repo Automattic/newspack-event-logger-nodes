@@ -4,7 +4,7 @@ Application built on the [`newspack-nodes`](https://github.com/Automattic/newspa
 
 ## Relation to newspack-nodes
 
-This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Fleet, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes), and both plugins must be installed and active. The plugin header declares `Requires Plugins: newspack-nodes`, which keeps the runtime active on WordPress 6.5 and later, but WordPress orders neither plugin loading nor plugin updates: this plugin sorts alphabetically ahead of the substrate, so its wiring waits on a [`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) closure at priority -11001 gated on the substrate being present *and* at 2.126.0 or newer. Below that floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there.
+This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Fleet, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes), and both plugins must be installed and active. The plugin header declares `Requires Plugins: newspack-nodes`, which keeps the runtime active on WordPress 6.5 and later, but WordPress orders neither plugin loading nor plugin updates: this plugin sorts alphabetically ahead of the substrate, so its wiring waits on a [`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) closure at priority -11001 gated on the substrate being present *and* at 2.127.0 or newer. Below that floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there.
 
 Application classes (`Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Stats_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Remote_Job_Rewrite_Node`, `Discovery_Collector_Node`) extend `Newspack_Nodes\Node`, and all but `Request_Flight_Node` carry their own `fill()` body. Five reach that base through the substrate's `Timer_Node` and also do periodic work in `fire()`: `Request_Builder_Node` rotates its in-flight cache so a stalled request still times out, `Request_Flight_Node` emits one row per in-flight request, `Flame_Builder_Node` emits its auto-tune decisions, `Stats_Builder_Node` writes its buffered rows, and `Discovery_Collector_Node` probes every spoke on a 300-second tick. Two of the eight are owned siblings a patron mounts rather than nodes a topology places: `Request_Builder_Node` owns `Request_Flight_Node`, and `Flame_Builder_Node` owns `Auto_Tuner_Node`. Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Bucket`, `Rule_Set`) do not. Three pieces live in the substrate and have no alias here: the generic [`Job_Worker_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-worker-node.php) executor, the [`Job_Intake`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-intake.php) large-write ingress, and the hub-side [`Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php). This plugin contributes the per-job request context (`Log_Manager::begin_job_context_filter` / `end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`). The runtime owns the wiring; this plugin owns the data processing.
 
@@ -18,7 +18,7 @@ The vocabulary here comes from the substrate. Its [documentation map](https://gi
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.126.0, installed and active |
+| `newspack-nodes` | 2.127.0, installed and active |
 | A cache backend | Memcached, or APCu |
 | `pdo_sqlite`, with FTS5 | On every host running the stats builder |
 
@@ -127,9 +127,9 @@ wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, 
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-Authentication is a [scoped command session](https://github.com/Automattic/newspack-nodes/blob/main/docs/commands-capabilities-and-sessions.md#sessions) (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<secret>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `dump_rules`, and `tune` adds `rules_upsert` and `rules_delete`.
+Authentication is a [scoped command session](https://github.com/Automattic/newspack-nodes/blob/main/docs/commands-capabilities-and-sessions.md#sessions) (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<secret>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the eight performance tools and `dump_rules`, and `tune` adds `rules_upsert` and `rules_delete`.
 
-Register it with a client — `<ID>` is the local name the client files it under:
+A client running the MCP authorization flow, such as a Claude custom connector, needs only the URL: every 401 carries `WWW-Authenticate: Bearer resource_metadata="…"`, naming the door's metadata on the substrate's OAuth server, and the user signs in to the site, picks `read` or `tune`, and names the connection. The session that connection holds is refused at any other resource. Any other client registers the endpoint with a session's key — `<ID>` is the local name the client files it under:
 
 ```
 claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp --header "Authorization: Bearer <HANDLE>.<KEY>"

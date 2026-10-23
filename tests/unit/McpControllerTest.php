@@ -14,6 +14,8 @@ use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Oauth_Server;
+use Newspack_Nodes\Oauth_Store;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 /**
@@ -44,7 +46,7 @@ class McpControllerTest extends TestCase {
 		Capabilities::$session_scope         = null;
 		$GLOBALS['_wp_test_current_user_id'] = 0;
 		Core::$memd                          = $this->prev_memd;
-		unset( $GLOBALS['_current_user_can'] );
+		unset( $GLOBALS['_current_user_can'], $GLOBALS['_wp_test_home_url'], $GLOBALS['_wp_test_rest_base'] );
 		parent::tearDown();
 	}
 
@@ -830,6 +832,144 @@ class McpControllerTest extends TestCase {
 			$GLOBALS['_wp_test_is_multisite'] = false;
 			$GLOBALS['_wp_test_is_main_site'] = true;
 		}
+	}
+
+	/** The door's canonical URI, served from a host no shim defaults to. */
+	private const DOOR = 'https://test.example/wp-json/newspack-event-logger-nodes/v1/mcp';
+
+	/** Where a client is told to read the door's sign-in metadata. */
+	private const SIGN_IN = 'Bearer resource_metadata="https://test.example/.well-known/oauth-protected-resource/wp-json/newspack-event-logger-nodes/v1/mcp"';
+
+	/**
+	 * Run `$body` past the deferred bootstrap with the site at test.example,
+	 * in a request whose own REST URL is plain http, in mixed case, with a
+	 * trailing slash.
+	 */
+	private static function at_test_example( \Closure $body ): void {
+		$GLOBALS['_wp_test_home_url'] = 'https://test.example';
+		$GLOBALS['_wp_test_rest_base'] = 'http://Test.Example/wp-json/';
+		self::with_deferred_bootstrap(
+			static function () use ( $body ): void {
+				\add_filter( 'rest_url', static fn ( string $url ): string => $url . '/' );
+				$body();
+			}
+		);
+	}
+
+	/** A request to the route at `$route` carrying `$bearer`. */
+	private function routed( string $route, ?string $bearer ): \WP_REST_Request {
+		$req = $this->request( [], $bearer );
+		$req->set_route( $route );
+		return $req;
+	}
+
+	/** What REST dispatch answers for a permission result, as WordPress filters it. */
+	private static function dispatched( \WP_REST_Request $req, true|\WP_Error $result ): \WP_REST_Response {
+		$response = true === $result
+			? new \WP_REST_Response( [], 200 )
+			: new \WP_REST_Response( [ 'code' => $result->get_error_code() ], $result->data['status'] );
+		return \apply_filters( 'rest_post_dispatch', $response, new \WP_REST_Server(), $req );
+	}
+
+	/** A session the grant for `$resource` mints, as `<handle>.<key>`, for user 7746 at tune. */
+	private static function grant_bearer( string $resource ): string {
+		$grant  = Oauth_Store::open_grant(
+			[
+				'client'   => '4410441044104410441044104410a1b2',
+				'user'     => 7746,
+				'scope'    => Capabilities::TUNE,
+				'resource' => $resource,
+				'name'     => 'Tui laptop',
+			]
+		)['grant'];
+		$minted = Command_Auth::mint_grant_session( $grant );
+		return $minted['handle'] . '.' . $minted['secret'];
+	}
+
+	/**
+	 * RFC 9728: every 401 the door answers tells the client where its
+	 * protected-resource metadata lives, so it can find the sign-in.
+	 */
+	public function test_a_401_names_where_to_sign_in(): void {
+		self::at_test_example(
+			function (): void {
+				[ $minted ] = $this->session( Capabilities::READ );
+				$controller = new MCP_Controller();
+				$cases      = [
+					'no credential'    => null,
+					'a wrong key'      => $minted['handle'] . '.' . \str_repeat( 'f', 64 ),
+					'another resource' => self::grant_bearer( 'https://test.example/wp-json/newspack-event-logger-nodes/v1/other' ),
+				];
+				foreach ( $cases as $case => $bearer ) {
+					$req    = $this->routed( '/newspack-event-logger-nodes/v1/mcp', $bearer );
+					$result = $controller->check_permission( $req );
+
+					$this->assertSame( 401, $result->data['status'] ?? null, $case );
+					$this->assertSame( self::SIGN_IN, self::dispatched( $req, $result )->get_headers()['WWW-Authenticate'] ?? null, $case );
+				}
+			}
+		);
+	}
+
+	/** The header rides the door's 401 alone: not its 429, not another route's 401. */
+	public function test_only_the_doors_401_names_where_to_sign_in(): void {
+		self::at_test_example(
+			function (): void {
+				[ , $bearer ] = $this->session( Capabilities::READ );
+				$controller   = new MCP_Controller();
+				$door         = $this->routed( '/newspack-event-logger-nodes/v1/mcp', $bearer );
+				for ( $i = 0; $i < MCP_Controller::RATE_LIMIT_BURST; $i++ ) {
+					$controller->check_permission( $door );
+				}
+				$throttled = $controller->check_permission( $door );
+				$refused   = new \WP_Error( 'rest_forbidden', 'no', [ 'status' => 401 ] );
+
+				$this->assertSame( 429, $throttled->data['status'] ?? null );
+				$this->assertArrayNotHasKey( 'WWW-Authenticate', self::dispatched( $door, $throttled )->get_headers() );
+				foreach ( [ '/newspack-event-logger-nodes/v1/other', '/newspack-event-logger-nodes/v1/mcp/x' ] as $route ) {
+					$this->assertArrayNotHasKey( 'WWW-Authenticate', self::dispatched( $this->routed( $route, null ), $refused )->get_headers(), $route );
+				}
+			}
+		);
+	}
+
+	/** The door declares itself, lowercased and untrailed, beside every other resource. */
+	public function test_the_door_declares_its_resource(): void {
+		self::at_test_example(
+			function (): void {
+				$this->assertSame( self::DOOR, MCP_Controller::resource() );
+				$this->assertSame( [ 'https://kea.example/mcp', self::DOOR ], \apply_filters( 'newspack_nodes/oauth_resources', [ 'https://kea.example/mcp' ] ) );
+				$this->assertSame( self::DOOR, Oauth_Server::resource_metadata( self::DOOR )['resource'] ?? null, 'the substrate serves its metadata' );
+			}
+		);
+	}
+
+	/** A session a grant minted for another resource on this site is not spent here. */
+	public function test_a_session_for_another_resource_is_refused(): void {
+		self::at_test_example(
+			function (): void {
+				$bearer = self::grant_bearer( 'https://test.example/wp-json/newspack-event-logger-nodes/v1/other' );
+
+				$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
+
+				$this->assertInstanceOf( \WP_Error::class, $result );
+				$this->assertSame( 'mcp_unauthorized', $result->get_error_code() );
+				$this->assertSame( 401, $result->data['status'] ?? null );
+				$this->assertNotSame( Capabilities::TUNE, Capabilities::$session_scope, 'its scope is never installed' );
+			}
+		);
+	}
+
+	/** A session a grant minted for this door is admitted at its approved scope. */
+	public function test_a_grant_session_for_this_door_is_admitted(): void {
+		self::at_test_example(
+			function (): void {
+				$bearer = self::grant_bearer( self::DOOR );
+
+				$this->assertTrue( ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) ) );
+				$this->assertSame( Capabilities::TUNE, Capabilities::$session_scope );
+			}
+		);
 	}
 
 	/**

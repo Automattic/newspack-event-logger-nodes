@@ -172,7 +172,10 @@ if ( ! class_exists( '\WP_REST_Request' ) ) {
 		private array $params  = [];
 		private array $headers = [];
 		private string $body   = '';
+		private string $route  = '';
 		public function __construct( array $params = [] ) { $this->params = $params; }
+		public function set_route( string $route ): void { $this->route = $route; }
+		public function get_route(): string { return $this->route; }
 		public function get_param( string $key ): mixed { return $this->params[ $key ] ?? null; }
 		public function set_param( string $key, mixed $value ): void { $this->params[ $key ] = $value; }
 		public function set_body( string $body ): void { $this->body = $body; }
