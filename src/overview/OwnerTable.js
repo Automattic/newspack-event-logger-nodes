@@ -6,7 +6,7 @@
  */
 
 import { useId } from '@wordpress/element';
-import { __ } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import {
 	formatDuration,
@@ -18,6 +18,8 @@ import RequestProfile, {
 	averageCaption,
 	ProfileWithCaption,
 	ShareBar,
+	ShowMoreRow,
+	useShowMore,
 } from './RequestProfile';
 import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 
@@ -53,27 +55,29 @@ const ownerColor = ( owner ) => {
 export default function OwnerTable( { owners, perRequest = false, summary } ) {
 	const headingId = useId();
 	const { sorted, dirOf, onSort } = useColumnSort( 'ms' );
+	const msOf = ( row ) => ( perRequest ? row.ms_per_request : row.ms );
+	const callsOf = ( row ) =>
+		perRequest ? row.calls_per_request : row.calls;
+	const more = useShowMore(
+		sorted( owners ?? [], ( row, field ) => {
+			if ( 'owner' === field ) {
+				return row.owner;
+			}
+			if ( 'calls' === field ) {
+				return callsOf( row );
+			}
+			return 'share' === field ? row.share : msOf( row );
+		} )
+	);
 
 	if ( ! owners || 0 === owners.length ) {
 		return null;
 	}
 
-	const msOf = ( row ) => ( perRequest ? row.ms_per_request : row.ms );
 	const total = summary ?? {
 		ms: owners.reduce( ( sum, row ) => sum + msOf( row ), 0 ),
 		share: owners.reduce( ( sum, row ) => sum + row.share, 0 ),
 	};
-	const callsOf = ( row ) =>
-		perRequest ? row.calls_per_request : row.calls;
-	const rows = sorted( owners, ( row, field ) => {
-		if ( 'owner' === field ) {
-			return row.owner;
-		}
-		if ( 'calls' === field ) {
-			return callsOf( row );
-		}
-		return 'share' === field ? row.share : msOf( row );
-	} );
 	// The Time Breakdown's labels; an average says per request in its caption.
 	const columns = [
 		[ 'owner', __( 'Owner', 'newspack-event-logger-nodes' ) ],
@@ -119,7 +123,7 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 					</tr>
 				</thead>
 				<tbody>
-					{ rows.map( ( row ) => {
+					{ more.visible.map( ( row ) => {
 						const { owner, share } = row;
 						const ms = msOf( row );
 						const calls = Math.round( callsOf( row ) );
@@ -150,6 +154,20 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 							</tr>
 						);
 					} ) }
+					<ShowMoreRow
+						more={ more }
+						colSpan={ columns.length }
+						label={ sprintf(
+							// translators: %d: number of additional owners that can be shown.
+							_n(
+								'Show %d more owner',
+								'Show %d more owners',
+								more.hidden,
+								'newspack-event-logger-nodes'
+							),
+							more.hidden
+						) }
+					/>
 				</tbody>
 				<tfoot>
 					<tr className="newspack-nodes-table__summary">

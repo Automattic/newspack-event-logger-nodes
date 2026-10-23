@@ -23,9 +23,9 @@ import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 import './styles/request-profile.scss';
 
 /**
- * Categories the table draws before it truncates; the rest wait behind the
- * Show-more button. The summary bar above is never truncated, so a category
- * held back from the table still has a segment.
+ * Rows a ranked table draws before it truncates; the rest wait behind the
+ * Show-more button. The summary bar above is never truncated, so a row held
+ * back from the table still has a segment.
  */
 const DEFAULT_VISIBLE_COUNT = 10;
 
@@ -216,6 +216,56 @@ export function ShareBar( { segments } ) {
 }
 
 /**
+ * A ranked table's first `DEFAULT_VISIBLE_COUNT` rows, and a toggle to the
+ * rest; `ShowMoreRow` draws the toggle.
+ *
+ * @template T
+ * @param {Array<T>} rows The table's rows, in drawing order.
+ * @return {{visible: Array<T>, hidden: number, showAll: boolean, toggle: () => void}} The rows to draw, how many wait behind the toggle, and its state.
+ */
+export function useShowMore( rows ) {
+	const [ showAll, setShowAll ] = useState( false );
+	const hidden = Math.max( 0, rows.length - DEFAULT_VISIBLE_COUNT );
+	return {
+		visible: showAll ? rows : rows.slice( 0, DEFAULT_VISIBLE_COUNT ),
+		hidden,
+		showAll,
+		toggle: () => setShowAll( ! showAll ),
+	};
+}
+
+/**
+ * The table row that toggles a `useShowMore()` table; nothing when no row
+ * is held back.
+ *
+ * @param {Object}                         props         Component props.
+ * @param {ReturnType<typeof useShowMore>} props.more    The table's `useShowMore()`.
+ * @param {string}                         props.label   Already-translated "Show N more" text, read while rows are held back.
+ * @param {number}                         props.colSpan The table's column count.
+ * @return {import('react').ReactElement|null} The row.
+ */
+export function ShowMoreRow( { more, label, colSpan } ) {
+	if ( 0 === more.hidden ) {
+		return null;
+	}
+	return (
+		<tr>
+			<td colSpan={ colSpan } style={ { textAlign: 'center' } }>
+				<button
+					type="button"
+					className="button-link event-logger-profile-expansion"
+					onClick={ more.toggle }
+				>
+					{ more.showAll
+						? __( 'Show less', 'newspack-event-logger-nodes' )
+						: label }
+				</button>
+			</td>
+		</tr>
+	);
+}
+
+/**
  * The time breakdown for one request, or for an average of many.
  *
  * Every percentage divides by `totalMs`, the wall clock, rather than by the
@@ -251,7 +301,6 @@ export default function RequestProfile( {
 } ) {
 	const headingId = useId();
 	const [ expandedState, setExpandedState ] = useState( null );
-	const [ showAll, setShowAll ] = useState( false );
 
 	const sortedProfiles = useMemo(
 		() => sortProfiles( profiles ),
@@ -288,13 +337,7 @@ export default function RequestProfile( {
 			? row.state
 			: row[ 'count' === field ? 'count' : 'time' ]
 	);
-	const visibleProfiles =
-		showAll || tableRows.length <= DEFAULT_VISIBLE_COUNT
-			? tableRows
-			: tableRows.slice( 0, DEFAULT_VISIBLE_COUNT );
-
-	const hiddenCount = sortedProfiles.length - DEFAULT_VISIBLE_COUNT;
-	const hasHiddenProfiles = hiddenCount > 0;
+	const more = useShowMore( tableRows );
 
 	if ( sortedProfiles.length === 0 ) {
 		return null;
@@ -376,101 +419,85 @@ export default function RequestProfile( {
 					</tr>
 				</thead>
 				<tbody>
-					{ visibleProfiles.map(
-						( { state, count, time, entries } ) => {
-							const share = shareOf( time );
-							const hasEntries =
-								Object.keys( entries ).length > 0;
-							const isExpanded = expandedState === state;
+					{ more.visible.map( ( { state, count, time, entries } ) => {
+						const share = shareOf( time );
+						const hasEntries = Object.keys( entries ).length > 0;
+						const isExpanded = expandedState === state;
 
-							return (
-								<Fragment key={ state }>
-									<tr
-										data-ask={
-											isCallbackCategory( state )
-												? undefined
-												: `category:${ state }`
-										}
-										style={ {
-											cursor: hasEntries
-												? 'pointer'
-												: 'default',
-										} }
-										onClick={ () =>
-											hasEntries && toggleExpand( state )
-										}
-									>
-										<td>
+						return (
+							<Fragment key={ state }>
+								<tr
+									data-ask={
+										isCallbackCategory( state )
+											? undefined
+											: `category:${ state }`
+									}
+									style={ {
+										cursor: hasEntries
+											? 'pointer'
+											: 'default',
+									} }
+									onClick={ () =>
+										hasEntries && toggleExpand( state )
+									}
+								>
+									<td>
+										<span
+											className="event-logger-profile-swatch"
+											style={ {
+												background:
+													colourOf.get( state ),
+											} }
+										/>
+										{ state }
+										{ hasEntries && (
 											<span
-												className="event-logger-profile-swatch"
+												className="newspack-nodes-status"
 												style={ {
-													background:
-														colourOf.get( state ),
+													marginLeft: '6px',
 												} }
+											>
+												{ isExpanded ? '▼' : '▶' }
+											</span>
+										) }
+									</td>
+									<td className="newspack-nodes-table__terminal-data">
+										{ formatDuration( time ) }
+									</td>
+									<td className="newspack-nodes-table__terminal-data">
+										{ shareText( share ) }
+									</td>
+									<td className="newspack-nodes-table__terminal-data">
+										{ Math.round( count ) }
+									</td>
+								</tr>
+								{ isExpanded && hasEntries && (
+									<tr className="newspack-nodes-table__details">
+										<td colSpan={ 4 }>
+											<ProfileEntries
+												entries={ entries }
+												category={ state }
 											/>
-											{ state }
-											{ hasEntries && (
-												<span
-													className="newspack-nodes-status"
-													style={ {
-														marginLeft: '6px',
-													} }
-												>
-													{ isExpanded ? '▼' : '▶' }
-												</span>
-											) }
-										</td>
-										<td className="newspack-nodes-table__terminal-data">
-											{ formatDuration( time ) }
-										</td>
-										<td className="newspack-nodes-table__terminal-data">
-											{ shareText( share ) }
-										</td>
-										<td className="newspack-nodes-table__terminal-data">
-											{ Math.round( count ) }
 										</td>
 									</tr>
-									{ isExpanded && hasEntries && (
-										<tr className="newspack-nodes-table__details">
-											<td colSpan={ 4 }>
-												<ProfileEntries
-													entries={ entries }
-													category={ state }
-												/>
-											</td>
-										</tr>
-									) }
-								</Fragment>
-							);
-						}
-					) }
-					{ hasHiddenProfiles && (
-						<tr>
-							<td colSpan={ 4 } style={ { textAlign: 'center' } }>
-								<button
-									type="button"
-									className="button-link event-logger-profile-expansion"
-									onClick={ () => setShowAll( ! showAll ) }
-								>
-									{ showAll
-										? __(
-												'Show less',
-												'newspack-event-logger-nodes'
-										  )
-										: sprintf(
-												// translators: %d: number of additional categories that can be shown.
-												_n(
-													'Show %d more category',
-													'Show %d more categories',
-													hiddenCount,
-													'newspack-event-logger-nodes'
-												),
-												hiddenCount
-										  ) }
-								</button>
-							</td>
-						</tr>
-					) }
+								) }
+							</Fragment>
+						);
+					} ) }
+					<ShowMoreRow
+						more={ more }
+						colSpan={ 4 }
+						label={ sprintf(
+							// translators: %d: number of additional categories that can be shown.
+							_n(
+								'Show %d more category',
+								'Show %d more categories',
+								more.hidden,
+								'newspack-event-logger-nodes'
+							),
+							more.hidden
+						) }
+					/>
 				</tbody>
 				{ totaled && (
 					<tfoot>

@@ -36,6 +36,35 @@ describe( 'OwnerTable', () => {
 		unmount();
 	} );
 
+	it( 'draws the ten dearest owners and holds the rest behind Show more', () => {
+		const owners = Array.from( { length: 13 }, ( _, i ) => ( {
+			owner: `kea-${ i }`,
+			ms: 130 - i,
+			share: 0.07,
+			calls: 2,
+		} ) );
+		const { container, unmount } = mount( { owners } );
+		const button = () => container.querySelector( 'tbody button' );
+		const drawn = () =>
+			cells( container )
+				.filter( ( row ) => row.length > 1 )
+				.map( ( [ owner ] ) => owner );
+
+		expect( drawn() ).toEqual(
+			owners.slice( 0, 10 ).map( ( { owner } ) => owner )
+		);
+		expect( button().textContent ).toBe( 'Show 3 more owners' );
+		// The bar is never truncated: every owner keeps its segment.
+		expect(
+			container.querySelectorAll( '.event-logger-profile-bar > *' )
+		).toHaveLength( 13 );
+
+		act( () => button().click() );
+		expect( drawn() ).toHaveLength( 13 );
+		expect( button().textContent ).toBe( 'Show less' );
+		unmount();
+	} );
+
 	it( 'heads the columns for one request', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
 		expect(
