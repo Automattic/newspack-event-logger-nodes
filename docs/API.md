@@ -575,7 +575,7 @@ The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 
 [`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) (priority -11001, the deferred bootstrap), [`rest_api_init`](https://developer.wordpress.org/reference/hooks/rest_api_init/), `admin_menu`,
 `admin_enqueue_scripts`, `admin_init`, `admin_post_newspack_event_logger_nodes_reset_settings`,
-`updated_option`, `added_option` and `pre_update_option` (a filter, 3 args) in the admin.
+`updated_option`, `added_option`, `deleted_option` and `pre_update_option` (a filter, 3 args) in the admin.
 
 The profiler drop-in binds two more at file scope, outside this plugin's bootstrap, and
 [`App\Core`](../includes/app/class-core.php) binds the rest, per governing rule:
