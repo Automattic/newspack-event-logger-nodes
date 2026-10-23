@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **The owner table's heading reads "Time By Owner"**, as "Time Breakdown" is capitalised.
-- **On the Overview, Time By Owner sits in one section with the Global Time Breakdown and closes for both.** It follows the breakdown with no gap between them, and carries the breakdown's Total Profiled row and its "Average breakdown across N requests" caption in place of its own total and "Self time by the code that ran it" caption. With no owner listed, the breakdown keeps them.
+- **On the Overview and the URL detail view, Time By Owner sits in one section with the averaged Time Breakdown and closes for both.** One `ProfileWithOwners` draws the pair on both pages. The owner table follows the breakdown with no gap between them, and carries the breakdown's Total Profiled row and its "Average breakdown across N requests" caption in place of its own total and "Self time by the code that ran it" caption. With no owner listed, the breakdown keeps them.
 - **Time By Owner rounds an averaged count to a whole number**, as the Time Breakdown does, where it showed one decimal (`14.0`).
 
 ## [0.153.3] - 2026-10-23

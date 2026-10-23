@@ -33,11 +33,7 @@ import {
 import CategoryTimeChart from '../CategoryTimeChart';
 import { breakdownState } from '../AggregateTimeChart';
 import { answerSlots, chartDims } from '../chartSlots';
-import RequestProfile, {
-	averageCaption,
-	ProfileWithCaption,
-} from '../RequestProfile';
-import OwnerTable from '../OwnerTable';
+import { ProfileWithOwners } from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
@@ -165,10 +161,6 @@ export default function OverviewSection( {
 		return null;
 	}
 
-	const leaderboard =
-		overview.leaderboard?.count > 0 ? overview.leaderboard : null;
-	// With owners listed, their table closes for both.
-	const owned = null !== leaderboard && overview.owners?.length > 0;
 	const breakdownHeading = serverFilter
 		? sprintf(
 				// translators: %s: the server name being filtered by.
@@ -359,50 +351,13 @@ export default function OverviewSection( {
 						selectedBuckets={ selectedBuckets }
 					/>
 
-					<div>
-						{ leaderboard &&
-							( owned ? (
-								<RequestProfile
-									profiles={ leaderboard.categories }
-									totalMs={ leaderboard.avg_ms }
-									totalProfiledTime={ leaderboard.total_time }
-									title={ breakdownHeading }
-									totaled={ false }
-								/>
-							) : (
-								<ProfileWithCaption
-									profiles={ leaderboard.categories }
-									totalMs={ leaderboard.avg_ms }
-									totalProfiledTime={ leaderboard.total_time }
-									count={ leaderboard.count }
-									heading={ breakdownHeading }
-									serverName={ serverFilter }
-								/>
-							) ) }
-						{ /* The breakdown's total and caption close both tables. */ }
-						<OwnerTable
-							owners={ overview.owners }
-							perRequest
-							summary={
-								owned
-									? {
-											ms: leaderboard.total_time,
-											share:
-												null ===
-													leaderboard.total_time ||
-												! ( leaderboard.avg_ms > 0 )
-													? null
-													: leaderboard.total_time /
-													  leaderboard.avg_ms,
-											caption: averageCaption(
-												leaderboard.count,
-												serverFilter
-											),
-									  }
-									: undefined
-							}
-						/>
-					</div>
+					<ProfileWithOwners
+						profile={ overview.leaderboard }
+						totalMs={ overview.leaderboard?.avg_ms }
+						owners={ overview.owners }
+						heading={ breakdownHeading }
+						serverName={ serverFilter }
+					/>
 				</CardBody>
 			</Card>
 		</div>

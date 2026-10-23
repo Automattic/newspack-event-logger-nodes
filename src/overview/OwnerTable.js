@@ -14,7 +14,11 @@ import {
 } from '@newspack-nodes/shared/utils/formatUtils';
 import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
-import { ShareBar } from './RequestProfile';
+import RequestProfile, {
+	averageCaption,
+	ProfileWithCaption,
+	ShareBar,
+} from './RequestProfile';
 import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 
 /** The owner the server names for time no code claims. */
@@ -187,6 +191,74 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 					</>
 				) }
 			</p>
+		</div>
+	);
+}
+
+/**
+ * An averaged Time Breakdown and the Time By Owner table straight below it,
+ * as one section. With owners listed, their table closes for both, carrying
+ * the breakdown's Total Profiled figures and its caption; without, the
+ * breakdown keeps them.
+ *
+ * @param {Object}  props              Component props.
+ * @param {?Object} props.profile      The averaged profile: `{ categories, count, total_time }`.
+ * @param {?number} props.totalMs      Average wall-clock duration, every share's denominator.
+ * @param {?Array}  props.owners       Owner rows, per request, as `OwnerTable` takes them.
+ * @param {string}  [props.heading]    Already-translated breakdown heading; omitted reads "Time Breakdown".
+ * @param {string}  [props.serverName] Server the averages are scoped to; '' is site-wide.
+ * @return {import('react').ReactElement} The section.
+ */
+export function ProfileWithOwners( {
+	profile,
+	totalMs,
+	owners,
+	heading,
+	serverName = '',
+} ) {
+	const profiled = profile?.count > 0 ? profile : null;
+	const owned = null !== profiled && owners?.length > 0;
+	const share =
+		owned && null !== profiled.total_time && totalMs > 0
+			? profiled.total_time / totalMs
+			: null;
+	return (
+		<div>
+			{ profiled &&
+				( owned ? (
+					<RequestProfile
+						profiles={ profiled.categories }
+						totalMs={ totalMs }
+						totalProfiledTime={ profiled.total_time }
+						title={ heading }
+						totaled={ false }
+					/>
+				) : (
+					<ProfileWithCaption
+						profiles={ profiled.categories }
+						totalMs={ totalMs }
+						totalProfiledTime={ profiled.total_time }
+						count={ profiled.count }
+						heading={ heading }
+						serverName={ serverName }
+					/>
+				) ) }
+			<OwnerTable
+				owners={ owners }
+				perRequest
+				summary={
+					owned
+						? {
+								ms: profiled.total_time,
+								share,
+								caption: averageCaption(
+									profiled.count,
+									serverName
+								),
+						  }
+						: undefined
+				}
+			/>
 		</div>
 	);
 }
