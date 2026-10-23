@@ -119,13 +119,13 @@ class Job_Router_Node extends Node {
 
 		$handler = Core::as_string( $body['handler'] ?? '' );
 		if ( ! \preg_match( self::HANDLER_NAME_PATTERN, $handler ) ) {
-			$this->drop_message( $message, "invalid handler name: {$handler}" );
+			$this->drop_message( $message, 'invalid handler name', "handler: {$handler}" );
 			return;
 		}
 
 		$parameters = $body['parameters'] ?? [];
 		if ( ! \is_array( $parameters ) ) {
-			$this->drop_message( $message, "{$handler} has non-array parameters" );
+			$this->drop_message( $message, 'non-array parameters', "handler: {$handler}" );
 			return;
 		}
 
