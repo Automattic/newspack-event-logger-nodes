@@ -25,7 +25,7 @@ final class FlameFactsTest extends TestCase {
 
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
-		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries', 'owners', 'owner_timings', 'owner_timings_site', 'pages', 'timings_page' ], $opened ) ) );
+		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'urls_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries', 'owners', 'owner_timings', 'owner_timings_site', 'pages', 'timings_page' ], $opened ) ) );
 		$this->assertSame( [ [ 11 ] ], $this->facts( 'PRAGMA user_version' ) );
 		$this->assertSame( [ [ 'requests_server' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_server'" ) );
 		$this->assertSame( [ [ 'timings_site_bucket' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'timings_site_bucket'" ) );
@@ -97,6 +97,43 @@ final class FlameFactsTest extends TestCase {
 	}
 
 	/**
+	 * Each URL's sums over the window, per worker flag, keyed by the URL so
+	 * a URL's row is one seek: the counts and sums add, `min_ms` folds the
+	 * smaller, the maxima and the last moments the larger, and the extremes
+	 * and the peak may be null, which a negation carries.
+	 */
+	public function test_v11_declares_the_url_window(): void {
+		$tables = Flame_Facts_Row_Schema::tables();
+		$window = $tables['urls_window'];
+
+		$this->assertSame( [ 'url_id', 'worker', 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'sum_peak_mb', 'min_ms', 'max_ms', 'max_peak_mb', 'last_seen', 'last_bucket' ], \array_keys( $window['columns'] ) );
+		$this->assertSame( [ 'url_id', 'worker' ], $window['key'] );
+		$this->assertSame(
+			[
+				'count'       => 'sum',
+				'timed'       => 'sum',
+				'count_2xx'   => 'sum',
+				'count_3xx'   => 'sum',
+				'count_4xx'   => 'sum',
+				'count_5xx'   => 'sum',
+				'errors'      => 'sum',
+				'sum_ms'      => 'sum',
+				'sum_peak_mb' => 'sum',
+				'min_ms'      => 'min',
+				'max_ms'      => 'max',
+				'max_peak_mb' => 'max',
+				'last_seen'   => 'max',
+				'last_bucket' => 'max',
+			],
+			$window['add']
+		);
+		$this->assertSame( [ 'REAL', 'REAL', 'REAL' ], [ $window['columns']['min_ms'], $window['columns']['max_ms'], $window['columns']['max_peak_mb'] ] );
+		$this->assertSame( [ 'urls_window_last' => [ 'last_bucket' ] ], $window['indexes'], 'the key leads with url_id' );
+		$this->assertSame( $tables['category_window']['retain'], $window['retain'] );
+		$this->assertContains( [ 'urls_window', 'url_id', 'id' ], $tables['urls']['retained_by'] );
+	}
+
+	/**
 	 * Every stats table keeps the span and an hour of slack, read from
 	 * `min_lifetime` each time the tables are asked for: 24 buckets and 12 at
 	 * 7,200 seconds, `requests_hourly` the 3 hours covering those 36; 36 and
@@ -111,6 +148,7 @@ final class FlameFactsTest extends TestCase {
 				$this->assertSame( [ 'bucket', $buckets, Bucket::SECONDS ], $tables[ $table ]['retain'], "{$table} at {$lifetime}" );
 			}
 			$this->assertSame( [ 'last_bucket', $buckets, Bucket::SECONDS ], $tables['category_window']['retain'] );
+			$this->assertSame( [ 'last_bucket', $buckets, Bucket::SECONDS ], $tables['urls_window']['retain'] );
 			$this->assertSame( [ 'hour', $hours, Bucket::HOUR_SECONDS ], $tables['requests_hourly']['retain'] );
 		}
 	}
@@ -131,7 +169,7 @@ final class FlameFactsTest extends TestCase {
 	public function test_each_named_table_is_retained_by_every_column_naming_it(): void {
 		$tables = Flame_Facts_Row_Schema::tables();
 
-		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ], [ 'owner_timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
+		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ], [ 'owner_timings', 'url_id', 'id' ], [ 'urls_window', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
 		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'timings_page', 'server_id', 'id' ], [ 'owner_timings', 'server_id', 'id' ], [ 'owner_timings_site', 'server_id', 'id' ], [ 'category_window', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
 		$this->assertSame( [ [ 'timings', 'entry_id', 'id' ], [ 'timings_site', 'entry_id', 'id' ], [ 'timings_page', 'entry_id', 'id' ], [ 'category_window', 'entry_id', 'id' ] ], $tables['entries']['retained_by'] );
 		foreach ( $tables as $table => $spec ) {

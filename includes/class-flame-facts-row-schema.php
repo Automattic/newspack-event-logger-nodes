@@ -12,9 +12,10 @@
  * `Bootstrap::row_table()`.
  *
  * `category_window` holds each server's sums per category and entry over
- * the last `Bucket::window()`, and `window_expiry` one row per bucket
+ * the last `Bucket::window()`, `urls_window` each URL's request sums and
+ * extremes over the same buckets, and `window_expiry` one row per bucket
  * expired, so a replayed expiry subtracts nothing twice; its newest bucket
- * is the window's watermark.
+ * is the watermark of both windows.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -33,7 +34,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * @phpstan-type Row_Spec array{
  *   columns: array<string,string>,
  *   key?: list<string>,
- *   add?: array<string,'sum'|'max'>,
+ *   add?: array<string,'sum'|'max'|'min'>,
  *   indexes?: array<string,list<string>>,
  *   retain?: array{0:string,1:int,2:int},
  *   retained_by?: list<array{0:string,1:string,2:string}>,
@@ -98,7 +99,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The eighteen row tables, each column in row order, each table a
+	 * The nineteen row tables, each column in row order, each table a
 	 * `NAMED_BY` column names `retained_by` that column, and that column
 	 * leading an index wherever its table's key or another index does not.
 	 * Each stats table keeps `Bucket::window()` and `Bucket::RETAIN_SLACK`
@@ -243,6 +244,45 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'last_bucket' => 'max',
 				],
 				'indexes' => [ 'category_window_last' => [ 'last_bucket' ] ],
+				'retain'  => [ 'last_bucket', $kept, Bucket::SECONDS ],
+			],
+			'urls_window'     => [
+				'columns' => [
+					'url_id'      => 'INTEGER NOT NULL',
+					'worker'      => 'INTEGER NOT NULL',
+					'count'       => 'INTEGER NOT NULL',
+					'timed'       => 'INTEGER NOT NULL',
+					'count_2xx'   => 'INTEGER NOT NULL',
+					'count_3xx'   => 'INTEGER NOT NULL',
+					'count_4xx'   => 'INTEGER NOT NULL',
+					'count_5xx'   => 'INTEGER NOT NULL',
+					'errors'      => 'INTEGER NOT NULL',
+					'sum_ms'      => 'REAL NOT NULL',
+					'sum_peak_mb' => 'REAL NOT NULL',
+					'min_ms'      => 'REAL',
+					'max_ms'      => 'REAL',
+					'max_peak_mb' => 'REAL',
+					'last_seen'   => 'REAL NOT NULL',
+					'last_bucket' => 'INTEGER NOT NULL',
+				],
+				'key'     => [ 'url_id', 'worker' ],
+				'add'     => [
+					'count'       => 'sum',
+					'timed'       => 'sum',
+					'count_2xx'   => 'sum',
+					'count_3xx'   => 'sum',
+					'count_4xx'   => 'sum',
+					'count_5xx'   => 'sum',
+					'errors'      => 'sum',
+					'sum_ms'      => 'sum',
+					'sum_peak_mb' => 'sum',
+					'min_ms'      => 'min',
+					'max_ms'      => 'max',
+					'max_peak_mb' => 'max',
+					'last_seen'   => 'max',
+					'last_bucket' => 'max',
+				],
+				'indexes' => [ 'urls_window_last' => [ 'last_bucket' ] ],
 				'retain'  => [ 'last_bucket', $kept, Bucket::SECONDS ],
 			],
 			'window_expiry'   => [

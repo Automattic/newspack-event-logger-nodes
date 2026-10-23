@@ -22,14 +22,16 @@
  * written adds nothing.
  *
  * The builder also keeps `category_window`, each server's sums per
- * category and entry over the last `Bucket::window()`: a request adds its
- * timings when its bucket is newer than the window's watermark, and every
- * write subtracts each bucket that left the window, once per
- * `window_expiry` row. The watermark is the newest bucket `window_expiry`
+ * category and entry over the last `Bucket::window()`, and `urls_window`,
+ * each URL's request sums and extremes over the same buckets: a request
+ * adds its timings and its URL's row when its bucket is newer than the
+ * windows' watermark, and every write subtracts each bucket that left the
+ * windows, once per `window_expiry` row, recomputing a URL's extreme where
+ * the bucket held it. The watermark is the newest bucket `window_expiry`
  * holds, read once, before the first fold. With none, or one older than
- * `timings_site` holds, the window is rebuilt from `timings_site`; one past
- * the window's start, a span grown since, expires nothing until the start
- * passes it.
+ * `timings_site` holds, the windows are rebuilt from `timings_site` and
+ * `requests`; one past the windows' start, a span grown since, expires
+ * nothing until the start passes it.
  *
  * A flame whose record is gone — no `request_at`, a place that does not
  * parse, or a read that finds nothing — is skipped and counted, never
@@ -97,6 +99,18 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/** The highest status code a status class is read from. */
 	public const STATUS_MAX = 599;
+
+	/** The status classes the URL window counts, each in its own column. */
+	private const WINDOW_CLASSES = [ 2, 3, 4, 5 ];
+
+	/** The URL window's columns an expiry recomputes rather than subtracts. */
+	private const URL_EXTREMES = [ 'min_ms', 'max_ms', 'max_peak_mb' ];
+
+	/**
+	 * URLs one recompute read names, its bucket the one bind more: under
+	 * SQLite's lowest bound-variable limit, 999.
+	 */
+	private const URLS_PER_READ = 998;
 
 	/**
 	 * Requests the buffer holds before the record reaching the count writes
@@ -365,7 +379,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * is timed, a timing row per profile category and entry for the URL, its
 	 * page and the site, an owner row per owner the record measured,
 	 * `Request_Builder_Node::owners_of()`, for the URL and for the site, and
-	 * its share of the category window.
+	 * its share of the category window and of its URL's window row.
 	 *
 	 * Filed where it COMPLETED (decision 19): its start plus its duration,
 	 * clamped to the tick, since a request cannot have finished after it
@@ -439,6 +453,11 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$named  = [ 'owner_id' => $this->named_at( 'owner_id', $owner ) ];
 			$then[] = [ 'add', 'owner_timings', [ $bucket, null, null, null, $owner_ms, $calls, 1 ], [], self::ids_at( 'owner_timings', $named + $by_url ) ];
 			$then[] = [ 'add', 'owner_timings_site', [ $bucket, null, $worker, null, $owner_ms, $calls, 1 ], [], self::ids_at( 'owner_timings_site', $named + $site ) ];
+		}
+		if ( $windowed ) {
+			$class  = self::status_class( $status );
+			$sample = $timed ? $duration : null;
+			$then[] = [ ...self::url_window_op( [ null, $worker, 1, $timed ? 1 : 0, ...\array_map( static fn ( int $counted ): int => $counted === $class ? 1 : 0, self::WINDOW_CLASSES ), self::error_counts( $error ) ? 1 : 0, $ms, $peak, $sample, $sample, $peak, (float) $finished ], 1, $bucket ), [], self::ids_at( 'urls_window', [ 'url_id' => $url_at ] ) ];
 		}
 		$this->op(
 			[
@@ -739,13 +758,13 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Move the window to end at the current bucket: subtract each bucket that
-	 * left it, or rebuild it from `timings_site` when the file holds no
-	 * watermark or `timings_site` may no longer hold the gap. A watermark at
-	 * or past the window's start, a span grown since it was kept, expires
-	 * nothing until the start passes it. One ROWS batch, whose
-	 * `window_expiry` rows carry the new watermark; a refusal raises and the
-	 * watermark stays.
+	 * Move the windows to end at the current bucket: subtract each bucket
+	 * that left them, or rebuild them from `timings_site` and `requests` when
+	 * the file holds no watermark or `timings_site` may no longer hold the
+	 * gap. A watermark at or past the windows' start, a span grown since they
+	 * were kept, expires nothing until the start passes it. One ROWS batch,
+	 * whose `window_expiry` rows carry the new watermark; a refusal raises and
+	 * the watermark stays.
 	 *
 	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
@@ -762,7 +781,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		$reader ??= $this->own_reader();
 		$batch  = null === $this->window_through || $this->window_through < $through - Bucket::RETAIN_SLACK
-			? self::window_rebuild( $reader, $through, $now )
+			? self::window_rebuild( $reader, $through )
 			: self::window_expiries( $reader, $this->window_through + 1, $through );
 		// Freed first: SQLite keeps a file a write locks open for reuse.
 		$reader = null;
@@ -781,9 +800,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * One `ignore` per bucket from `$first` through `$last`, each carrying the
-	 * negation of that bucket's `timings_site` sums per server as `then` ops,
-	 * so a replayed expiry subtracts nothing twice.
+	 * One `ignore` per bucket from `$first` through `$last`, each carrying as
+	 * `then` ops the negation of that bucket's `timings_site` sums per server
+	 * and its URL window ops, `url_expiries()`, so a replayed expiry
+	 * subtracts nothing twice.
 	 *
 	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
 	 * @param int        $first  The first bucket to expire.
@@ -801,6 +821,9 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$bucket            = Core::as_int( $row[0] );
 			$then[ $bucket ][] = self::window_op( \array_slice( $row, 1 ), -1, $bucket );
 		}
+		foreach ( self::url_expiries( $reader, $first, $last ) as $bucket => $ops ) {
+			\array_push( $then[ $bucket ], ...$ops );
+		}
 		$batch = [];
 		foreach ( $then as $bucket => $negations ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ], $negations ];
@@ -809,18 +832,80 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Every window row negated, then `timings_site` summed over the buckets
-	 * after `$through` through `$now`: the window rebuilt exactly, whatever it
-	 * held and whatever retention purged first. The `RETAIN_SLACK` buckets
-	 * ending at `$through` are marked expired, the last of them the
-	 * watermark.
+	 * Each bucket's URL window ops, from one read of `requests` over the
+	 * buckets: per URL and worker flag, the negation of the bucket's sums,
+	 * then, where the bucket held the row's stored minimum, maximum or peak,
+	 * a `set` of the whole row from the requests after it,
+	 * `url_window_sets()`, spent where none remains. The buckets run oldest
+	 * first, each comparing the extremes the last one left.
+	 *
+	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
+	 * @param int        $first  The first bucket to expire.
+	 * @param int        $last   The last.
+	 * @return array<int,list<Row_Op>> By bucket.
+	 */
+	private static function url_expiries( Row_Reader $reader, int $first, int $last ): array {
+		$by_bucket = [];
+		foreach ( self::own_rows( $reader, self::url_expiry_sql(), [ $first, $last ] ) as $row ) {
+			$by_bucket[ Core::as_int( $row[0] ) ][] = $row;
+		}
+		\ksort( $by_bucket );
+		$width = \count( Flame_Facts_Row_Schema::tables()['urls_window']['columns'] );
+		$at    = Flame_Facts_Row_Schema::position( 'urls_window', self::URL_EXTREMES[0] );
+		$seen  = Flame_Facts_Row_Schema::position( 'urls_window', 'last_seen' );
+		$held  = [];
+		$ops   = [];
+		foreach ( $by_bucket as $bucket => $read ) {
+			$moved = [];
+			foreach ( $read as $row ) {
+				// The bucket, its sums, then the stored extremes.
+				$sums             = \array_slice( $row, 1, $width - 1 );
+				$key              = self::url_key( $sums );
+				$ops[ $bucket ][] = self::url_window_op( $sums, -1, $bucket );
+				$held[ $key ]   ??= \array_slice( $row, $width );
+				foreach ( $held[ $key ] as $i => $extreme ) {
+					if ( null !== $extreme && null !== $sums[ $at + $i ] && Core::num_float( $extreme ) === Core::num_float( $sums[ $at + $i ] ) ) {
+						$moved[ $key ] = $sums;
+					}
+				}
+			}
+			$sets = [] === $moved ? [] : self::url_window_sets( $reader, \array_map( Core::as_int( ... ), \array_column( $moved, 0 ) ), $bucket );
+			foreach ( $moved as $key => $sums ) {
+				$set              = $sets[ $key ] ?? self::url_window_spent( $sums[0], $sums[1], $sums[ $seen ], $bucket );
+				$ops[ $bucket ][] = $set;
+				$held[ $key ]     = \array_slice( $set[2], $at, \count( self::URL_EXTREMES ) );
+			}
+		}
+		return $ops;
+	}
+
+	/**
+	 * Per bucket, URL and worker flag from `?` through `?`, the bucket's
+	 * `url_sums()` and the extremes the `urls_window` row stores, read
+	 * through `requests_cover`, which leads with the bucket.
+	 */
+	private static function url_expiry_sql(): string {
+		return 'SELECT g.*, ' . \implode( ', ', \array_map( static fn ( string $column ): string => "w.{$column}", self::URL_EXTREMES ) ) . ' FROM ( SELECT bucket, '
+			. self::url_sums()
+			. ' FROM %1$s.requests WHERE bucket BETWEEN ? AND ? GROUP BY bucket, worker, url_id ) AS g LEFT JOIN %1$s.urls_window AS w ON w.url_id = g.url_id AND w.worker = g.worker';
+	}
+
+	/**
+	 * Every window row negated, then `timings_site` summed over every bucket
+	 * after `$through`: the window rebuilt exactly, whatever it held and
+	 * whatever retention purged first. Each URL the requests after `$through`
+	 * name is `set` whole from them, and every URL window row last moved at
+	 * or before `$through` is spent, so a revived URL's next request adds
+	 * onto nothing, where a negation could not clear its extremes. The
+	 * `RETAIN_SLACK` buckets ending at `$through` are marked expired, the
+	 * last of them the watermark. Every bucket after `$through` counts, one
+	 * a clock stepped back from included, as the adds counted it.
 	 *
 	 * @param Row_Reader $reader  The file's reader, from `own_reader()`.
 	 * @param int        $through The bucket the rebuilt window starts after.
-	 * @param int        $now     The current bucket.
 	 * @return list<Row_Op>
 	 */
-	private static function window_rebuild( Row_Reader $reader, int $through, int $now ): array {
+	private static function window_rebuild( Row_Reader $reader, int $through ): array {
 		$batch = [];
 		foreach ( self::own_rows( $reader, 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
 			$batch[] = self::window_op( $row, -1, Core::as_int( $row[8] ) );
@@ -828,15 +913,88 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$sums = self::own_rows(
 			$reader,
 			'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY server_id, category_id, entry_id, listener, worker',
-			[ $through + 1, $now ]
+			[ $through + 1, \PHP_INT_MAX ]
 		);
 		foreach ( $sums as $row ) {
 			$batch[] = self::window_op( $row, 1, Core::as_int( $row[8] ) );
 		}
+		foreach ( self::own_rows( $reader, 'SELECT url_id, worker, last_seen, last_bucket FROM %s.urls_window WHERE last_bucket <= ?', [ $through ] ) as [ $url, $worker, $seen, $last ] ) {
+			$batch[] = self::url_window_spent( $url, $worker, $seen, Core::as_int( $last ) );
+		}
+		\array_push( $batch, ...\array_values( self::url_window_sets( $reader, null, $through ) ) );
 		foreach ( \range( $through - Bucket::RETAIN_SLACK + 1, $through ) as $bucket ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
 		}
 		return $batch;
+	}
+
+	/**
+	 * A `set` of each URL window row `requests` names in any bucket after
+	 * `$after`, by `url_id worker`, read whole as a rebuild reads it: for
+	 * `$urls`, or for every URL when it is null.
+	 *
+	 * @param Row_Reader     $reader The file's reader, from `own_reader()`.
+	 * @param list<int>|null $urls   The URLs to read, or null for every URL.
+	 * @param int            $after  The bucket the requests are read after.
+	 * @return array<string,Row_Op>
+	 */
+	private static function url_window_sets( Row_Reader $reader, ?array $urls, int $after ): array {
+		$sets = [];
+		foreach ( null === $urls ? [ [] ] : \array_chunk( \array_values( \array_unique( $urls ) ), self::URLS_PER_READ ) as $chunk ) {
+			foreach ( self::own_rows( $reader, self::url_window_sql( \count( $chunk ) ), [ ...$chunk, $after + 1, \PHP_INT_MAX ] ) as $row ) {
+				$sets[ self::url_key( $row ) ] = [ 'set', 'urls_window', self::url_window_op( \array_slice( $row, 0, -1 ), 1, Core::as_int( \end( $row ) ) )[2] ];
+			}
+		}
+		return $sets;
+	}
+
+	/**
+	 * A URL window row's key, `url_id worker`, from a row led by both.
+	 *
+	 * @param list<mixed> $row The row.
+	 */
+	private static function url_key( array $row ): string {
+		return Core::as_string( $row[0] ) . ' ' . Core::as_string( $row[1] );
+	}
+
+	/**
+	 * A `set` of a URL window row with nothing left in it: no counts, no
+	 * sums, no extremes, its last moments kept.
+	 *
+	 * @param mixed $url    Its URL id.
+	 * @param mixed $worker Its worker flag.
+	 * @param mixed $seen   Its last finish.
+	 * @param int   $last   Its last bucket.
+	 * @return Row_Op
+	 */
+	private static function url_window_spent( mixed $url, mixed $worker, mixed $seen, int $last ): array {
+		return [ 'set', 'urls_window', self::url_window_op( [ $url, $worker, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0, null, null, null, $seen ], 1, $last )[2] ];
+	}
+
+	/**
+	 * Per URL and worker flag, the `url_sums()` and newest bucket of the
+	 * requests from `?` through `?`: of `$urls` URLs bound first, through
+	 * `requests_url`, or of every URL when it is 0, through `requests_cover`.
+	 * Both bounds earn the seek; a caller wanting every later bucket binds
+	 * `PHP_INT_MAX`.
+	 *
+	 * @param int $urls URLs the statement binds before the bucket.
+	 */
+	private static function url_window_sql( int $urls ): string {
+		$named = 0 === $urls ? '' : 'url_id IN ( ' . \implode( ', ', \array_fill( 0, $urls, '?' ) ) . ' ) AND ';
+		return 'SELECT ' . self::url_sums() . ", MAX( bucket ) FROM %1\$s.requests WHERE {$named}bucket BETWEEN ? AND ? GROUP BY url_id, worker";
+	}
+
+	/**
+	 * A `requests` read's URL window sums per URL and worker flag, in
+	 * `url_window_op()`'s order: count, timed, the status classes, errors,
+	 * the summed ms and peak, the timed extremes, the peak and the last
+	 * finish.
+	 */
+	private static function url_sums(): string {
+		$classes = \implode( ', ', \array_map( static fn ( int $class ): string => "COUNT( CASE WHEN status / 100 = {$class} THEN 1 END )", self::WINDOW_CLASSES ) );
+		$errors  = "'" . \implode( "', '", self::ERROR_KINDS ) . "'";
+		return "url_id, worker, COUNT( * ), COUNT( ms ), {$classes}, COUNT( CASE WHEN error IN ( {$errors} ) THEN 1 END ), TOTAL( ms ), TOTAL( peak_mb ), MIN( ms ), MAX( ms ), MAX( peak_mb ), MAX( finished_at )";
 	}
 
 	/**
@@ -852,6 +1010,23 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private static function window_op( array $sums, int $sign, int $last ): array {
 		[ $server, $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
 		return [ 'add', 'category_window', [ null === $server ? null : Core::as_int( $server ), null === $category ? null : Core::as_int( $category ), null === $entry ? null : Core::as_int( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
+	}
+
+	/**
+	 * A `urls_window` add of one URL's sums for a worker flag, added at
+	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. A
+	 * subtraction carries no extremes, which the null-safe folds leave as
+	 * stored. The op's `ids` map fills a null URL id.
+	 *
+	 * @param list<mixed> $sums URL id, worker, count, timed, the 2xx to 5xx counts, errors, ms, peak, min ms, max ms, max peak, last finish.
+	 * @param int         $sign 1 or -1.
+	 * @param int         $last The bucket the row last moved in.
+	 * @return Row_Op
+	 */
+	private static function url_window_op( array $sums, int $sign, int $last ): array {
+		[ $url, $worker, $count, $timed, $count_2xx, $count_3xx, $count_4xx, $count_5xx, $errors, $ms, $peak, $min, $max, $max_peak, $seen ] = $sums;
+		$extreme = static fn ( mixed $value ): ?float => $sign < 0 || null === $value ? null : Core::num_float( $value );
+		return [ 'add', 'urls_window', [ null === $url ? null : Core::as_int( $url ), Core::as_int( $worker ), $sign * Core::as_int( $count ), $sign * Core::as_int( $timed ), $sign * Core::as_int( $count_2xx ), $sign * Core::as_int( $count_3xx ), $sign * Core::as_int( $count_4xx ), $sign * Core::as_int( $count_5xx ), $sign * Core::as_int( $errors ), $sign * Core::num_float( $ms ), $sign * Core::num_float( $peak ), $extreme( $min ), $extreme( $max ), $extreme( $max_peak ), Core::num_float( $seen ), $last ] ];
 	}
 
 	/**
