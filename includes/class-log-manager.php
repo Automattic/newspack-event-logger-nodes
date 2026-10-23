@@ -190,6 +190,12 @@ class Log_Manager {
 
 	private const MAX_DATA_SIZE = 3840;
 
+	/**
+	 * The most lines one firehose write may hold, so a write whose every
+	 * held line raises another cannot loop.
+	 */
+	private const MAX_HELD = 32;
+
 	/** Raw bytes a fatal's message keeps on the terminal, cut on a character. */
 	private const FATAL_MESSAGE_MAX = 1024;
 
@@ -309,6 +315,16 @@ class Log_Manager {
 
 	/** @var int The next line's `n` field, 1-based. */
 	private $line_number = 1;
+
+	/**
+	 * @var list<array{0:string,1:array<string,mixed>,2:bool}>|null The lines
+	 * logged while a write is in flight, such as a PHP warning a Partition
+	 * write raises, waiting to be written after it; null while no write is.
+	 */
+	private ?array $held = null;
+
+	/** @var int How many more lines the write in flight may hold. */
+	private int $holdable = 0;
 
 	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
 	private ?Rule $matched_rule = null;
@@ -500,6 +516,8 @@ class Log_Manager {
 			\array_merge( [ 'status_code' => \http_response_code() ?: 0, 'peak_mb' => self::peak_mb() ], $complete_extra ),
 			$this->aborted ? 'aborted' : 'complete'
 		);
+		// The record is closed: a line the final flush raises has none to join.
+		$this->started = false;
 		$this->topic?->flush();
 	}
 
@@ -1139,7 +1157,7 @@ class Log_Manager {
 	 */
 	public static function suspend(): void {
 		if ( null !== self::$instance ) {
-			self::$instance->topic?->flush();
+			self::$instance->flush();
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- saving our own generated ID for restore.
 			$saved                           = $_SERVER['UNIQUE_ID'] ?? null;
 			self::$instance->saved_unique_id = \is_string( $saved ) ? $saved : null;
@@ -1455,6 +1473,22 @@ class Log_Manager {
 	}
 
 	/**
+	 * Drain every materialized Partition's in-memory batch to disk.
+	 *
+	 * Two callers need this. A caller handing off to a subprocess that writes the
+	 * same firehose (nuclear-gyrobase's run_gyrobase.sh) flushes BEFORE
+	 * `proc_open`, or the child appends between the parent's accumulated Messages
+	 * and the next size-threshold / timer flush and the segment ends up out of
+	 * logical order. A caller that has just written a `job` entry flushes so the
+	 * Job Router sees the work now rather than whenever the batch happens to fill.
+	 *
+	 * @api Used by nuclear-gyrobase.
+	 */
+	public function flush(): void {
+		$this->writing( fn () => $this->topic?->flush() );
+	}
+
+	/**
 	 * Whether a job context is open: a job's record, not a web request's,
 	 * is the one being written.
 	 */
@@ -1521,22 +1555,6 @@ class Log_Manager {
 			$this->topic?->sink( $ci );
 			$ci->fill( $message );
 		}
-	}
-
-	/**
-	 * Drain every materialized Partition's in-memory batch to disk.
-	 *
-	 * Two callers need this. A caller handing off to a subprocess that writes the
-	 * same firehose (nuclear-gyrobase's run_gyrobase.sh) flushes BEFORE
-	 * `proc_open`, or the child appends between the parent's accumulated Messages
-	 * and the next size-threshold / timer flush and the segment ends up out of
-	 * logical order. A caller that has just written a `job` entry flushes so the
-	 * Job Router sees the work now rather than whenever the batch happens to fill.
-	 *
-	 * @api Used by nuclear-gyrobase.
-	 */
-	public function flush(): void {
-		$this->topic?->flush();
 	}
 
 	/**
@@ -1948,7 +1966,7 @@ class Log_Manager {
 	 * @param string $category Event category/keyword.
 	 * @param array<string,mixed>  $data     Additional data to include.
 	 * @param bool   $shaped   Whether `m` is a query shape — see start().
-	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
+	 * @return bool True when the line was written or waits behind the write in flight; false when logging never started, the Topic is missing, or the write in flight holds `MAX_HELD` lines already.
 	 */
 	public function message( string $category, array $data = [], bool $shaped = false ): bool {
 		if ( ! $this->started ) {
@@ -1960,7 +1978,51 @@ class Log_Manager {
 		if ( null === $this->topic ) {
 			return false;
 		}
+		if ( null !== $this->held ) {
+			if ( 0 >= $this->holdable-- ) {
+				return false;
+			}
+			$this->held[] = [ $category, $data, $shaped ];
+			return true;
+		}
+		$this->writing( fn () => $this->write_line( $category, $data, $shaped ) );
+		return true;
+	}
 
+	/**
+	 * Run one firehose write, then write each line it raised, in the order
+	 * raised, each taking its number only then, so numbers follow the wire.
+	 * A write that throws drops what it raised, which took no number, and
+	 * the throw propagates. A write already in flight just runs `$write`.
+	 *
+	 * @param \Closure(): void $write A write to the Topic.
+	 */
+	private function writing( \Closure $write ): void {
+		if ( null !== $this->held ) {
+			$write();
+			return;
+		}
+		$this->held     = [];
+		$this->holdable = self::MAX_HELD;
+		try {
+			$write();
+			while ( null !== $this->held && [] !== $this->held ) {
+				[ $category, $data, $shaped ] = \array_shift( $this->held );
+				$this->write_line( $category, $data, $shaped );
+			}
+		} finally {
+			$this->held = null;
+		}
+	}
+
+	/**
+	 * Number, fit and write one line, flushing it when the rule asks.
+	 *
+	 * @param string              $category Event category/keyword.
+	 * @param array<string,mixed> $data     Additional data to include.
+	 * @param bool                $shaped   Whether `m` is a query shape.
+	 */
+	private function write_line( string $category, array $data, bool $shaped ): void {
 		// @longform A FRESH read, deliberately, and the one on this path: the
 		// cached tick is pinned at load in request scope, so every line of a
 		// request would carry one `ts` and the timeline would be flat. It
@@ -1978,13 +2040,11 @@ class Log_Manager {
 		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
 		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		$this->topic->fill( $message );
+		$this->topic?->fill( $message );
 
 		if ( $this->matched_rule?->flush_every_line ) {
-			$this->topic->flush();
+			$this->topic?->flush();
 		}
-
-		return true;
 	}
 
 	/**

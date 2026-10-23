@@ -685,6 +685,171 @@ class LogManagerTest extends TestCase {
 		);
 	}
 
+	/**
+	 * Swap the manager's firehose Topic for one that runs `$raise` on the
+	 * first entry `$during` names, and on the first flush when `$during` is
+	 * `flush`, before passing the write through, as a Partition write raising
+	 * a PHP warning does.
+	 *
+	 * @param \Closure(Log_Manager): void $raise What the write raises.
+	 */
+	private static function raise_during( Log_Manager $lm, string $during, \Closure $raise ): void {
+		$topic = new \ReflectionProperty( Log_Manager::class, 'topic' );
+		$topic->setValue(
+			$lm,
+			new class( $topic->getValue( $lm ), $lm, $during, $raise ) extends \Newspack_Nodes\Node {
+				private bool $raised = false;
+				public function __construct( private object $real, private Log_Manager $lm, private string $during, private \Closure $raise ) {
+					parent::__construct();
+				}
+				public function fill( array $message ): void {
+					if ( ! $this->raised && $this->during === ( $message[ Message::VALUE ]['k'] ?? '' ) ) {
+						$this->raised = true;
+						( $this->raise )( $this->lm );
+					}
+					$this->real->fill( $message );
+				}
+				public function flush(): void {
+					if ( ! $this->raised && 'flush' === $this->during ) {
+						$this->raised = true;
+						( $this->raise )( $this->lm );
+					}
+					$this->real->flush();
+				}
+			}
+		);
+	}
+
+	/** Each line's number follows the one before it on the wire. */
+	private function assert_numbered_in_order( array $entries ): void {
+		$numbers = \array_column( $entries, 'n' );
+		$this->assertSame( \range( 1, \count( $numbers ) ), $numbers, 'the firehose carries every number once, in order' );
+	}
+
+	/**
+	 * A line logged while another is being written, as a PHP warning a
+	 * Partition write raises, lands after that line, numbered after it.
+	 */
+	public function test_a_line_logged_during_a_write_lands_after_it(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
+		$lm = $this->fresh_log_manager();
+		self::raise_during( $lm, 'kea-4417', static fn ( Log_Manager $lm ) => $lm->message( 'php (warning)', [ 'm' => 'unlink(626.idx): No such file 7310' ] ) );
+
+		$lm->message( 'kea-4417', [ 'm' => 'in flight' ] );
+		$lm->finish();
+
+		$entries = $this->written_entries();
+		$this->assert_numbered_in_order( $entries );
+		$keys = \array_column( $entries, 'k' );
+		$this->assertSame( 'php (warning)', $keys[ \array_search( 'kea-4417', $keys, true ) + 1 ] ?? null );
+	}
+
+	/** A line logged during a flush lands after the lines that flush writes. */
+	public function test_a_line_logged_during_a_flush_lands_after_it(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
+		$lm = $this->fresh_log_manager();
+		self::raise_during( $lm, 'flush', static fn ( Log_Manager $lm ) => $lm->message( 'php (warning)', [ 'm' => 'mkdir(): File exists 2286' ] ) );
+
+		$lm->message( 'ruru-8130', [ 'm' => 'flushed' ] );
+		$lm->finish();
+
+		$this->assert_numbered_in_order( $this->written_entries() );
+	}
+
+	/**
+	 * A write that throws drops the lines it raised, which take no number, so
+	 * the one gap the record reads is the refused line itself; the throw
+	 * propagates.
+	 */
+	public function test_a_write_that_throws_drops_what_it_raised_without_a_gap(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
+		$lm      = $this->fresh_log_manager();
+		$refusal = new \RuntimeException( 'firehose append refused 5523' );
+		self::raise_during(
+			$lm,
+			'tui-5523',
+			static function ( Log_Manager $lm ) use ( $refusal ): void {
+				$lm->message( 'php (warning)', [ 'm' => 'fwrite(): short write 5523' ] );
+				throw $refusal;
+			}
+		);
+
+		$thrown = null;
+		try {
+			$lm->message( 'tui-5523', [ 'm' => 'refused' ] );
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		}
+		$lm->message( 'weka-5524', [ 'm' => 'after' ] );
+		$lm->finish();
+
+		$this->assertSame( $refusal, $thrown );
+		$entries = $this->written_entries();
+		$numbers = \array_column( $entries, 'n' );
+		$this->assertSame( [ 5 ], \array_values( \array_diff( \range( 1, \max( $numbers ) ), $numbers ) ), 'only the refused line is missing' );
+		$keys = \array_column( $entries, 'k' );
+		$this->assertNotContains( 'php (warning)', $keys );
+		$this->assertNotContains( 'tui-5523', $keys );
+	}
+
+	/**
+	 * A write whose every held line raises another stops holding at
+	 * `MAX_HELD`, so it cannot loop.
+	 */
+	public function test_a_write_that_keeps_raising_stops_at_max_held(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
+		$lm    = $this->fresh_log_manager();
+		$topic = new \ReflectionProperty( Log_Manager::class, 'topic' );
+		$topic->setValue(
+			$lm,
+			new class( $topic->getValue( $lm ), $lm ) extends \Newspack_Nodes\Node {
+				public function __construct( private object $real, private Log_Manager $lm ) {
+					parent::__construct();
+				}
+				public function fill( array $message ): void {
+					$k = $message[ Message::VALUE ]['k'] ?? '';
+					if ( 'pateke-9901' === $k || 'php (warning)' === $k ) {
+						$this->lm->message( 'php (warning)', [ 'm' => 'rotate failed 9901' ] );
+					}
+					$this->real->fill( $message );
+				}
+				public function flush(): void {
+					$this->real->flush();
+				}
+			}
+		);
+
+		$lm->message( 'pateke-9901', [ 'm' => 'raises forever' ] );
+		$lm->finish();
+
+		$held = ( new \ReflectionClassConstant( Log_Manager::class, 'MAX_HELD' ) )->getValue();
+		$this->assertCount( $held, \array_keys( \array_column( $this->written_entries(), 'k' ), 'php (warning)', true ) );
+	}
+
+	/** No line follows the terminal: one a final flush raises is refused. */
+	public function test_a_line_raised_by_the_final_flush_never_follows_the_terminal(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
+		$lm = $this->fresh_log_manager();
+		$lm->message( 'kaka-3302', [ 'm' => 'before' ] );
+		self::raise_during( $lm, 'flush', static fn ( Log_Manager $lm ) => $lm->message( 'php (warning)', [ 'm' => 'unlink(9.idx) 3302' ] ) );
+
+		$lm->finish();
+
+		$entries = $this->written_entries();
+		$this->assertSame( 'process (complete)', \end( $entries )['k'] );
+		$this->assert_numbered_in_order( $entries );
+	}
+
 	public function test_finish_writes_the_terminal_past_a_failed_drain_write_then_raises_it(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
