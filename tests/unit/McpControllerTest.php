@@ -2,7 +2,9 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\App\Findings;
 use Newspack_Event_Logger_Nodes\App\MCP_Controller;
+use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
@@ -10,6 +12,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Auth;
+use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
@@ -207,9 +210,9 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
 		}
 		$owners = [
-			'performance_urls' => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns; `url=<hash>` keeps one URL.',
-			'dump_url'         => 'A filter cannot name `server`, which `server` owns, `bucket`, which `bucket` owns, `url` beside `url`, which owns it, or `page` beside `page`, which owns it.',
-			'performance_ask'  => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns, and under a `url:` brief cannot name `url`, or under a `page:` brief `page`, which the descriptor\'s hash owns.',
+			'performance_urls' => '`server` and `bucket` are refused, each owned by the argument of its name.',
+			'dump_url'         => '`server` and `bucket` are refused, each owned by the argument of its name.',
+			'performance_ask'  => '`server` and `bucket` are refused, each owned by the argument of its name.',
 		];
 		foreach ( $owners as $tool => $owned ) {
 			$this->assertArrayNotHasKey( 'errors_only', $tools[ $tool ]['inputSchema']['properties'], $tool );
@@ -288,6 +291,96 @@ class McpControllerTest extends TestCase {
 		foreach ( $tools as $name => $tool ) {
 			$this->assertStringNotContainsString( 'Tachikoma', \json_encode( $tool ), $name );
 		}
+	}
+
+	/**
+	 * A URL-set filter lists every `requests` field no argument always owns,
+	 * each with how its value is spelled, and never `server` or `bucket`,
+	 * whose own arguments own them; a field a subject owns says when.
+	 */
+	public function test_each_url_set_filter_lists_every_field_its_arguments_leave(): void {
+		$tools = $this->tune_tools();
+		$owned = [ 'server', 'bucket' ];
+		$when  = [
+			'performance_urls' => [ 'page' => 'refused beside `page`, which owns it' ],
+			'dump_url'         => [ 'url' => 'refused beside `url`, which owns it', 'page' => 'refused beside `page`, which owns it' ],
+			'performance_ask'  => [ 'url' => 'refused under a `url:` brief, whose hash owns it', 'page' => 'refused under a `page:` brief, whose hash owns it' ],
+		];
+
+		foreach ( $when as $tool => $subjects ) {
+			$filter = $tools[ $tool ]['inputSchema']['properties']['filter']['description'];
+			$this->assertSame( 1, \preg_match( '/A field is one of (.+?)\. /', $filter, $list ), "{$tool}: the field list" );
+			foreach ( \array_diff( Stats_Query::FIELDS['requests'], $owned ) as $field ) {
+				$this->assertStringContainsString( "`{$field}` (", $list[1], "{$tool}: {$field} is listed with its spelling" );
+			}
+			foreach ( $owned as $field ) {
+				$this->assertStringNotContainsString( "`{$field}`", $list[1], "{$tool}: {$field} is owned, not listed" );
+			}
+			foreach ( $subjects as $field => $refusal ) {
+				$this->assertMatchesRegularExpression( '/`' . $field . '` \([^)]*; ' . \preg_quote( $refusal, '/' ) . '\)/', $list[1], "{$tool}: {$field} says who owns it" );
+			}
+			foreach ( [ '`status_class` (the first digit of the status, 1 to 5, which `5xx` also reads as, or `Unknown`', '`status` (the HTTP status code', '`from` (the From request header, not a time', '`worker` (1 for', '`error` (`T` a timeout, `F` a fatal' ] as $spelling ) {
+				$this->assertStringContainsString( $spelling, $list[1], "{$tool}: {$spelling}" );
+			}
+			$this->assertStringContainsString( '`server` and `bucket` are refused, each owned by the argument of its name', $filter, $tool );
+			foreach ( [ '`field!=value`', 'A field matches in any case', 'a repeated token counts once' ] as $grammar ) {
+				$this->assertStringContainsString( $grammar, $filter, "{$tool}: {$grammar}" );
+			}
+			$this->assertStringNotContainsString( 'as performance_query spells it', $filter, $tool );
+			$this->assertStringNotContainsString( '{', $filter, "{$tool}: no placeholder is left" );
+		}
+	}
+
+	/**
+	 * Each URL-set tool's `filter` carries its verb's own `filter` text, so
+	 * the CLI, the console and MCP read one grammar and one field list.
+	 */
+	public function test_each_url_set_filter_carries_its_verbs_own_text(): void {
+		$tools    = $this->tune_tools();
+		$declared = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+
+		foreach ( [ 'performance_urls' => 'urls', 'dump_url' => 'dump_url', 'performance_ask' => 'ask' ] as $tool => $verb ) {
+			$arg = \array_column( $declared[ $verb ]['args'], null, 'name' )['filter'];
+			$this->assertStringContainsString( 'A field is one of', $arg['description'], "{$verb} declares the field list" );
+			$this->assertStringContainsString( $arg['description'], $tools[ $tool ]['inputSchema']['properties']['filter']['description'], $tool );
+		}
+	}
+
+	/**
+	 * `initialize` defines the nouns every tool answers in, as the code
+	 * computes them: a URL shape, a page, an error, an owner and its two
+	 * pseudo-owners, a category and a bucket.
+	 */
+	public function test_initialize_carries_a_glossary(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$instructions = $controller->dispatch(
+			$this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'initialize' ], $bearer )
+		)['result']['instructions'];
+
+		foreach ( [ 'masked as `?`', '`?oid=?`', '`rest_route`', '`utm_*` and `fbclid` are dropped', 'its worker as a bare key', 'lowercased and as `https://`', 'its scheme, query and worker mark dropped', 'timeouts and fatals only', '`status_class=5`', '`mu:<slug>`', '`theme:<slug>`', '`dropin`', '`(unowned)` is time no owned frame encloses', '`(unmeasured)` the duration no span covers', 'do not sum to the request', '`Y-m-d-H-i` UTC' ] as $term ) {
+			$this->assertStringContainsString( $term, $instructions, $term );
+		}
+		$this->assertStringStartsWith( 'These tools return recorded site traffic inside a <site-data> tag', $instructions );
+		$this->assertStringEndsWith( Findings::caveat(), $instructions, 'the caveat stays the tail' );
+	}
+
+	/**
+	 * Nothing weights the `avg_ms` sort by `count`, so the summary says a
+	 * one-request row can lead it; the overview names the calls that drill
+	 * down from it.
+	 */
+	public function test_the_summaries_warn_of_one_request_means_and_name_the_next_call(): void {
+		$tools = $this->tune_tools();
+
+		$urls = $tools['performance_urls']['description'];
+		$this->assertStringContainsString( 'Nothing weights the `avg_ms` sort by `count`, so a URL seen once can lead it', $urls );
+		$this->assertStringContainsString( 'sort by `count`', $urls );
+		$this->assertStringContainsString( '`slowest`, the ten highest `avg_ms` whatever `sort` says', $urls );
+		$this->assertStringNotContainsString( 'ranks first under', $urls, 'a one-request row can lead, not must' );
+		$this->assertStringContainsString( 'Next: performance_urls for the pages, then dump_url (`url` or `page`) for one, then dump_request with a `rid` from its `requests` for one request.', $tools['performance_overview']['description'] );
 	}
 
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {
