@@ -91,6 +91,132 @@ class OwnerTest extends TestCase {
 	}
 
 	/**
+	 * A dev install links each plugin, mu-plugin and theme in from a checkout
+	 * elsewhere, and PHP names its files there; each answers its link's slug.
+	 */
+	public function test_a_linked_plugin_mu_plugin_or_theme_is_its_links(): void {
+		$base  = \sys_get_temp_dir() . '/eln-owner-linked-' . \getmypid();
+		$repos = $base . '/repos-4471';
+		foreach ( [ 'wp-content/plugins', 'wp-content/mu-plugins', 'wp-content/themes', 'repos-4471/weka-src/includes', 'repos-4471/ruru-src', 'repos-4471/themes/pukeko-src/inc' ] as $dir ) {
+			\mkdir( "{$base}/{$dir}", 0777, true );
+		}
+		\touch( "{$repos}/hello-tui-src.php" );
+		\symlink( "{$repos}/weka-src", "{$base}/wp-content/plugins/weka-4410" );
+		\symlink( "{$repos}/hello-tui-src.php", "{$base}/wp-content/plugins/hello-tui.php" );
+		\symlink( "{$repos}/ruru-src", "{$base}/wp-content/mu-plugins/ruru-3301" );
+		\symlink( "{$repos}/themes/pukeko-src", "{$base}/wp-content/themes/pukeko-2207" );
+		try {
+			self::own_files_under(
+				[
+					'plugins'    => "{$base}/wp-content/plugins",
+					'mu_plugins' => "{$base}/wp-content/mu-plugins",
+					'themes'     => [ "{$base}/wp-content/themes" ],
+					'content'    => "{$base}/wp-content",
+					'abspath'    => "{$base}/",
+				] + self::ROOTS
+			);
+			$real = \realpath( $repos );
+
+			$this->assertSame( 'weka-4410', Owner::of( "{$real}/weka-src/includes/class-weka.php" ) );
+			$this->assertSame( 'hello-tui', Owner::of( "{$real}/hello-tui-src.php" ) );
+			$this->assertSame( 'mu:ruru-3301', Owner::of( "{$real}/ruru-src/loader.php" ) );
+			$this->assertSame( 'theme:pukeko-2207', Owner::of( "{$real}/themes/pukeko-src/inc/template-tags.php" ) );
+			$this->assertSame( '', Owner::of( "{$real}/weka-src-old/weka.php" ) );
+			$this->assertSame( '', Owner::of( "{$real}/hello-tui-src.php.orig" ) );
+		} finally {
+			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
+		}
+	}
+
+	/**
+	 * A link whose target sits inside another link's owns its own files, and a
+	 * file linked loose into a theme root is no theme, as a file there is not.
+	 */
+	public function test_the_innermost_link_owns_and_a_loose_theme_file_link_is_no_theme(): void {
+		$base  = \sys_get_temp_dir() . '/eln-owner-nested-' . \getmypid();
+		$repos = $base . '/repos-8813';
+		foreach ( [ 'wp-content/plugins', 'wp-content/themes', 'repos-8813/kotare/kotare-child' ] as $dir ) {
+			\mkdir( "{$base}/{$dir}", 0777, true );
+		}
+		\touch( "{$repos}/shim-src.php" );
+		// The inner link first, so a directory listing in that order meets it first.
+		\symlink( "{$repos}/kotare/kotare-child", "{$base}/wp-content/themes/kotare-child" );
+		\symlink( "{$repos}/kotare", "{$base}/wp-content/themes/kotare" );
+		\symlink( "{$repos}/shim-src.php", "{$base}/wp-content/themes/shim.php" );
+		try {
+			self::own_files_under(
+				[
+					'plugins'    => "{$base}/wp-content/plugins",
+					'themes'     => [ "{$base}/wp-content/themes" ],
+					'content'    => "{$base}/wp-content",
+					'abspath'    => "{$base}/",
+				] + self::ROOTS
+			);
+			$real = \realpath( $repos );
+
+			$this->assertSame( 'theme:kotare-child', Owner::of( "{$real}/kotare/kotare-child/functions.php" ) );
+			$this->assertSame( 'theme:kotare', Owner::of( "{$real}/kotare/style.php" ) );
+			$this->assertSame( '', Owner::of( "{$real}/shim-src.php" ) );
+		} finally {
+			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
+		}
+	}
+
+	/**
+	 * A link into the host's managed tree keeps the managed owner: the
+	 * narrower roots answer before a link does.
+	 */
+	public function test_a_link_into_a_managed_root_keeps_its_managed_owner(): void {
+		$base = \sys_get_temp_dir() . '/eln-owner-managed-' . \getmypid();
+		foreach ( [ 'wp-content/mu-plugins', 'managed-4402/plugins/wpcomsh-7/2.6.1' ] as $dir ) {
+			\mkdir( "{$base}/{$dir}", 0777, true );
+		}
+		\symlink( "{$base}/managed-4402/plugins/wpcomsh-7/2.6.1", "{$base}/wp-content/mu-plugins/wpcomsh-7" );
+		try {
+			self::own_files_under(
+				[
+					'mu_plugins' => "{$base}/wp-content/mu-plugins",
+					'content'    => "{$base}/wp-content",
+					'abspath'    => "{$base}/",
+					'managed'    => \realpath( "{$base}/managed-4402" ),
+				] + self::ROOTS
+			);
+
+			$this->assertSame( 'wpcomsh-7', Owner::of( \realpath( "{$base}/managed-4402" ) . '/plugins/wpcomsh-7/2.6.1/wpcomsh.php' ) );
+		} finally {
+			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
+		}
+	}
+
+	/** A root's links are read once a process; a theme-only rebuild keeps them. */
+	public function test_a_roots_links_are_read_once(): void {
+		$base = \sys_get_temp_dir() . '/eln-owner-once-' . \getmypid();
+		foreach ( [ 'wp-content/plugins', 'repos-3390/toroa-src' ] as $dir ) {
+			\mkdir( "{$base}/{$dir}", 0777, true );
+		}
+		\symlink( "{$base}/repos-3390/toroa-src", "{$base}/wp-content/plugins/toroa-3390" );
+		try {
+			self::own_files_under(
+				[
+					'plugins' => "{$base}/wp-content/plugins",
+					'themes'  => [],
+					'content' => "{$base}/wp-content",
+					'abspath' => "{$base}/",
+				] + self::ROOTS
+			);
+			$real = \realpath( "{$base}/repos-3390" );
+			$this->assertSame( 'toroa-3390', Owner::of( "{$real}/toroa-src/toroa.php" ) );
+
+			\unlink( "{$base}/wp-content/plugins/toroa-3390" );
+			$GLOBALS['wp_theme_directories'][] = "{$base}/extra-themes";
+
+			$this->assertSame( 'toroa-3390', Owner::of( "{$real}/toroa-src/includes/class-toroa.php" ) );
+		} finally {
+			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
+		}
+	}
+
+	/**
 	 * A managed host serves core from a versioned tree `ABSPATH` links to, so
 	 * core's files classify through the resolved `ABSPATH`.
 	 */

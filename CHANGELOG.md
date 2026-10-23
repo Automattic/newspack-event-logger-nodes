@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A plugin, mu-plugin or theme linked into its root is owned again.** A dev install links each checkout in, `plugins/newspack-plugin` to `/newspack-plugins/newspack-plugin`, and PHP names a file at its resolved target, which sat under no root, so on a newspack-docker request all 257 plugin and theme listeners read unowned and Time By Owner showed only core and the mu-plugins. `Owner` now scans its plugin, mu-plugin and theme roots once for entries that are links, and a file under a link's target answers that link's slug, ahead of the broader roots a target may sit under.
+
 ### Added
 - **A page of several shapes opens its own window.** Its row opened nothing and only expanded, so a page's folded figures were all a reader got: bangordailynews.com's home page folds 24,565 requests across its shapes, with no request list, flame, breakdown or owners for the page as a whole. Clicking the row, or Enter, now opens the URL window asked of every request on the page; a click on its caret, or ArrowRight and ArrowLeft on the row, expands and shuts it. `dump_url --page=<page hash>` answers it, `ask page:<page hash>` briefs it, and `?page_hash=` links to it, since `?page=` is the admin screen's slug. Nothing new is stored; every source already carries the page (decision 39, amended).
 

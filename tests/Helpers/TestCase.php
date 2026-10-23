@@ -565,6 +565,7 @@ abstract class TestCase extends RuntimeTestCase {
 		\Newspack_Event_Logger_Nodes\Owner::$roots = null === $roots ? null : static fn (): array => $roots;
 		( new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Owner::class, 'owners' ) )->setValue( null, [] );
 		( new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Owner::class, 'table' ) )->setValue( null, null );
+		( new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Owner::class, 'links' ) )->setValue( null, [] );
 	}
 
 	/**

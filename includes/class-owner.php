@@ -25,7 +25,9 @@ namespace Newspack_Event_Logger_Nodes;
  * `eval()`'d code included.
  * PHP names a file with every symlink resolved, so each root matches as
  * written and as resolved, and each carries a trailing slash, so a root never
- * matches a sibling that merely begins with its name.
+ * matches a sibling that merely begins with its name. A plugin, mu-plugin or
+ * theme linked into its root from elsewhere, as a dev install links its
+ * checkouts, matches at its resolved target and answers its link's slug.
  */
 final class Owner {
 
@@ -72,6 +74,19 @@ final class Owner {
 		'wp-includes' => true,
 	];
 
+	/** The root kinds whose entries may be links to a checkout elsewhere. */
+	private const LINKABLE = [
+		'plugin' => true,
+		'mu'     => true,
+		'theme'  => true,
+	];
+
+	/** The root kinds that hold the others, which a link answers ahead of. */
+	private const BROAD = [
+		'content' => true,
+		'core'    => true,
+	];
+
 	/**
 	 * Roots seam. Replaces the WordPress constants that locate each root —
 	 * `WP_PLUGIN_DIR`, `WPMU_PLUGIN_DIR`, `WP_CONTENT_DIR`, `ABSPATH` — and the
@@ -98,12 +113,19 @@ final class Owner {
 	 * directories, slash-terminated, in the order they are tried, with the
 	 * kind of owner a file under one has.
 	 *
-	 * @var array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{string,string}>}|null
+	 * @var array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}|null
 	 */
 	private static ?array $table = null;
 
 	/** Whether the table is being built, when a classification answers ''. */
 	private static bool $building = false;
+
+	/**
+	 * Each linkable root's links, read once a process, keyed by kind and root.
+	 *
+	 * @var array<string,list<array{0:string,1:string,2:?string}>>
+	 */
+	private static array $links = [];
 
 	/**
 	 * A label prefixed with the owner of a file.
@@ -150,35 +172,12 @@ final class Owner {
 				self::$building = false;
 			}
 		}
-		foreach ( self::$table['dirs'] as [ $dir, $kind ] ) {
-			if ( \str_starts_with( $file, $dir ) ) {
-				return self::owner_in( $kind, \explode( '/', \substr( $file, \strlen( $dir ) ) ) );
+		foreach ( self::$table['dirs'] as [ $dir, $kind, $owner ] ) {
+			if ( \str_ends_with( $dir, '/' ) ? \str_starts_with( $file, $dir ) : $file === $dir ) {
+				return $owner ?? self::owner_in( $kind, \explode( '/', \substr( $file, \strlen( $dir ) ) ) );
 			}
 		}
 		return '';
-	}
-
-	/**
-	 * The owner of a file under a root of `$kind`, from its path below it.
-	 *
-	 * @param string                 $kind     The root's kind.
-	 * @param non-empty-list<string> $segments The path below the root, split on `/`.
-	 */
-	private static function owner_in( string $kind, array $segments ): string {
-		$count = \count( $segments );
-		$slug  = \str_ends_with( $segments[0], '.php' ) ? \substr( $segments[0], 0, -4 ) : $segments[0];
-		return match ( $kind ) {
-			'plugin'         => $slug,
-			// A release's own root holds no plugin file.
-			'release'        => $count > 3 ? $segments[2] : '',
-			// A managed copy sits in a directory named for its version.
-			'managed_plugin' => $count > 2 ? $segments[0] : '',
-			'managed_theme'  => $count > 2 ? self::THEME_PREFIX . $segments[0] : '',
-			'mu'             => self::MU_PREFIX . $slug,
-			'theme'          => $count > 1 ? self::THEME_PREFIX . $segments[0] : '',
-			'content'        => 1 === $count && isset( self::DROPINS[ $segments[0] ] ) ? self::DROPIN : '',
-			default          => 1 === $count || isset( self::CORE_DIRS[ $segments[0] ] ) ? self::CORE : '',
-		};
 	}
 
 	/**
@@ -209,14 +208,16 @@ final class Owner {
 
 	/**
 	 * Every root, as written and as resolved, in the order a file tries them:
-	 * the narrower roots ahead of the content dir and `ABSPATH` holding them.
+	 * the narrower roots, then the links into them, then the content dir and
+	 * `ABSPATH` a link's target may sit under. A link carries its owner; a
+	 * root's is read off the path below it.
 	 *
 	 * @param array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string} $roots  The roots.
 	 * @param array<mixed> $themes The theme directories.
-	 * @return array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{string,string}>}
+	 * @return array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}
 	 */
 	private static function table( array $roots, array $themes ): array {
-		$kinds = [
+		$kinds  = [
 			[ 'plugin', $roots['plugins'] ],
 			[ 'release', $roots['content'] . '/plugin-releases' ],
 			[ 'managed_plugin', $roots['managed'] . '/plugins' ],
@@ -226,19 +227,78 @@ final class Owner {
 			[ 'content', $roots['content'] ],
 			[ 'core', $roots['abspath'] ],
 		];
-		$dirs  = [];
+		$narrow = [];
+		$linked = [];
+		$broad  = [];
 		foreach ( $kinds as [ $kind, $root ] ) {
 			foreach ( '' === $root ? [] : \array_unique( [ $root, \realpath( $root ) ] ) as $dir ) {
-				if ( false !== $dir ) {
-					$dirs[] = [ \rtrim( $dir, '/' ) . '/', $kind ];
+				if ( false === $dir ) {
+					continue;
+				}
+				if ( isset( self::BROAD[ $kind ] ) ) {
+					$broad[] = [ \rtrim( $dir, '/' ) . '/', $kind, null ];
+				} else {
+					$narrow[] = [ \rtrim( $dir, '/' ) . '/', $kind, null ];
 				}
 			}
+			if ( '' !== $root && isset( self::LINKABLE[ $kind ] ) ) {
+				\array_push( $linked, ...( self::$links[ "{$kind}\0{$root}" ] ??= self::linked( $kind, $root ) ) );
+			}
 		}
+		// Innermost target first: a link inside another owns its files.
+		\usort( $linked, static fn ( array $a, array $b ): int => \strlen( $b[0] ) <=> \strlen( $a[0] ) );
 		return [
 			'roots'  => $roots,
 			'themes' => $themes,
-			'dirs'   => $dirs,
+			'dirs'   => [ ...$narrow, ...$linked, ...$broad ],
 		];
+	}
+
+	/**
+	 * Each entry of a root that is a symlink, at its resolved target: a
+	 * directory slash-terminated, a file as itself, which matches only itself.
+	 * Its owner is the one a file inside the linked directory, or the linked
+	 * file itself, would have in the root.
+	 *
+	 * @param string $kind A `LINKABLE` kind.
+	 * @param string $root The root.
+	 * @return list<array{0:string,1:string,2:?string}>
+	 */
+	private static function linked( string $kind, string $root ): array {
+		$dirs = [];
+		foreach ( \glob( \rtrim( $root, '/' ) . '/*', GLOB_NOSORT ) ?: [] as $entry ) {
+			$real = \is_link( $entry ) ? \realpath( $entry ) : false;
+			if ( false === $real ) {
+				continue;
+			}
+			$dirs[] = \is_dir( $real )
+				? [ $real . '/', $kind, self::owner_in( $kind, [ \basename( $entry ), '' ] ) ]
+				: [ $real, $kind, self::owner_in( $kind, [ \basename( $entry ) ] ) ];
+		}
+		return $dirs;
+	}
+
+	/**
+	 * The owner of a file under a root of `$kind`, from its path below it.
+	 *
+	 * @param string                 $kind     The root's kind.
+	 * @param non-empty-list<string> $segments The path below the root, split on `/`.
+	 */
+	private static function owner_in( string $kind, array $segments ): string {
+		$count = \count( $segments );
+		$slug  = \str_ends_with( $segments[0], '.php' ) ? \substr( $segments[0], 0, -4 ) : $segments[0];
+		return match ( $kind ) {
+			'plugin'         => $slug,
+			// A release's own root holds no plugin file.
+			'release'        => $count > 3 ? $segments[2] : '',
+			// A managed copy sits in a directory named for its version.
+			'managed_plugin' => $count > 2 ? $segments[0] : '',
+			'managed_theme'  => $count > 2 ? self::THEME_PREFIX . $segments[0] : '',
+			'mu'             => self::MU_PREFIX . $slug,
+			'theme'          => $count > 1 ? self::THEME_PREFIX . $segments[0] : '',
+			'content'        => 1 === $count && isset( self::DROPINS[ $segments[0] ] ) ? self::DROPIN : '',
+			default          => 1 === $count || isset( self::CORE_DIRS[ $segments[0] ] ) ? self::CORE : '',
+		};
 	}
 
 	/**
