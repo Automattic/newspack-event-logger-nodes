@@ -1434,61 +1434,77 @@ class RequestBuilderTest extends TestCase {
 		);
 	}
 
-	/** An envelope checkpointed without `owners` starts its owners empty. */
-	public function test_an_envelope_restored_without_owners_starts_them_empty(): void {
+	/**
+	 * Checkpoint one request inside an owned listener, reshape its envelope,
+	 * and restore it into a fresh builder that logs to `$buf`.
+	 *
+	 * @param \Closure $reshape Mutates one envelope array in place.
+	 * @param string   $buf     Collects the builder's stderr.
+	 */
+	private function restore_reshaped( \Closure $reshape, string &$buf ): Request_Builder_Node {
 		$from = new Request_Builder_Node();
-		$this->fill( $from, 1, 'r-owner', 'process (start)' );
-		$this->fill( $from, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
-		$this->fill( $from, 3, 'r-owner', 'init hook (start)' );
-		$this->fill( $from, 4, 'r-owner', '[kea-7746] Init->go @10 (start)' );
-		$this->fill( $from, 5, 'r-owner', '[kea-7746] Init->go @10 (complete)', [ 'duration_ms' => 6.5 ] );
+		$this->fill( $from, 1, 'r-kea-5521', 'process (start)' );
+		$this->fill( $from, 2, 'r-kea-5521', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
+		$this->fill( $from, 3, 'r-kea-5521', 'the_content hook (start)' );
+		$this->fill( $from, 4, 'r-kea-5521', '[kea-7746] Kea->render @10 (start)' );
 		$saved = \json_decode( (string) \wp_json_encode( $from->save_state() ), true );
 		foreach ( $saved['request_cache']['buckets'] as &$bucket ) {
 			foreach ( $bucket as &$envelope ) {
-				unset( $envelope['owners'] );
+				$reshape( $envelope );
 			}
 		}
 		unset( $bucket, $envelope );
 
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		Core::set_stderr_handler(
+			static function ( $message ) use ( &$buf ): void {
+				$buf .= $message;
+			}
+		);
 		$rb->restore_state( $saved );
-		$this->fill( $rb, 6, 'r-owner', 'init hook (complete)', [ 'duration_ms' => 8.25 ] );
-		$this->fill( $rb, 7, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
-
-		$this->assertEquals( [ '(unowned)' => [ 1.75, 0 ], '(unmeasured)' => [ 11.75, 0 ] ], $this->captured_request( $capture )['owners'] );
+		return $rb;
 	}
 
 	/**
-	 * A frame restored with only its state and label takes its owner by the
-	 * push rule, its own or its parent's, and an empty inner.
+	 * A restored envelope whose frames hold only their state and label is
+	 * dropped, and the drop is logged naming the request; the worker keeps
+	 * restoring.
 	 */
-	public function test_a_two_slot_frame_restored_takes_its_owner_by_the_push_rule(): void {
-		$from = new Request_Builder_Node();
-		$this->fill( $from, 1, 'r-owner', 'process (start)' );
-		$this->fill( $from, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
-		$this->fill( $from, 3, 'r-owner', 'the_content hook (start)' );
-		$this->fill( $from, 4, 'r-owner', '[kea-7746] Kea->render @10 (start)' );
-		$this->fill( $from, 5, 'r-owner', 'gettext hook (start)' );
-		$saved = \json_decode( (string) \wp_json_encode( $from->save_state() ), true );
-		foreach ( $saved['request_cache']['buckets'] as &$bucket ) {
-			foreach ( $bucket as &$envelope ) {
+	public function test_an_envelope_restored_with_two_slot_frames_is_dropped_and_logged(): void {
+		$buf = '';
+		$rb  = $this->restore_reshaped(
+			static function ( array &$envelope ): void {
 				$envelope['stack'] = \array_map( static fn ( array $frame ): array => \array_slice( $frame, 0, 2 ), $envelope['stack'] );
-			}
-		}
-		unset( $bucket, $envelope );
+			},
+			$buf
+		);
 
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-		$rb->restore_state( $saved );
-		$this->fill( $rb, 6, 'r-owner', 'gettext hook (complete)', [ 'duration_ms' => 2.0 ] );
-		$this->fill( $rb, 7, 'r-owner', '[kea-7746] Kea->render @10 (complete)', [ 'duration_ms' => 6.0 ] );
-		$this->fill( $rb, 8, 'r-owner', 'the_content hook (complete)', [ 'duration_ms' => 9.0 ] );
-		$this->fill( $rb, 9, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
+		$this->assertSame( 0, $this->cache_size( $rb ) );
+		$this->assertStringContainsString( 'dropping a restored envelope lacking owner slots: r-kea-5521', $buf );
+	}
 
-		$this->assertEquals( [ 'kea-7746' => [ 6.0, 1 ], '(unowned)' => [ 3.0, 0 ], '(unmeasured)' => [ 11.0, 0 ] ], $this->captured_request( $capture )['owners'] );
+	/** A restored envelope carrying a stack but no `owners` is dropped the same way. */
+	public function test_an_envelope_restored_without_owners_is_dropped_and_logged(): void {
+		$buf = '';
+		$rb  = $this->restore_reshaped(
+			static function ( array &$envelope ): void {
+				unset( $envelope['owners'] );
+			},
+			$buf
+		);
+
+		$this->assertSame( 0, $this->cache_size( $rb ) );
+		$this->assertStringContainsString( 'dropping a restored envelope lacking owner slots: r-kea-5521', $buf );
+	}
+
+	/** An envelope restored as it was checkpointed is kept. */
+	public function test_an_envelope_restored_whole_is_kept(): void {
+		$buf = '';
+		$rb  = $this->restore_reshaped( static function ( array &$envelope ): void {}, $buf );
+
+		$this->assertSame( 1, $this->cache_size( $rb ) );
+		$this->assertSame( '', $buf );
 	}
 
 	/**

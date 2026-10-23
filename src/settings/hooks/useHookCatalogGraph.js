@@ -40,7 +40,12 @@ const POLL_INTERVAL_MS = 10000;
  * class's own empty slice, where `hooksByCategory: null` marks a taxonomy that
  * has not arrived.
  */
-const EMPTY = { hooksByCategory: null, descriptions: {}, error: null };
+const EMPTY = {
+	hooksByCategory: null,
+	descriptions: {},
+	noisy: [],
+	error: null,
+};
 
 /**
  * Poll the `performance` CI's `list_hooks` verb while the picker is open,
@@ -49,10 +54,10 @@ const EMPTY = { hooksByCategory: null, descriptions: {}, error: null };
  * @param {Object}  [opts]        Options.
  * @param {boolean} [opts.isOpen] Gate — a picker that is never opened asks for
  *                                nothing at all.
- * @return {{hooksByCategory: Object, descriptions: Object, loading: boolean}}
+ * @return {{hooksByCategory: Object, descriptions: Object, noisy: string[], loading: boolean}}
  *   The taxonomy as a map the modal subscripts before it lands, its category
- *   one-liners, and whether the picker is still waiting — true until either a
- *   taxonomy or a refusal arrives.
+ *   one-liners, the hook names no bulk selection takes, and whether the picker
+ *   is still waiting — true until either a taxonomy or a refusal arrives.
  */
 export function useHookCatalogGraph( opts = {} ) {
 	const { isOpen } = opts;
@@ -79,6 +84,7 @@ export function useHookCatalogGraph( opts = {} ) {
 	return {
 		hooksByCategory: model.hooksByCategory ?? {},
 		descriptions: model.descriptions,
+		noisy: model.noisy,
 		// A refusal is an answer too: clear the spinner, keep asking.
 		loading:
 			Boolean( isOpen ) &&

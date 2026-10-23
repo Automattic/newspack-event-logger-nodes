@@ -264,16 +264,34 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->assertStringContainsString( 'window.eventLoggerDashboards', $joined );
 			$this->assertStringContainsString( 'window.newspackNodesRecommendedHooks', $joined );
 			$this->assertStringContainsString( 'window.newspackNodesOwnerTimeEvents = ["plugins_loaded"', $joined );
-			$this->assertStringContainsString( 'window.newspackNodesNoisyHooks = ["^gettext"', $joined );
+			$this->assertStringNotContainsString( 'newspackNodesNoisyHooks', $joined );
 		}
 
-		public function test_overview_page_carries_the_owner_time_and_noisy_lists(): void {
+		public function test_overview_page_carries_the_owner_time_list(): void {
 			$_GET = [ 'page' => 'event-logger-overview' ];
 			$this->dispatch( 'nodes_page_event-logger-overview' );
 
 			$printed = $this->printed_for( 'newspack-nodes-overview' );
 			$this->assertStringContainsString( 'window.newspackNodesOwnerTimeEvents = ["plugins_loaded"', $printed );
-			$this->assertStringContainsString( 'window.newspackNodesNoisyHooks = ["^gettext"', $printed );
+			$this->assertStringNotContainsString( 'newspackNodesNoisyHooks', $printed );
+		}
+
+		/** The owner-time list reaches the window less every name a noisy pattern matches. */
+		public function test_the_owner_time_list_is_published_less_its_noisy_names(): void {
+			$this->use_base_dir(
+				$this->make_temp_dir(),
+				[
+					'owner_time_events' => [ 'kea_7746_boot', 'ruru_noisy_tick', 'kea_7746_done' ],
+					'noisy_log_events'  => [ '^ruru_noisy' ],
+				]
+			);
+			$_GET = [ 'page' => 'event-logger-overview' ];
+			$this->dispatch( 'nodes_page_event-logger-overview' );
+
+			$this->assertStringContainsString(
+				'window.newspackNodesOwnerTimeEvents = ["kea_7746_boot","kea_7746_done"];',
+				$this->printed_for( 'newspack-nodes-overview' )
+			);
 		}
 
 		#[DataProvider( 'trees_without_pickers' )]

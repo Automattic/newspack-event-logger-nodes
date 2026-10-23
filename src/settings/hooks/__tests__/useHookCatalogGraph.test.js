@@ -151,6 +151,7 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 			useHookCatalogGraph( { isOpen: false } )
 		);
 		expect( result.current.hooksByCategory ).toEqual( {} );
+		expect( result.current.noisy ).toEqual( [] );
 		expect( result.current.loading ).toBe( false );
 	} );
 } );
@@ -186,7 +187,11 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 			'REST API': [ 'rest_api_init' ],
 		};
 		installWire( {
-			list_hooks: { hooks_by_category: hooks, total_hooks: 2 },
+			list_hooks: {
+				hooks_by_category: hooks,
+				total_hooks: 2,
+				noisy: [ 'kea_7746_tick' ],
+			},
 		} );
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
@@ -199,6 +204,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 			() => expect( result.current.hooksByCategory ).toEqual( hooks ),
 			{ timeout: 6000 }
 		);
+		expect( result.current.noisy ).toEqual( [ 'kea_7746_tick' ] );
 		expect( result.current.loading ).toBe( false );
 	}, 15000 );
 

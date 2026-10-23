@@ -23,12 +23,7 @@ jest.mock( '../../hooks/useHookCatalogGraph', () => ( {
 
 beforeAll( () => {
 	window.newspackNodesRecommendedHooks = [ 'init', 'shutdown' ];
-	window.newspackNodesOwnerTimeEvents = [
-		'kea_7746_boot',
-		'kea_7746_done',
-		'gettext_probe',
-	];
-	window.newspackNodesNoisyHooks = [ '^gettext', '^pre_option$' ];
+	window.newspackNodesOwnerTimeEvents = [ 'kea_7746_boot', 'kea_7746_done' ];
 } );
 
 let React;
@@ -472,9 +467,10 @@ describe( 'HookSelectorModal', () => {
 			} );
 		}
 
-		function mountNoisy( selected ) {
+		function mountNoisy( selected, noisy = [ 'gettext', 'pre_option' ] ) {
 			global.__hookcatalogMockModel = {
 				hooksByCategory: NOISY_HOOKS,
+				noisy,
 				loading: false,
 			};
 			const onSelect = jest.fn();
@@ -492,6 +488,16 @@ describe( 'HookSelectorModal', () => {
 			click( button( 'Select All' ) );
 			click( button( 'Apply' ) );
 			expect( onSelect ).toHaveBeenCalledWith( [ 'kea_7746_init' ] );
+		} );
+
+		it( 'takes noisy from the catalog, never from the hook name', () => {
+			const onSelect = mountNoisy( [], [ 'kea_7746_init' ] );
+			click( button( 'Select All' ) );
+			click( button( 'Apply' ) );
+			expect( onSelect.mock.calls[ 0 ][ 0 ].sort() ).toEqual( [
+				'gettext',
+				'pre_option',
+			] );
 		} );
 
 		it( 'Select Matches skips a noisy match', () => {
@@ -513,7 +519,7 @@ describe( 'HookSelectorModal', () => {
 			expect( onSelect ).toHaveBeenCalledWith( [ 'kea_7746_init' ] );
 		} );
 
-		it( 'Plugin time adds the owner list minus noisy names', () => {
+		it( 'Plugin time adds the owner list as published', () => {
 			const onSelect = mountNoisy( [ 'kea_7746_init' ] );
 			click( button( 'Plugin time' ) );
 			click( button( 'Apply' ) );
@@ -550,6 +556,7 @@ describe( 'HookSelectorModal', () => {
 		it( 'a noisy-only category header does not read as all-selected', () => {
 			global.__hookcatalogMockModel = {
 				hooksByCategory: { Noise: [ 'gettext', 'pre_option' ] },
+				noisy: [ 'gettext', 'pre_option' ],
 				loading: false,
 			};
 			mount( {
@@ -566,28 +573,12 @@ describe( 'HookSelectorModal', () => {
 			expect( button( 'Apply' ).textContent ).toBe( 'Apply (0)' );
 		} );
 
-		it( 'skips a pattern JS rejects, warns once, and keeps the rest', () => {
-			const warn = jest.spyOn( console, 'warn' ).mockImplementation();
-			const saved = window.newspackNodesNoisyHooks;
-			window.newspackNodesNoisyHooks = [ '(?<kea', '^kea_noisy' ];
-			let mod;
-			jest.isolateModules( () => {
-				mod = require( '../HookSelectorModal' );
-			} );
-			window.newspackNodesNoisyHooks = saved;
-			expect( mod.isNoisy( 'kea_noisy_x' ) ).toBe( true );
-			expect( mod.isNoisy( 'kea' ) ).toBe( false );
-			expect( warn ).toHaveBeenCalledTimes( 1 );
-			expect( warn.mock.calls[ 0 ][ 0 ] ).toContain( '(?<kea' );
-			warn.mockRestore();
-		} );
-
-		it( 'exports the settled constants and the classifier', () => {
+		it( 'exports the owner list as the window publishes it', () => {
 			const mod = require( '../HookSelectorModal' );
-			expect( mod.isNoisy( 'gettext_with_context' ) ).toBe( true );
-			expect( mod.isNoisy( 'pre_option_home' ) ).toBe( false );
-			expect( mod.PLUGIN_TIME_HOOKS ).toContain( 'kea_7746_boot' );
-			expect( mod.PLUGIN_TIME_HOOKS ).not.toContain( 'gettext_probe' );
+			expect( mod.PLUGIN_TIME_HOOKS ).toEqual( [
+				'kea_7746_boot',
+				'kea_7746_done',
+			] );
 		} );
 	} );
 } );

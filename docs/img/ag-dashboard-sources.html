@@ -27,7 +27,7 @@ table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monos
 </style>
 <div class="sheet">
 <h1>Six bundles, two transports, and no data that did not come through a node</h1>
-<p class="sub">Every tree separates the chrome from the data the same way: the root renders, one hook declares the node graph behind it, and rows reach React off a view node. Three dashboards stream a partition glob; three ask a service CI by command; the six page globals carry what the server knew before the first command ran.</p>
+<p class="sub">Every tree separates the chrome from the data the same way: the root renders, one hook declares the node graph behind it, and rows reach React off a view node. Three dashboards stream a partition glob; three ask a service CI by command; the seven page globals carry what the server knew before the first command ran.</p>
 
 <div class="tr">
   <div class="transport cmd"><h3>By command: <span class="mono">POST /wp-json/newspack-nodes/v1/command</span></h3><p>A TM_COMMAND minted FROM the dashboard's own Request node, answered TO = FROM, so the reply lands on the node that asked and no correlator exists. A batched Fetcher sends one POST per tick; <span class="mono">useCommandOnce</span> parks a one-shot in the same outbox. Reads retry a MISSING reply and supersede; writes do neither. The server owns the set: search, sort and page are reported upward, never applied in the browser.</p></div>
@@ -78,8 +78,7 @@ table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monos
     <tr><td class="k">eventLoggerHookCategories</td><td><span class="mono">hook_categories.json</span> whole, <span class="mono">_colors</span> and <span class="mono">_patterns</span> included; the Gyroscope legend's contents are a fixed array in <span class="mono">Inflight.js</span></td><td>all five</td></tr>
     <tr><td class="k">eventLoggerCustomColors</td><td><span class="mono">Config::get_custom_colors()</span>, custom-event name to swatch, read by the substrate's shared <span class="mono">formatUtils</span></td><td>all five</td></tr>
     <tr><td class="k">newspackNodesRecommendedHooks</td><td><span class="mono">recommended_log_events</span>, what the picker's "Recommended" button selects</td><td>settings, overview</td></tr>
-    <tr><td class="k">newspackNodesOwnerTimeEvents</td><td><span class="mono">owner_time_events</span>, the hooks "Plugin time" and "Measure plugin time" add</td><td>settings, overview</td></tr>
-    <tr><td class="k">newspackNodesNoisyHooks</td><td><span class="mono">noisy_log_events</span> patterns that compile, the hooks no bulk selection takes</td><td>settings, overview</td></tr>
+    <tr><td class="k">newspackNodesOwnerTimeEvents</td><td><span class="mono">owner_time_events</span>, the hooks "Plugin time" and "Measure plugin time" add, less every noisy name</td><td>settings, overview</td></tr>
     <tr><td class="k">newspackNodesCustomColors</td><td>the same custom-colour map, for <span class="mono">CustomEventSelectorModal</span>'s swatches</td><td>settings, overview</td></tr>
     <tr><td class="k">NewspackEventLoggerNodes.currentRequest</td><td><span class="mono">{ rid, partition, perfUrl }</span> for THIS request, merged by <span class="mono">Object.assign</span> so a sibling key survives</td><td>wherever the overlay tab loads</td></tr>
   </table>

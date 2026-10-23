@@ -371,6 +371,35 @@ class HookCategorizerTest extends TestCase {
 		$this->assertSame( 100, Hook_Categorizer::MAX_PATTERN_LENGTH );
 	}
 
+	/** A pattern over the length cap is refused, and the refusal logged with its source and head. */
+	public function test_an_over_long_pattern_is_refused_and_logged(): void {
+		$lines = [];
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$lines ): void {
+			$lines[] = $text;
+		} );
+
+		$this->assertNull( Hook_Categorizer::checked_regex( '^ruru_' . \str_repeat( 'k', Hook_Categorizer::MAX_PATTERN_LENGTH ), 'kea_7746_source' ) );
+		$this->assertCount( 1, $lines );
+		$this->assertStringContainsString( 'kea_7746_source: pattern rejected (over 100 bytes): ^ruru_kkk', $lines[0] );
+	}
+
+	/** A category's pattern that does not compile is logged naming its category. */
+	public function test_a_refused_category_pattern_is_logged_naming_its_category(): void {
+		$lines = [];
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$lines ): void {
+			$lines[] = $text;
+		} );
+		\update_option( Hook_Categorizer::OPTION_NAME, [
+			'patterns' => [ 'Kea Forms' => [ '^kea_form(' ] ],
+		] );
+		Hook_Categorizer::clear_cache();
+
+		$this->assertNotSame( 'Kea Forms', Hook_Categorizer::categorize( 'kea_form_x' ) );
+		$this->assertStringContainsString( 'hook_categories[Kea Forms]: pattern rejected (invalid): ^kea_form(', \implode( "\n", $lines ) );
+	}
+
 	// ── operator colours and a failed read ──────────────────────────────────
 
 	public function test_invalid_operator_colours_are_refused_in_one_log_line_and_the_base_colour_kept(): void {

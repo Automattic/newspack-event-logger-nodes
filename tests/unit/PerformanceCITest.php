@@ -1592,6 +1592,21 @@ class PerformanceCITest extends TestCase {
 		$this->assertContains( 'admin_menu', $all );
 	}
 
+	/** `noisy` names the catalog's hooks a `noisy_log_events` pattern matches. */
+	public function test_list_hooks_answers_the_noisy_names_of_its_catalog(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'noisy_log_events' => [ '^kea_noisy', 'ruru$' ] ] );
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
+		global $wp_filter;
+		$wp_filter = [];
+		foreach ( [ 'kea_noisy_boot', 'kea_quiet', 'tui_ruru', 'gettext' ] as $hook ) {
+			$wp_filter[ $hook ] = new class { public array $callbacks = [ 0 => [ 'cb' => 'do_it' ] ]; };
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'list_hooks' );
+
+		$this->assertEqualsCanonicalizing( [ 'kea_noisy_boot', 'tui_ruru' ], $result['noisy'] );
+	}
+
 	public function test_list_hooks_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
