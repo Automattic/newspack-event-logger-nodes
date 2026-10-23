@@ -36,6 +36,7 @@ import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption, profileOrder } from '../RequestProfile';
+import OwnerTable from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
@@ -425,6 +426,8 @@ export default function UrlDetailView( {
 				) }
 
 			{ urlDetail.flame_cut && <FlameCutNote /> }
+
+			<OwnerTable owners={ urlDetail.aggregate_owners } perRequest />
 
 			{ urlDetail.aggregate_profiles?.count > 0 && (
 				<ProfileWithCaption

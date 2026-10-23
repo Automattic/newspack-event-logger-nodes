@@ -1180,4 +1180,34 @@ describe( 'UrlDetailView', () => {
 		expect( onBreakdownChange.mock.calls[ 0 ][ 0 ] ).toBe( 'ja4' );
 		unmount();
 	} );
+
+	it( 'mounts the owner table per request from aggregate_owners', () => {
+		const { container, unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_owners: [
+					{
+						owner: 'theme:rail',
+						ms_per_request: 33.5,
+						share: 0.61,
+						calls: 14,
+					},
+				],
+			},
+		} );
+		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'theme:rail' );
+		expect( container.textContent ).toContain( 'ms per request' );
+		expect( container.textContent ).toContain( '33.5ms' );
+		expect( container.textContent ).toContain( '61.0%' );
+		unmount();
+	} );
+
+	it( 'mounts no owner table over an empty aggregate_owners', () => {
+		const { container, unmount } = mount( {
+			urlDetail: { ...baseUrlDetail, aggregate_owners: [] },
+		} );
+		expect( container.textContent ).not.toContain( 'Time by owner' );
+		unmount();
+	} );
 } );
