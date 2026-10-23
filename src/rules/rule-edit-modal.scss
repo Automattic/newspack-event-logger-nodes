@@ -83,7 +83,7 @@
 	// The count qualifies the checkbox, so it shares that row.
 	.rule-edit-trace-row {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 12px;
 		flex-wrap: wrap;
 

@@ -172,8 +172,8 @@ export const profileOrder = ( profiles ) =>
  * Space. A bar with no such segment only pictures numbers its table also
  * carries, so it is hidden from a screen reader.
  *
- * @param {Object}                                                                                   props          Component props.
- * @param {Array<{key: string, share: number, title: string, color: string, onSelect?: () => void}>} props.segments Segments in drawing order; `share` is a percentage.
+ * @param {Object}                                                                                  props          Component props.
+ * @param {Array<{key: string, share: number, title: string, fill: string, onSelect?: () => void}>} props.segments Segments in drawing order; `share` is a percentage.
  * @return {import('react').ReactElement} The bar.
  */
 export function ShareBar( { segments } ) {
@@ -183,7 +183,7 @@ export function ShareBar( { segments } ) {
 			className="event-logger-profile-bar"
 			aria-hidden={ decorative ? 'true' : undefined }
 		>
-			{ segments.map( ( { key, share, title, color, onSelect } ) =>
+			{ segments.map( ( { key, share, title, fill, onSelect } ) =>
 				onSelect ? (
 					<div
 						key={ key }
@@ -192,7 +192,7 @@ export function ShareBar( { segments } ) {
 						title={ title }
 						style={ {
 							width: `${ share }%`,
-							background: color,
+							background: fill,
 							cursor: 'pointer',
 						} }
 						onClick={ onSelect }
@@ -207,7 +207,7 @@ export function ShareBar( { segments } ) {
 					<div
 						key={ key }
 						title={ title }
-						style={ { width: `${ share }%`, background: color } }
+						style={ { width: `${ share }%`, background: fill } }
 					/>
 				)
 			) }
@@ -325,7 +325,7 @@ export default function RequestProfile( {
 							title: `${ state }: ${ formatDuration(
 								time
 							) } (${ shareText( share ) })`,
-							color: colourOf.get( state ),
+							fill: colourOf.get( state ),
 							onSelect: () => toggleExpand( state ),
 						},
 					];
@@ -337,7 +337,7 @@ export default function RequestProfile( {
 				aria-labelledby={ title ? headingId : labelledBy }
 			>
 				<thead>
-					<tr>
+					<tr className="newspack-nodes-table__header">
 						{ [
 							[
 								'category',
