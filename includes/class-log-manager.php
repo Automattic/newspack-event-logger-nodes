@@ -389,7 +389,7 @@ class Log_Manager {
 	 * substrate set `NEWSPACK_NODES_WORKER_TYPE` in the serving process, and
 	 * the value is what the `worker_type` entry carries, so a rule that logs
 	 * one keeps it on the worker rows and off the global averages. Every REST
-	 * endpoint here — the substrate's five and this plugin's MCP route —
+	 * endpoint here — the substrate's seven and this plugin's MCP route —
 	 * shares `restapi`: the path already names each, and the type rides the
 	 * URL as its query, so a per-endpoint name would only repeat the path.
 	 * `restapi` names a spawn request only until the substrate validates the
@@ -405,6 +405,8 @@ class Log_Manager {
 		'/wp-json/newspack-nodes/v1/command'          => 'restapi',
 		'/wp-json/newspack-nodes/v1/health/runtime'   => 'restapi',
 		'/wp-json/newspack-nodes/v1/messages/stream'  => 'restapi',
+		'/wp-json/newspack-nodes/v1/oauth/register'   => 'restapi',
+		'/wp-json/newspack-nodes/v1/oauth/token'      => 'restapi',
 		'/wp-json/newspack-nodes/v1/workers/spawn'    => 'restapi',
 		'/wp-json/newspack-event-logger-nodes/v1/mcp' => 'restapi',
 	];
