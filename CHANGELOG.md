@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.155.0] - 2026-10-23
+
 ### Changed
 - **The settings page signals the fleet once per save, and a failure no longer stops it.** Each changed option ran its own restart signal as its row was written, so the reset list signalled once per field, and a signal that failed raised out of `update_option()`, leaving the rest of the form or the reset undone. The page now registers the substrate's `Restart_Planner::listen()`, which runs one signal at the end of the request for every setting it changed and reports a failure as a stderr line and an error notice on the saving user's next admin page. `Admin::maybe_request_worker_restart()` is removed. The substrate floor rises to 2.126.0, the first release carrying the listener.
 

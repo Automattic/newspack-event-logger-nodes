@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.154.1\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.155.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-23T10:19:37+00:00\n"
+"POT-Creation-Date: 2026-10-23T11:51:50+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -34,70 +34,70 @@ msgstr ""
 msgid "https://newspack.com/"
 msgstr ""
 
-#: includes/admin/class-admin.php:129
+#: includes/admin/class-admin.php:124
 msgid "Enable event logging"
 msgstr ""
 
-#: includes/admin/class-admin.php:252
+#: includes/admin/class-admin.php:247
 msgid "Security check failed."
 msgstr ""
 
-#: includes/admin/class-admin.php:255
+#: includes/admin/class-admin.php:250
 msgid "You do not have permission to perform this action."
 msgstr ""
 
-#: includes/admin/class-admin.php:330
+#: includes/admin/class-admin.php:325
 msgid "You do not have permission to access this page."
 msgstr ""
 
-#: includes/admin/class-admin.php:337
-#: includes/admin/class-admin.php:387
+#: includes/admin/class-admin.php:332
+#: includes/admin/class-admin.php:382
 msgid "Event Logger Settings"
 msgstr ""
 
-#: includes/admin/class-admin.php:342
+#: includes/admin/class-admin.php:337
 msgid "Settings reset to defaults."
 msgstr ""
 
-#: includes/admin/class-admin.php:352
+#: includes/admin/class-admin.php:347
 msgid "Save Settings"
 msgstr ""
 
-#: includes/admin/class-admin.php:355
+#: includes/admin/class-admin.php:350
 msgid "Reset to Defaults"
 msgstr ""
 
-#: includes/admin/class-admin.php:356
+#: includes/admin/class-admin.php:351
 msgid "Are you sure you want to reset all settings to defaults? This cannot be undone."
 msgstr ""
 
-#: includes/admin/class-admin.php:388
+#: includes/admin/class-admin.php:383
 msgid "Event Logger"
 msgstr ""
 
-#: includes/admin/class-admin.php:426
+#: includes/admin/class-admin.php:421
 msgid "Enable or disable event logging."
 msgstr ""
 
-#: includes/admin/class-admin.php:439
+#: includes/admin/class-admin.php:434
 msgid "Logging Rules"
 msgstr ""
 
-#: includes/admin/class-admin.php:441
+#: includes/admin/class-admin.php:436
 msgid "Per-URL logging rules: which URLs to log or skip, and — for logged URLs — the hooks, custom events, significant events, and auto-tune thresholds."
 msgstr ""
 
-#: includes/admin/class-admin.php:467
+#: includes/admin/class-admin.php:462
 msgid "Maintenance"
 msgstr ""
 
 #. translators: %s: link to the Newspack Nodes settings page.
-#: includes/admin/class-admin.php:472
+#: includes/admin/class-admin.php:467
 #, php-format
 msgid "Flushing caches is a substrate-wide action: %s rotates this install's cache salt, orphaning every plugin's cached values at once."
 msgstr ""
 
-#: includes/admin/class-admin.php:473
+#: includes/admin/class-admin.php:468
 msgid "Newspack Nodes settings"
 msgstr ""
 
