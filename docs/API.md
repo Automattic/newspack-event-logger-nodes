@@ -346,6 +346,12 @@ chart's span, or for `performance_query` up to its source's retention, the span 
 buckets. Each tool's description names both counts as `min_lifetime` sets them when the
 tools are listed.
 `performance_query` takes `group`, `filter` and `measure` as arrays, beside `top` and `top_by`.
+The `filter` of `performance_urls`, `dump_url` and `performance_ask` opens with its verb's own
+`filter` description, the one the CLI and the console read: the token grammar, then every
+`Stats_Query::FIELDS['requests']` field but `server` and `bucket`, which their own arguments
+own, each with how its value is spelled and, for `url` and `page`, when the subject owns it.
+A spelling for a field the vocabulary lacks, or a field with none, throws `LogicException`
+when the schema is read.
 
 **Connecting a client**. Register the endpoint with the handle and key that session issued.
 `<ID>` is the local name the client files it under:
@@ -367,7 +373,10 @@ claude mcp add --transport http hub https://<DOMAIN>/wp-json/newspack-event-logg
 Every tool description carries the measurement caveat, because a model handed
 `175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured will invent a
 cause for the difference — and the invented cause reads exactly like a finding. That caveat
-is the tail of `initialize`'s `instructions`.
+is the tail of `initialize`'s `instructions`. Ahead of it, after the fence rule, the
+instructions carry a glossary: what a URL shape and a page are, as `Url_Parts` keys them,
+what counts as an error, what an `owner` is beside the `(unowned)` and `(unmeasured)` rows,
+why profile categories do not sum, and what a bucket is.
 
 **Every success result is fenced, and the head of `instructions` says why.** A tool returns
 recorded site traffic, part of it written by the site's visitors: `dump_request` carries the `environment_v3` entry, whose values are request headers. So the

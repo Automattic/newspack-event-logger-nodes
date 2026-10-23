@@ -176,8 +176,33 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** The `page` arg `urls` and `dump_url` each declare beside a description. */
 	private const PAGE_ARG = [ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '' ];
 
-	/** The `filter` arg `query`, `urls`, `dump_url` and `ask` each declare. */
-	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values, and `field!=value` keeps the rows matching none of their values. A field matches in any case, and a repeated token counts once. A field another argument owns is refused; `query`, where none does, takes a bucket by its key.' ];
+	/** How every `filter` arg reads its tokens. */
+	private const FILTER_GRAMMAR = '`field=value`, one value a token; tokens naming one field match any of their values, and `field!=value` keeps the rows matching none of their values. A field matches in any case, and a repeated token counts once.';
+
+	/** The `filter` arg `query` declares; `url_set_filter_arg()` builds the others'. */
+	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => self::FILTER_GRAMMAR . ' No other argument owns a field, so a bucket is taken by its key too.' ];
+
+	/**
+	 * How a URL-set filter spells each field's value, in the order it lists
+	 * them: every `requests` field but those `URL_SET_OWNERS` names, as
+	 * `Stats_Query` answers it.
+	 */
+	private const FIELD_SPELLINGS = [
+		'hour'         => 'hours since the epoch',
+		'day'          => 'UTC days since the epoch',
+		'url'          => 'a 12-hex URL hash',
+		'page'         => 'a 12-hex page hash',
+		'status'       => 'the HTTP status code, `Unknown` where the request answered none',
+		'status_class' => 'the first digit of the status, 1 to 5, which `5xx` also reads as, or `Unknown`',
+		'method'       => '`GET`, `POST`, `HEAD`, `DELETE`, `PUT`, `PATCH`, `OPTIONS`, `CLI` for WP-CLI, or `Other` for any other',
+		'country'      => 'the GeoIP country code, such as `US`, `Unknown` where none',
+		'ua'           => 'the User-Agent header as logged, `Unknown` where none',
+		'ja4'          => 'the JA4 TLS fingerprint from `X-JA4-Hash`, `Unknown` where none',
+		'from'         => 'the From request header, not a time, `Unknown` where none',
+		'worker'       => '1 for cron, WP-CLI and job traffic, else 0',
+		'profiled'     => '1 where the request filed timing rows, else 0',
+		'error'        => '`T` a timeout, `F` a fatal, `A` an abort, `I` incomplete, `-` none; only `T` and `F` count as errors',
+	];
 
 	/**
 	 * The fields a URL-set filter may not name, each by the argument owning
@@ -2483,6 +2508,30 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The `filter` arg a verb filtering a URL set declares: the grammar, then
+	 * every `requests` field `URL_SET_OWNERS` leaves, each spelled and, where
+	 * a subject argument owns it, saying when it is refused.
+	 *
+	 * @param array<string,string> $subjects A subject field and when it is refused.
+	 * @return array<string,mixed>
+	 * @throws \LogicException When `FIELD_SPELLINGS` and the fields it spells part.
+	 */
+	private static function url_set_filter_arg( array $subjects ): array {
+		$fields  = \array_values( \array_diff( Stats_Query::FIELDS['requests'], \array_keys( self::URL_SET_OWNERS ) ) );
+		$spelled = \array_keys( self::FIELD_SPELLINGS );
+		if ( [] !== \array_diff( $fields, $spelled ) || [] !== \array_diff( $spelled, $fields ) ) {
+			throw new \LogicException( \esc_html( 'FIELD_SPELLINGS spells ' . \implode( ', ', $spelled ) . ' where a URL-set filter takes ' . \implode( ', ', $fields ) ) );
+		}
+		$named = \array_map(
+			static fn ( string $field, string $spelling ): string => "`{$field}` (" . \implode( '; ', [ $spelling, ...( isset( $subjects[ $field ] ) ? [ $subjects[ $field ] ] : [] ) ] ) . ')',
+			$spelled,
+			self::FIELD_SPELLINGS
+		);
+		$owned = '`' . \implode( '` and `', \array_keys( self::URL_SET_OWNERS ) ) . '` are refused, each owned by the argument of its name.';
+		return [ 'description' => self::FILTER_GRAMMAR . ' A field is one of ' . \implode( ', ', $named ) . ". {$owned}" ] + self::FILTER_ARG;
+	}
+
+	/**
 	 * Schema-driven dispatch: each verb is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs ask
@@ -2528,7 +2577,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ] + self::PAGE_ARG,
-						self::FILTER_ARG,
+						self::url_set_filter_arg( [ 'page' => 'refused beside `page`, which owns it' ] ),
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most ' . $span . ' buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last ' . $span . '. `filters.bucket` echoes the canonical spelling.' ],
 					],
@@ -2562,7 +2611,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'url', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A URL\'s hash: answers that URL. It owns the url field, so a `url=` or `url!=` filter beside it is refused. Refused beside `page`.' ],
 						[ 'description' => 'A page\'s hash, `page_hash`: answers every shape of that page in place of one URL. It owns the page field, so a `page=` or `page!=` filter beside it is refused. Refused beside `url`.' ] + self::PAGE_ARG,
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						self::FILTER_ARG,
+						self::url_set_filter_arg( [ 'url' => 'refused beside `url`, which owns it', 'page' => 'refused beside `page`, which owns it' ] ),
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets, as `urls` takes it: the stats and the list become the requests completing in them, zero where the URL has none, and no flame is rebuilt from the list. A selection `urls` refuses is refused.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
@@ -2660,7 +2709,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						// overview: reads all four; url: and page: two.
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						self::FILTER_ARG,
+						self::url_set_filter_arg( [ 'url' => 'refused under a `url:` brief, whose hash owns it', 'page' => 'refused under a `page:` brief, whose hash owns it' ] ),
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'Narrows an `overview:` brief to a selection of buckets as `urls` narrows it, and a `url:` or `page:` brief as `dump_url` does, to the requests completing inside them, the brief carrying the canonical spelling. Every other descriptor ignores it, and neither checks nor refuses it.' ],
 					],

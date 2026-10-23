@@ -1991,7 +1991,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'descriptor', 'context', 'server', 'search', 'filter', 'include_workers', 'bucket' ], \array_keys( $args ) );
 		$this->assertTrue( $args['descriptor']['required'] );
 		$this->assertTrue( $args['context']['variadic'] );
-		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
+		$this->assertSame( \array_diff_key( self::args_by_name( 'query' )['filter'], [ 'description' => true ] ), \array_diff_key( $args['filter'], [ 'description' => true ] ), 'bound as query binds it; only its field list differs' );
 		$this->assertFalse( $args['include_workers']['default'] );
 	}
 
@@ -2008,7 +2008,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '', $args['bucket']['default'] );
 		$this->assertSame( 'bool', $args['include_workers']['type'] );
 		$this->assertFalse( $args['include_workers']['default'] );
-		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
+		$this->assertSame( \array_diff_key( self::args_by_name( 'query' )['filter'], [ 'description' => true ] ), \array_diff_key( $args['filter'], [ 'description' => true ] ), 'bound as query binds it; only its field list differs' );
 		$this->assertSame( 'string', $args['sort']['type'] );
 		$this->assertSame( 'string', $args['order']['type'] );
 		$this->assertSame( 'int', $args['limit']['type'] );
@@ -4403,7 +4403,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( [ 'url', 'page', 'server', 'filter', 'bucket' ], \array_keys( $args ) );
 		$this->assertSame( [ false, '' ], [ $args['url']['required'], $args['url']['default'] ], 'a page names no URL' );
-		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
+		$this->assertSame( \array_diff_key( self::args_by_name( 'query' )['filter'], [ 'description' => true ] ), \array_diff_key( $args['filter'], [ 'description' => true ] ), 'bound as query binds it; only its field list differs' );
 		$this->assertSame( [ 'string', 'string' ], [ $args['server']['type'], $args['bucket']['type'] ] );
 	}
 
