@@ -430,8 +430,6 @@ export default function UrlDetailView( {
 
 			{ urlDetail.flame_cut && <FlameCutNote /> }
 
-			<OwnerTable owners={ urlDetail.aggregate_owners } perRequest />
-
 			{ urlDetail.aggregate_profiles?.count > 0 && (
 				<ProfileWithCaption
 					profiles={ urlDetail.aggregate_profiles.categories }
@@ -442,6 +440,8 @@ export default function UrlDetailView( {
 					count={ urlDetail.aggregate_profiles.count }
 				/>
 			) }
+
+			<OwnerTable owners={ urlDetail.aggregate_owners } perRequest />
 
 			<div className="event-logger-table event-logger-table--requests">
 				<div
