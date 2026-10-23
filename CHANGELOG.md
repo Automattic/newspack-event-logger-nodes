@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.155.1] - 2026-10-23
+
 ### Changed
 - **Time By Owner draws its ten dearest owners and holds the rest behind Show more.** A site with two hundred plugins listed every one, most at 0.0%, down the page. The table now truncates as the Time Breakdown above it does, through the same `useShowMore()` and `ShowMoreRow`; the share bar still draws every owner.
 
