@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import * as React from 'react';
 import OwnerTable from '../OwnerTable';
-import { renderComponent } from '../../test-helpers/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const ROWS = [
 	{ owner: 'plugin:heron-gallery', ms: 187.5, share: 0.4237, calls: 41 },
@@ -41,8 +41,9 @@ describe( 'OwnerTable', () => {
 	it( 'heads the columns for one request', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
 		expect(
-			Array.from( container.querySelectorAll( 'th' ) ).map(
-				( th ) => th.textContent
+			Array.from( container.querySelectorAll( 'th' ) ).map( ( th ) =>
+				// The sorted column carries its caret; the label is the rest.
+				th.textContent.replace( /[▲▼]/g, '' )
 			)
 		).toEqual( [ 'Owner', 'ms', 'Share', 'Calls' ] );
 		unmount();
@@ -64,8 +65,9 @@ describe( 'OwnerTable', () => {
 			'13.7',
 		] );
 		expect(
-			Array.from( container.querySelectorAll( 'th' ) ).map(
-				( th ) => th.textContent
+			Array.from( container.querySelectorAll( 'th' ) ).map( ( th ) =>
+				// The sorted column carries its caret; the label is the rest.
+				th.textContent.replace( /[▲▼]/g, '' )
 			)
 		).toEqual( [
 			'Owner',
@@ -119,7 +121,110 @@ describe( 'OwnerTable', () => {
 	} );
 } );
 
-describe( 'PSEUDO_OWNERS', () => {
+describe( 'OwnerTable totals and sorting', () => {
+	const owners = ( container ) =>
+		[ ...container.querySelectorAll( 'tbody tr' ) ].map( ( tr ) =>
+			tr.querySelector( 'td' ).textContent.trim()
+		);
+	const header = ( container, label ) =>
+		[ ...container.querySelectorAll( 'thead button' ) ].find( ( b ) =>
+			b.textContent.startsWith( label )
+		);
+	const click = ( el ) =>
+		act( () => {
+			el.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+		} );
+
+	it( 'totals everything the spans cover, leaving out (unmeasured)', () => {
+		const { container, unmount } = mount( { owners: ROWS } );
+		const total = [ ...container.querySelectorAll( 'tfoot td' ) ].map(
+			( td ) => td.textContent
+		);
+		expect( total.slice( 0, 3 ) ).toEqual( [
+			'Total Profiled',
+			'289.8ms',
+			'65.7%',
+		] );
+		unmount();
+	} );
+
+	it( 'sorts by a header, flipping on a second click', () => {
+		const { container, unmount } = mount( { owners: ROWS } );
+		click( header( container, 'Owner' ) );
+		expect( owners( container ) ).toEqual( [
+			'theme:kea',
+			'plugin:heron-gallery',
+			'(unowned)',
+			'(unmeasured)',
+		] );
+		click( header( container, 'Owner' ) );
+		expect( owners( container ) ).toEqual( [
+			'(unmeasured)',
+			'(unowned)',
+			'plugin:heron-gallery',
+			'theme:kea',
+		] );
+		click( header( container, 'Calls' ) );
+		expect( owners( container ) ).toEqual( [
+			'plugin:heron-gallery',
+			'(unowned)',
+			'theme:kea',
+			'(unmeasured)',
+		] );
+		unmount();
+	} );
+} );
+
+describe( 'OwnerTable share bar', () => {
+	const segments = ( container ) => [
+		...container.querySelectorAll( '.event-logger-profile-bar > div' ),
+	];
+	const swatchOf = ( container, owner ) =>
+		[ ...container.querySelectorAll( 'tbody tr' ) ]
+			.find( ( tr ) => tr.textContent.startsWith( owner ) )
+			.querySelector( '.event-logger-profile-swatch' );
+
+	it( 'draws one segment per owner at its share, beside the table that carries the numbers', () => {
+		const { container, unmount } = mount( { owners: ROWS } );
+		const bar = container.querySelector( '.event-logger-profile-bar' );
+		expect( bar.getAttribute( 'aria-hidden' ) ).toBe( 'true' );
+		const widths = segments( container ).map( ( s ) =>
+			parseFloat( s.style.width )
+		);
+		[ 42.37, 20.51, 2.79, 1.14 ].forEach( ( width, at ) =>
+			expect( widths[ at ] ).toBeCloseTo( width, 6 )
+		);
+		unmount();
+	} );
+
+	it( 'gives the two pseudo-owners separate muted neutrals', () => {
+		const { container, unmount } = mount( { owners: ROWS } );
+		const [ , unowned, , unmeasured ] = segments( container );
+		expect( unowned.style.background ).toBe( 'rgb(158, 158, 158)' );
+		expect( unmeasured.style.background ).toBe( 'rgb(108, 108, 108)' );
+		unmount();
+	} );
+
+	it( "keeps an owner's colour whatever its rank, and its swatch matches its segment", () => {
+		const first = mount( { owners: ROWS } );
+		const colour = segments( first.container )[ 0 ].style.background;
+		expect(
+			swatchOf( first.container, 'plugin:heron-gallery' ).style.background
+		).toBe( colour );
+		first.unmount();
+
+		const second = mount( { owners: [ ...ROWS ].reverse() } );
+		expect(
+			swatchOf( second.container, 'plugin:heron-gallery' ).style
+				.background
+		).toBe( colour );
+		second.unmount();
+	} );
+} );
+
+describe( 'PSEUDO_OWNER_COLORS', () => {
 	const read = ( ...parts ) =>
 		fs.readFileSync( path.join( __dirname, ...parts ), 'utf8' );
 	const phpConst = ( name ) => {
@@ -136,13 +241,12 @@ describe( 'PSEUDO_OWNERS', () => {
 
 	it( 'carries the names Owner minds for unclaimed and unmeasured time', () => {
 		const match = read( '..', 'OwnerTable.js' ).match(
-			/const PSEUDO_OWNERS = \[([^\]]*)\];/
+			/const PSEUDO_OWNER_COLORS = \{([^}]*)\};/
 		);
 		expect( match ).toBeTruthy();
-		const mirrored = match[ 1 ]
-			.split( ',' )
-			.map( ( part ) => part.trim().replace( /^'|'$/g, '' ) )
-			.filter( Boolean );
+		const mirrored = [ ...match[ 1 ].matchAll( /'([^']+)':/g ) ].map(
+			( key ) => key[ 1 ]
+		);
 		expect( mirrored.sort() ).toEqual(
 			[ phpConst( 'UNOWNED' ), phpConst( 'UNMEASURED' ) ].sort()
 		);
