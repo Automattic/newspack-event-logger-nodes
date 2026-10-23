@@ -109,9 +109,10 @@ class Admin {
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
-		// Per-option worker-restart on save (added_option + updated_option).
+		// Per-option worker-restart on every row write: add, update, reset.
 		\add_action( 'updated_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
 		\add_action( 'added_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
+		\add_action( 'deleted_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
 
 		// Skip storing an option equal to the file default (strict compare).
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );

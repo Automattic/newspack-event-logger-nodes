@@ -227,6 +227,18 @@ class AdminTest extends TestCase {
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
 
+	public function test_resetting_enable_logging_restarts_every_live_topology(): void {
+		// A reset or a save of the default deletes the row: deleted_option fires.
+		$this->register_topologies();
+		$this->prepare_lock_dir( 'aggregator', 0 );
+		$GLOBALS['_wp_actions'] = [];
+		new Admin();
+
+		\do_action( 'deleted_option', 'newspack_event_logger_nodes_enable_logging' );
+
+		$this->assertRestartFlagged( 'aggregator', 0 );
+	}
+
 	public function test_maybe_request_worker_restart_all_class_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
