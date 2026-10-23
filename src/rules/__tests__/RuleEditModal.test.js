@@ -390,6 +390,25 @@ describe( 'RuleEditModal — log rule fields', () => {
 			);
 		}
 
+		test( 'sits in its own labelled row between the custom events and the significant events', () => {
+			mount( LOG_RULE );
+			const row = measureButton().closest(
+				'.rule-edit-plugin-time-field'
+			);
+			expect( row ).not.toBeNull();
+			expect( row.textContent ).toContain( 'Plugin time' );
+			expect(
+				row.previousElementSibling.classList.contains(
+					'rule-edit-custom-field'
+				)
+			).toBe( true );
+			expect(
+				row.nextElementSibling.classList.contains(
+					'rule-edit-tag-field'
+				)
+			).toBe( true );
+		} );
+
 		test( 'sets hooks, events and all three switches in the pending state', () => {
 			mount( {
 				...LOG_RULE,
