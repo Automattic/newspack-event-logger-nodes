@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.153.2] - 2026-10-23
+
 ### Fixed
 - **A line logged during a firehose write lands after it, in number order.** A PHP warning a Partition write raised, such as an `@unlink` of an absent `.idx` or a `mkdir(): File exists` race, was recorded through `Log_Manager::message()` while the line that raised it was still being written, so it took the next number and reached the firehose first. The request builder then reported `missing message: expected #N, got #N+1` and dropped line N as a duplicate when it arrived. A line logged while a write is in flight now waits and takes its number when it is written, after that write; a write that throws drops what it raised, numbering none of it; one write holds at most 32 such lines; and a line the final flush raises is refused, so nothing follows the terminal.
 
