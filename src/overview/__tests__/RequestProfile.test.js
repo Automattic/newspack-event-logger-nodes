@@ -473,6 +473,73 @@ describe( 'RequestProfile', () => {
 	} );
 } );
 
+describe( 'RequestProfile table semantics', () => {
+	const labelOf = ( table ) =>
+		document.getElementById( table.getAttribute( 'aria-labelledby' ) )
+			?.textContent;
+
+	it( 'labels its table by its heading and scopes each header to its column', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: { 'kea-7101': { count: 2, time: 40 } },
+				totalMs: 90,
+				title: 'Kea breakdown 7101',
+			} )
+		);
+		const table = container.querySelector( 'table' );
+		expect( labelOf( table ) ).toBe( 'Kea breakdown 7101' );
+		const headers = [ ...table.querySelectorAll( 'thead th' ) ];
+		expect( headers.length ).toBe( 4 );
+		headers.forEach( ( th ) =>
+			expect( th.getAttribute( 'scope' ) ).toBe( 'col' )
+		);
+		unmount();
+	} );
+
+	it( 'labels its table by the caption wrapper heading when it has none of its own', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( ProfileWithCaption, {
+				profiles: { 'kea-7102': { count: 1, time: 12 } },
+				totalMs: 50,
+				totalProfiledTime: 12,
+				count: 4,
+				heading: 'Kea window 7102',
+			} )
+		);
+		expect( labelOf( container.querySelector( 'table' ) ) ).toBe(
+			'Kea window 7102'
+		);
+		unmount();
+	} );
+
+	it( "names an expanded category's origins table after the category", () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					'kea-7103': {
+						count: 3,
+						time: 30,
+						entries: { '[kea] Kea::run': [ 30, 3 ] },
+					},
+				},
+				totalMs: 60,
+			} )
+		);
+		const row = container.querySelector( 'tbody tr' );
+		act( () => {
+			row.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+		} );
+		const nested = container.querySelector(
+			'.event-logger-profile-entries'
+		);
+		expect( nested ).not.toBeNull();
+		expect( nested.getAttribute( 'aria-label' ) ).toContain( 'kea-7103' );
+		unmount();
+	} );
+} );
+
 describe( 'RequestProfile with no measured wall clock', () => {
 	it( 'shows every share as a dash, never as 0.0%', () => {
 		const { container, unmount } = renderComponent(

@@ -30,12 +30,14 @@ import { useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	BaseControl,
+	Button,
 	useBaseControlProps,
 	Modal,
 	TextControl,
 	SelectControl,
 	CheckboxControl,
 } from '@wordpress/components';
+import { info } from '@wordpress/icons';
 
 import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
 import HookSelectorModal, {
@@ -74,6 +76,37 @@ import './rule-edit-modal.scss';
 function toNumber( value, parse ) {
 	const n = parse( value );
 	return Number.isFinite( n ) ? n : 0;
+}
+
+/**
+ * A logging checkbox whose description sits in an info button's tooltip,
+ * which hover, keyboard focus and a screen reader all reach.
+ *
+ * @param {Object}                     props          Component props.
+ * @param {string}                     props.name     The input's name.
+ * @param {string}                     props.label    The checkbox label.
+ * @param {string}                     props.help     What the switch does and costs.
+ * @param {boolean}                    props.checked  Whether it is on.
+ * @param {(checked: boolean) => void} props.onChange Change handler.
+ * @return {import('react').ReactElement} The checkbox and its info button.
+ */
+function RuleSwitch( { name, label, help, checked, onChange } ) {
+	return (
+		<div className="rule-edit-switch">
+			<CheckboxControl
+				name={ name }
+				label={ label }
+				checked={ checked }
+				onChange={ onChange }
+			/>
+			<Button
+				className="rule-edit-switch-info"
+				icon={ info }
+				label={ help }
+				size="small"
+			/>
+		</div>
+	);
 }
 
 /**
@@ -276,91 +309,95 @@ export default function RuleEditModal( {
 
 					{ isLog && (
 						<>
-							<div className="rule-edit-hooks-field">
-								<BaseControl.VisualLabel className="rule-edit-field-label">
-									{ __(
-										'Hooks',
-										'newspack-event-logger-nodes'
-									) }
-								</BaseControl.VisualLabel>
-								<button
-									type="button"
-									className="button"
-									onClick={ () => setIsHooksOpen( true ) }
-								>
-									{ __(
-										'Select Hooks',
-										'newspack-event-logger-nodes'
-									) }
-								</button>
-								<span className="rule-edit-field-count newspack-nodes-status">
-									{ sprintf(
-										// translators: %d: number of selected hooks.
-										_n(
-											'%d hook',
-											'%d hooks',
-											hooks.length,
+							<div className="rule-edit-selectors">
+								<div className="rule-edit-hooks-field">
+									<BaseControl.VisualLabel className="rule-edit-field-label">
+										{ __(
+											'Hooks',
 											'newspack-event-logger-nodes'
-										),
-										hooks.length
-									) }
-								</span>
-							</div>
-
-							<div className="rule-edit-custom-field">
-								<BaseControl.VisualLabel className="rule-edit-field-label">
-									{ __(
-										'Custom events',
-										'newspack-event-logger-nodes'
-									) }
-								</BaseControl.VisualLabel>
-								<button
-									type="button"
-									className="button"
-									onClick={ () => setIsCustomOpen( true ) }
-								>
-									{ __(
-										'Select Events',
-										'newspack-event-logger-nodes'
-									) }
-								</button>
-								<span className="rule-edit-field-count newspack-nodes-status">
-									{ sprintf(
-										// translators: %d: number of selected custom events.
-										_n(
-											'%d event',
-											'%d events',
-											customEvents.length,
+										) }
+									</BaseControl.VisualLabel>
+									<button
+										type="button"
+										className="button"
+										onClick={ () => setIsHooksOpen( true ) }
+									>
+										{ __(
+											'Select Hooks',
 											'newspack-event-logger-nodes'
-										),
-										customEvents.length
-									) }
-								</span>
-							</div>
+										) }
+									</button>
+									<span className="rule-edit-field-count newspack-nodes-status">
+										{ sprintf(
+											// translators: %d: number of selected hooks.
+											_n(
+												'%d hook',
+												'%d hooks',
+												hooks.length,
+												'newspack-event-logger-nodes'
+											),
+											hooks.length
+										) }
+									</span>
+								</div>
 
-							<div className="rule-edit-plugin-time-field">
-								<BaseControl.VisualLabel className="rule-edit-field-label">
-									{ __(
-										'Plugin time',
-										'newspack-event-logger-nodes'
-									) }
-								</BaseControl.VisualLabel>
-								<button
-									type="button"
-									className="button"
-									onClick={ measurePluginTime }
-								>
-									{ __(
-										'Measure plugin time',
-										'newspack-event-logger-nodes'
-									) }
-								</button>
-								<span className="rule-edit-field-note newspack-nodes-status">
-									{ __(
-										'Adds the lifecycle hooks, sql and http',
-										'newspack-event-logger-nodes'
-									) }
-								</span>
+								<div className="rule-edit-custom-field">
+									<BaseControl.VisualLabel className="rule-edit-field-label">
+										{ __(
+											'Custom events',
+											'newspack-event-logger-nodes'
+										) }
+									</BaseControl.VisualLabel>
+									<button
+										type="button"
+										className="button"
+										onClick={ () =>
+											setIsCustomOpen( true )
+										}
+									>
+										{ __(
+											'Select Events',
+											'newspack-event-logger-nodes'
+										) }
+									</button>
+									<span className="rule-edit-field-count newspack-nodes-status">
+										{ sprintf(
+											// translators: %d: number of selected custom events.
+											_n(
+												'%d event',
+												'%d events',
+												customEvents.length,
+												'newspack-event-logger-nodes'
+											),
+											customEvents.length
+										) }
+									</span>
+								</div>
+
+								<div className="rule-edit-plugin-time-field">
+									<BaseControl.VisualLabel className="rule-edit-field-label">
+										{ __(
+											'Plugin time',
+											'newspack-event-logger-nodes'
+										) }
+									</BaseControl.VisualLabel>
+									<button
+										type="button"
+										className="button"
+										onClick={ measurePluginTime }
+									>
+										{ __(
+											'Measure plugin time',
+											'newspack-event-logger-nodes'
+										) }
+									</button>
+									<span className="rule-edit-field-note newspack-nodes-status">
+										{ __(
+											'Adds the lifecycle hooks, sql and http',
+											'newspack-event-logger-nodes'
+										) }
+									</span>
+								</div>
 							</div>
 
 							<BaseControl
@@ -414,7 +451,7 @@ export default function RuleEditModal( {
 								/>
 							</div>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-queries"
 								label={ __(
 									'Log database queries',
@@ -428,7 +465,7 @@ export default function RuleEditModal( {
 								onChange={ setLogQueries }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-http"
 								label={ __(
 									'Log HTTP requests',
@@ -442,7 +479,7 @@ export default function RuleEditModal( {
 								onChange={ setLogHttp }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-plugin-loads"
 								label={ __(
 									'Log plugin load time',
@@ -456,7 +493,7 @@ export default function RuleEditModal( {
 								onChange={ setLogPluginLoads }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-memory"
 								label={ __(
 									'Log peak memory on every span',
@@ -470,7 +507,7 @@ export default function RuleEditModal( {
 								onChange={ setLogMemory }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-context"
 								label={ __(
 									'Log request context',
@@ -484,7 +521,7 @@ export default function RuleEditModal( {
 								onChange={ setLogContext }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-cache"
 								label={ __(
 									'Log object cache counts',
@@ -498,7 +535,7 @@ export default function RuleEditModal( {
 								onChange={ setLogCache }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-resources"
 								label={ __(
 									'Log resource usage',
@@ -512,7 +549,7 @@ export default function RuleEditModal( {
 								onChange={ setLogResources }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-log-php-errors"
 								label={ __(
 									'Log PHP errors',
@@ -526,7 +563,7 @@ export default function RuleEditModal( {
 								onChange={ setLogPhpErrors }
 							/>
 
-							<CheckboxControl
+							<RuleSwitch
 								name="rule-flush-every-line"
 								label={ __(
 									'Flush every line',
@@ -541,7 +578,7 @@ export default function RuleEditModal( {
 							/>
 
 							<div className="rule-edit-trace-row">
-								<CheckboxControl
+								<RuleSwitch
 									name="rule-trace-hooks"
 									label={ __(
 										'Trace hook callers',

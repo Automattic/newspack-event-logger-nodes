@@ -10,7 +10,7 @@
  * requests the average covers.
  */
 
-import { useState, useMemo, Fragment } from '@wordpress/element';
+import { useState, useMemo, useId, Fragment } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import {
@@ -69,15 +69,23 @@ const isOverlayCategory = ( state ) =>
  * Counts are rounded because the averaged views divide their sums by the
  * request count before sending them, which lands most origins on a fraction.
  *
- * @param {Object}                  props         Component props.
- * @param {Object<string,number[]>} props.entries Per-origin `[ time, count ]`, keyed by origin; the averaged shape appends a sample count this table ignores.
+ * @param {Object}                  props          Component props.
+ * @param {Object<string,number[]>} props.entries  Per-origin `[ time, count ]`, keyed by origin; the averaged shape appends a sample count this table ignores.
+ * @param {string}                  props.category The category it breaks down, which names the table.
  * @return {import('react').ReactElement} The nested breakdown table.
  */
-function ProfileEntries( { entries } ) {
+function ProfileEntries( { entries, category } ) {
 	const hiddenCount = Object.keys( entries ).length - VISIBLE_ENTRY_COUNT;
 
 	return (
-		<table className="newspack-nodes-table newspack-nodes-table--undivided event-logger-profile-entries">
+		<table
+			className="newspack-nodes-table newspack-nodes-table--undivided event-logger-profile-entries"
+			aria-label={ sprintf(
+				// translators: %s: the category the origins break down.
+				__( '%s by origin', 'newspack-event-logger-nodes' ),
+				category
+			) }
+		>
 			<tbody>
 				{ Object.entries( entries )
 					.sort( ( a, b ) => b[ 1 ][ 0 ] - a[ 1 ][ 0 ] )
@@ -178,6 +186,7 @@ export const profileOrder = ( profiles ) =>
  * @param {?number}               props.totalMs             Wall-clock duration in ms — the denominator for every percentage; null or 0 where unmeasured.
  * @param {?number}               [props.totalProfiledTime] Profiled total the averaged views compute server-side, null where unmeasured; summed from the non-listener categories when omitted.
  * @param {string|null}           [props.title]             Heading text, or null for no heading; defaults to "Time Breakdown".
+ * @param {string}                [props.labelledBy]        Id of the heading that names the table when `title` is null and a wrapper carries it.
  * @return {import('react').ReactElement|null} The panel, or null when every category carries zero time and zero count.
  */
 export default function RequestProfile( {
@@ -185,7 +194,9 @@ export default function RequestProfile( {
 	totalMs,
 	totalProfiledTime,
 	title = __( 'Time Breakdown', 'newspack-event-logger-nodes' ),
+	labelledBy,
 } ) {
+	const headingId = useId();
 	const [ expandedState, setExpandedState ] = useState( null );
 	const [ showAll, setShowAll ] = useState( false );
 
@@ -231,7 +242,7 @@ export default function RequestProfile( {
 
 	return (
 		<div className="event-logger-request-profile">
-			{ title && <h3>{ title }</h3> }
+			{ title && <h3 id={ headingId }>{ title }</h3> }
 
 			<div className="event-logger-profile-bar">
 				{ sortedProfiles.map( ( { state, time }, index ) => {
@@ -267,20 +278,25 @@ export default function RequestProfile( {
 				} ) }
 			</div>
 
-			<table className="newspack-nodes-table newspack-nodes-table--undivided">
+			<table
+				className="newspack-nodes-table newspack-nodes-table--undivided"
+				aria-labelledby={ title ? headingId : labelledBy }
+			>
 				<thead>
 					<tr>
-						<th>
+						<th scope="col">
 							{ __( 'Category', 'newspack-event-logger-nodes' ) }
 						</th>
-						<th>{ __( 'Time', 'newspack-event-logger-nodes' ) }</th>
-						<th>
+						<th scope="col">
+							{ __( 'Time', 'newspack-event-logger-nodes' ) }
+						</th>
+						<th scope="col">
 							{ __(
 								'% of Total',
 								'newspack-event-logger-nodes'
 							) }
 						</th>
-						<th>
+						<th scope="col">
 							{ __( 'Count', 'newspack-event-logger-nodes' ) }
 						</th>
 					</tr>
@@ -347,6 +363,7 @@ export default function RequestProfile( {
 											<td colSpan={ 4 }>
 												<ProfileEntries
 													entries={ entries }
+													category={ state }
 												/>
 											</td>
 										</tr>
@@ -433,17 +450,19 @@ export function ProfileWithCaption( {
 	heading = null,
 	serverName = '',
 } ) {
+	const headingId = useId();
 	return (
 		<div
 			className="event-logger-request-profile"
 			style={ { marginTop: '20px' } }
 		>
-			{ heading && <h3>{ heading }</h3> }
+			{ heading && <h3 id={ headingId }>{ heading }</h3> }
 			<RequestProfile
 				profiles={ profiles }
 				totalMs={ totalMs }
 				totalProfiledTime={ totalProfiledTime }
 				title={ heading ? null : undefined }
+				labelledBy={ heading ? headingId : undefined }
 			/>
 			<p
 				className="newspack-nodes-status"

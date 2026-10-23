@@ -134,6 +134,19 @@ function inDialog( selector ) {
 	return dialog.querySelector( selector );
 }
 
+/**
+ * The description a checkbox's info button carries, which its tooltip shows.
+ *
+ * @param {string} name The checkbox input's name.
+ * @return {string} The button's accessible label.
+ */
+function tipOf( name ) {
+	return inDialog( `input[name="${ name }"]` )
+		.closest( '.rule-edit-switch' )
+		.querySelector( '.rule-edit-switch-info' )
+		.getAttribute( 'aria-label' );
+}
+
 function saveButton() {
 	const dialog = document.querySelector( '[role="dialog"]' ) || document;
 	return Array.from( dialog.querySelectorAll( 'button' ) ).find(
@@ -397,13 +410,19 @@ describe( 'RuleEditModal — log rule fields', () => {
 			);
 			expect( row ).not.toBeNull();
 			expect( row.textContent ).toContain( 'Plugin time' );
+			const grid = row.parentElement;
+			expect( grid.classList.contains( 'rule-edit-selectors' ) ).toBe(
+				true
+			);
 			expect(
-				row.previousElementSibling.classList.contains(
-					'rule-edit-custom-field'
-				)
-			).toBe( true );
+				[ ...grid.children ].map( ( child ) => child.className )
+			).toEqual( [
+				'rule-edit-hooks-field',
+				'rule-edit-custom-field',
+				'rule-edit-plugin-time-field',
+			] );
 			expect(
-				row.nextElementSibling.classList.contains(
+				grid.nextElementSibling.classList.contains(
 					'rule-edit-tag-field'
 				)
 			).toBe( true );
@@ -542,7 +561,9 @@ describe( 'RuleEditModal — log rule fields', () => {
 		// regardless — while the COUNT buys the twenty nearest frames on all
 		// three, budgeted per hook, per statement shape and per URL.
 		mount( { ...LOG_RULE, trace_hooks: true } );
-		const help = inDialog( '.rule-edit-trace-row' ).textContent;
+		const help =
+			tipOf( 'rule-trace-hooks' ) +
+			inDialog( '.rule-edit-trace-row' ).textContent;
 		expect( help ).toContain( 'Labels every hook span with who called it' );
 		// The number counts CALLS traced, not backtraces a call records.
 		expect( help ).toContain(
@@ -560,10 +581,7 @@ describe( 'RuleEditModal — log rule fields', () => {
 
 	test( 'the query and HTTP help name what each costs: log entries, not speed', () => {
 		mount( LOG_RULE );
-		const helpOf = ( name ) =>
-			inDialog( `input[name="${ name }"]` ).closest(
-				'.components-base-control'
-			).textContent;
+		const helpOf = tipOf;
 		const queries = helpOf( 'rule-log-queries' );
 		expect( queries ).toContain(
 			"Each query adds two entries to the request's log"
@@ -574,6 +592,23 @@ describe( 'RuleEditModal — log rule fields', () => {
 		);
 		for ( const name of [ 'rule-log-queries', 'rule-log-http' ] ) {
 			expect( helpOf( name ) ).not.toContain( 'slower' );
+		}
+	} );
+
+	test( 'every logging checkbox keeps its description in an info tooltip, not on the page', () => {
+		mount( { ...LOG_RULE, trace_hooks: true } );
+		const boxes = [
+			...document.querySelectorAll(
+				'[role="dialog"] input[type="checkbox"]'
+			),
+		];
+		expect( boxes.length ).toBe( 10 );
+		for ( const box of boxes ) {
+			const control = box.closest( '.components-base-control' );
+			expect(
+				control.querySelector( '.components-base-control__help' )
+			).toBeNull();
+			expect( tipOf( box.name ).length ).toBeGreaterThan( 20 );
 		}
 	} );
 
@@ -775,8 +810,9 @@ describe( 'RuleEditModal — Enter saves through the form', () => {
 		const others = [ ...form.querySelectorAll( 'button' ) ].filter(
 			( b ) => b !== saveButton()
 		);
-		// Select Hooks, Select Events, the tag's remove, Clear all, Measure, Delete, Cancel.
-		expect( others ).toHaveLength( 7 );
+		// Select Hooks, Select Events, Measure, the tag's remove, Clear all,
+		// ten switches' info buttons, Delete, Cancel.
+		expect( others ).toHaveLength( 17 );
 		others.forEach( ( b ) => expect( b.type ).toBe( 'button' ) );
 	} );
 

@@ -31,7 +31,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 	return (
 		<div
 			className="event-logger-request-profile"
-			style={ { marginTop: '20px' } }
+			style={ { marginTop: '40px' } }
 		>
 			<h3 id={ headingId }>
 				{ __( 'Time by owner', 'newspack-event-logger-nodes' ) }

@@ -9,19 +9,24 @@
 
 	.rule-edit-body .components-base-control,
 	.rule-edit-field,
-	.rule-edit-hooks-field,
-	.rule-edit-custom-field,
-	.rule-edit-plugin-time-field,
 	.rule-edit-tag-field {
+		margin: 0 0 18px;
+	}
+
+	// One grid for the three selector rows, so their buttons share the
+	// widest one's width.
+	.rule-edit-selectors {
+		display: grid;
+		grid-template-columns: max-content max-content 1fr;
+		align-items: center;
+		gap: 18px 10px;
 		margin: 0 0 18px;
 	}
 
 	.rule-edit-hooks-field,
 	.rule-edit-custom-field,
 	.rule-edit-plugin-time-field {
-		display: flex;
-		align-items: center;
-		gap: 10px;
+		display: contents;
 	}
 
 	.rule-edit-field-label {
@@ -29,11 +34,9 @@
 		min-width: 130px;
 	}
 
-	.rule-edit-hooks-field button,
-	.rule-edit-custom-field button,
-	.rule-edit-plugin-time-field button {
-		min-width: 140px;
+	.rule-edit-selectors .button {
 		justify-content: center;
+		padding-inline: 20px;
 	}
 
 	.rule-edit-field-count,
@@ -65,21 +68,27 @@
 		}
 	}
 
-	// The count qualifies the checkbox, so it shares that row and its help.
+	.rule-edit-switch {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		margin: 0 0 12px;
+
+		.components-base-control,
+		.components-base-control__field {
+			margin: 0;
+		}
+	}
+
+	// The count qualifies the checkbox, so it shares that row.
 	.rule-edit-trace-row {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 12px;
-		// Below the checkbox's basis the count takes its own line, rather
-		// than the two splitting a width neither can use.
 		flex-wrap: wrap;
 
-		.components-checkbox-control {
-			// A FLOOR, not a share: at `flex: 1` the basis is 0, so a count
-			// whose suffix is a sentence takes the row and leaves the help
-			// text one word wide.
-			flex: 1 1 320px;
-			min-width: 0;
+		.rule-edit-switch {
+			margin: 0;
 		}
 	}
 
