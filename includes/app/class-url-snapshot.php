@@ -206,9 +206,12 @@ final class Url_Snapshot {
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
 	private static function fill( Row_Reader $db, int $now, int $ttl, \Closure $answers ): void {
+		// One snapshot for check and group; a throw drops the connection.
+		$db->rows( 'BEGIN', [] );
 		foreach ( self::url_steps( $db, $now ) as $span => $statements ) {
 			self::step( $db, $span, $statements );
 		}
+		$db->rows( 'COMMIT', [] );
 		self::step( $db, Flame_Tree::SNAPSHOT_PAGES, [ [ self::pages_table(), [] ] ] );
 		foreach ( self::indexes() as $name => [ $table, $columns ] ) {
 			self::step( $db, Flame_Tree::SNAPSHOT_INDEX, [ [ "CREATE INDEX {$name} ON {$table} ( {$columns} )", [] ] ], [ 'l' => $name ] );
@@ -331,6 +334,7 @@ final class Url_Snapshot {
 			'source'  => 'requests',
 			'filter'  => [],
 			'buckets' => Bucket::last( Bucket::window(), $now ),
+			'now'     => $now,
 			'sort'    => 'url',
 		] + self::GROUPED;
 		$measures = \implode( ', ', \array_map( static fn ( string $name ): string => "g.{$name}", self::GROUPED['measure'] ) );

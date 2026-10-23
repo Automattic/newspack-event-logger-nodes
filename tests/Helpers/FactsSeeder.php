@@ -29,6 +29,9 @@ use Newspack_Nodes\Row_Table_Node;
 
 trait FactsSeeder {
 
+	/** Each `urls_window` column from `count` on, as `requests` rows `r` sum them. */
+	protected const URL_WINDOW_OF_REQUESTS = "COUNT( * ), COUNT( r.ms ), COUNT( CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 500 AND 599 THEN 1 END ), COUNT( CASE WHEN r.error IN ( 'T', 'F' ) THEN 1 END ), TOTAL( r.ms ), TOTAL( r.peak_mb ), MIN( r.ms ), MAX( r.ms ), MAX( r.peak_mb ), MAX( r.finished_at ), MAX( r.bucket )";
+
 	/** The server a seed files under when it names none. */
 	protected static string $seed_server = 'seed.example';
 
@@ -247,6 +250,10 @@ trait FactsSeeder {
 				unset( $values[ $key ] );
 				$values[ "{$key}_id" ] = null;
 			}
+			// A table keyed by URL alone files its server only on the URL.
+			if ( \array_key_exists( 'url_id', $values ) && ! isset( Flame_Facts_Row_Schema::tables()[ $table ]['columns']['server_id'] ) ) {
+				unset( $values['server'] );
+			}
 			foreach ( \array_diff_key( Flame_Facts_Row_Schema::NAMED_BY, [ 'url_id' => true, 'page_id' => true ] ) as $column => $lookup ) {
 				$key = \substr( $column, 0, -3 );
 				if ( ! \array_key_exists( $key, $values ) ) {
@@ -287,6 +294,22 @@ trait FactsSeeder {
 			'requests'    => $requests,
 			'last_bucket' => $last_bucket,
 		];
+	}
+
+	/**
+	 * Partition `$partition`'s URL window as the builder keeps it once it has
+	 * expired through `$through`: that watermark, and each URL's sums over
+	 * its seeded requests after it, summed in SQL and written as `add` rows.
+	 *
+	 * @param int $partition The partition file, already seeded.
+	 * @param int $through   The newest bucket expired.
+	 */
+	protected function seed_url_window( int $partition, int $through ): void {
+		$sums = Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static fn ( Row_Reader $reader ): array => $reader->rows( "SELECT r.url_id, r.worker, " . self::URL_WINDOW_OF_REQUESTS . " FROM p{$partition}.requests AS r WHERE r.bucket > ? GROUP BY r.url_id, r.worker", [ $through ] )
+		);
+		$this->write_facts( $partition, [ [ 'ignore', 'window_expiry', [ $through ] ], ...\array_map( static fn ( array $row ): array => [ 'add', 'urls_window', $row ], $sums ) ] );
 	}
 
 	/**

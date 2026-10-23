@@ -2299,8 +2299,8 @@ final class StatsBuilderTest extends TestCase {
 	 */
 	private function url_window_from_requests(): array {
 		return $this->url_rows(
-			"SELECT u.path, r.worker, COUNT( * ), COUNT( r.ms ), COUNT( CASE WHEN r.status BETWEEN 200 AND 299 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 300 AND 399 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 400 AND 499 THEN 1 END ), COUNT( CASE WHEN r.status BETWEEN 500 AND 599 THEN 1 END ), COUNT( CASE WHEN r.error IN ( 'T', 'F' ) THEN 1 END ), TOTAL( r.ms ), TOTAL( r.peak_mb ), MIN( r.ms ), MAX( r.ms ), MAX( r.peak_mb ), MAX( r.finished_at ), MAX( r.bucket )
-			FROM p0.requests AS r JOIN p0.urls AS u ON u.id = r.url_id WHERE r.bucket > ( SELECT MAX( bucket ) FROM p0.window_expiry ) GROUP BY u.path, r.worker ORDER BY u.path, r.worker"
+			'SELECT u.path, r.worker, ' . self::URL_WINDOW_OF_REQUESTS . '
+			FROM p0.requests AS r JOIN p0.urls AS u ON u.id = r.url_id WHERE r.bucket > ( SELECT MAX( bucket ) FROM p0.window_expiry ) GROUP BY u.path, r.worker ORDER BY u.path, r.worker'
 		);
 	}
 

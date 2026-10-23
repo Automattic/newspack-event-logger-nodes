@@ -251,11 +251,54 @@ final class Stats_Query {
 	];
 
 	/**
+	 * What a table of stored request sums answers from them, per hour on
+	 * `requests_hourly` and per URL on `urls_window`; `max_ms` stands null
+	 * where nothing was timed, as `requests` answers it.
+	 */
+	private const SUMMED = [
+		'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
+		'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
+		'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
+		'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
+		'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
+		'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
+		'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
+		'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+	];
+
+	/** The stored sums `SUMMED` reads, as an arm projects them. */
+	private const SUMMED_INPUTS = [
+		'count'       => 't.count',
+		'timed'       => 't.timed',
+		'sum_ms'      => 't.sum_ms',
+		'max_ms'      => 't.max_ms',
+		'sum_peak_mb' => 't.sum_peak_mb',
+		'errors'      => 't.errors',
+	];
+
+	/**
+	 * Each live window, and the table answering its question while its
+	 * watermark lags the window's start.
+	 */
+	private const WINDOW_FALLBACK = [
+		'category_window' => 'timings_site',
+		'urls_window'     => 'requests',
+	];
+
+	/**
+	 * One partition's watermark, `%1$s` its `WATERMARK_QUERY`, and whether
+	 * its window `%2$s.%3$s` holds a row that last moved past the bucket `?`,
+	 * a seek of its `last_bucket`.
+	 */
+	private const WINDOW_CHECK = 'SELECT ( %1$s ), EXISTS ( SELECT 1 FROM %2$s.%3$s WHERE last_bucket > ? )';
+
+	/**
 	 * Each table's SQL over its row `t`, its URL `u` and the lookups naming
 	 * its server `sv`, agent `a`, JA4 `j`, From `fr`, category `c` and entry
 	 * `e`: the column its bucket ranges read and how many buckets one of its
 	 * units holds; each field's expression; the join a field or input needs, by
-	 * name; each input an arm projects as `m_<name>`; and each measure's
+	 * name, or the joins in order, as `urls_window`'s server reads its URL's;
+	 * each input an arm projects as `m_<name>`; and each measure's
 	 * aggregate over those inputs, with the inputs it reads, its
 	 * `{error_kinds}` the builder's `ERROR_KINDS`, then its fold over the
 	 * per-partition partials `q_<name>`, null where none composes, with the
@@ -347,24 +390,9 @@ final class Stats_Query {
 				'country'      => "CASE WHEN t.country = '' THEN '" . self::UNKNOWN . "' ELSE t.country END",
 			],
 			'joins'    => [ 'server' => self::SERVER_JOIN ],
-			'inputs'   => [
-				'count'       => 't.count',
-				'timed'       => 't.timed',
-				'sum_ms'      => 't.sum_ms',
-				'max_ms'      => 't.max_ms',
-				'sum_peak_mb' => 't.sum_peak_mb',
-				'errors'      => 't.errors',
-			],
-			'measures' => [
-				'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
-				'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
-				'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
-				'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
-				'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
-				'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
-				'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
-				'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
-				'error_rate'  => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
+			'inputs'   => self::SUMMED_INPUTS,
+			'measures' => self::SUMMED + [
+				'error_rate' => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
 			],
 		],
 		'timings'            => [
@@ -442,7 +470,51 @@ final class Stats_Query {
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
+		'urls_window'        => [
+			'range'    => [ 't.last_bucket', 1 ],
+			'fields'   => [
+				'server' => self::URL_FIELDS['url']['parts']['server'],
+				'url'    => self::URL_FIELDS['url']['hash'],
+				'page'   => self::URL_FIELDS['page']['hash'],
+				'worker' => 't.worker',
+			],
+			'joins'    => [
+				'server' => [ self::URL_JOIN, self::URL_SERVER_JOIN ],
+				'url'    => self::URL_JOIN,
+				'page'   => self::URL_JOIN,
+			],
+			'inputs'   => self::SUMMED_INPUTS + [
+				'count_2xx'   => 't.count_2xx',
+				'count_3xx'   => 't.count_3xx',
+				'count_4xx'   => 't.count_4xx',
+				'count_5xx'   => 't.count_5xx',
+				'min_ms'      => 't.min_ms',
+				'max_peak_mb' => 't.max_peak_mb',
+				'last_seen'   => 't.last_seen',
+				'worker'      => 't.worker',
+			],
+			'measures' => self::SUMMED + [
+				'count_2xx'   => [ 'COALESCE( SUM( m_count_2xx ), 0 )', [ 'count_2xx' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
+				'count_3xx'   => [ 'COALESCE( SUM( m_count_3xx ), 0 )', [ 'count_3xx' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
+				'count_4xx'   => [ 'COALESCE( SUM( m_count_4xx ), 0 )', [ 'count_4xx' ], 'COALESCE( SUM( q_count_4xx ), 0 )', [ 'count_4xx' ] ],
+				'count_5xx'   => [ 'COALESCE( SUM( m_count_5xx ), 0 )', [ 'count_5xx' ], 'COALESCE( SUM( q_count_5xx ), 0 )', [ 'count_5xx' ] ],
+				'min_ms'      => [ 'MIN( m_min_ms )', [ 'min_ms' ], 'MIN( q_min_ms )', [ 'min_ms' ] ],
+				'max_peak_mb' => [ 'MAX( m_max_peak_mb )', [ 'max_peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
+				'last_seen'   => [ 'MAX( m_last_seen )', [ 'last_seen' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
+				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
+			],
+		],
 	];
+
+	/**
+	 * Row-read seam. Replaces the one `rows()` call `run()` makes after its
+	 * window check, inside the read transaction both share. Tests reassign it
+	 * to write a flush between the check and the read, then call `rows()`.
+	 * Signature: `function (Row_Reader $reader, non-empty-list<string> $aliases, Spec $spec, string $table): list<list<mixed>>`
+	 *
+	 * @var (\Closure(Row_Reader, non-empty-list<string>, Spec, string): list<list<mixed>>)|null
+	 */
+	public static ?\Closure $read_rows = null;
 
 	/**
 	 * Answer a spec over every partition's rows. A fleet whose stats file
@@ -450,7 +522,7 @@ final class Stats_Query {
 	 * false (decision 3). A spec naming `also` answers that page as `also`,
 	 * read from the same grouped rows as `rows`, so the union is scanned once.
 	 * `now` is the reply's clock the caller read (decision 29); a spec naming
-	 * none never reads `category_window`.
+	 * none never reads `category_window` or `urls_window`.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>,
 	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string,
@@ -466,9 +538,16 @@ final class Stats_Query {
 		$rows   = self::read(
 			self::label( $spec ),
 			static function ( Row_Reader $reader, array $aliases ) use ( $spec, &$read ): array {
-				// Sets the table run() reports.
-				$read = self::readable( $reader, $aliases, $spec, $read );
-				return self::rows( $reader, $aliases, $spec, $read );
+				// The window check and the rows read one snapshot of each file.
+				$reader->rows( 'BEGIN', [] );
+				try {
+					// Sets the table run() reports.
+					$read = self::readable( $reader, $aliases, $spec, $read );
+					$rows_of = self::$read_rows ?? self::rows( ... );
+					return $rows_of( $reader, $aliases, $spec, $read );
+				} finally {
+					$reader->rows( 'COMMIT', [] );
+				}
 			}
 		);
 		$groups = null;
@@ -561,6 +640,8 @@ final class Stats_Query {
 	 * ties by the other group fields in their order, so a sort by the first
 	 * is the order the GROUP BY already emits and SQLite sorts once; with no
 	 * sort they come in no order. An empty window stores an empty table.
+	 * The caller runs the statement inside a read transaction begun before
+	 * this call, so the statement reads the files the window check read.
 	 *
 	 * @param Row_Reader          $builder The connection building the file.
 	 * @param string              $table   The table to create, of `a-z` and `_`.
@@ -608,9 +689,10 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The table the attached partitions answer `$table`'s question from: the
-	 * category window only while it holds the spec's range, else
-	 * `timings_site`.
+	 * The table the attached partitions answer `$table`'s question from: a
+	 * live window only while it holds the spec's range, else the table its
+	 * `WINDOW_FALLBACK` names. The caller reads the rows inside the read
+	 * transaction this check ran in, so a flush between them cannot move it.
 	 *
 	 * @param Row_Reader             $reader  The attached files.
 	 * @param non-empty-list<string> $aliases Their aliases.
@@ -618,24 +700,30 @@ final class Stats_Query {
 	 * @param string                 $table   The table `table()` chose.
 	 */
 	private static function readable( Row_Reader $reader, array $aliases, array $spec, string $table ): string {
-		return 'category_window' === $table && ! self::window_holds( $reader, $aliases, $spec['buckets'][0][0] - 1 ) ? 'timings_site' : $table;
+		return isset( self::WINDOW_FALLBACK[ $table ] ) && ! self::window_holds( $reader, $aliases, $table, $spec['buckets'][0] ) ? self::WINDOW_FALLBACK[ $table ] : $table;
 	}
 
 	/**
-	 * Whether every attached partition's category window has expired exactly
-	 * through `$through`, its newest `window_expiry` bucket, so its live rows
-	 * are the range after it. A partition that has expired none does not hold.
+	 * Whether every attached partition's `$window` holds exactly `$range`:
+	 * expired through the bucket before it, its newest `window_expiry`
+	 * bucket, and holding no row that last moved past its end, as a builder
+	 * a bucket ahead holds until it expires that bucket. A partition that
+	 * has expired none does not hold.
 	 *
 	 * @param Row_Reader             $reader  The attached files.
 	 * @param non-empty-list<string> $aliases Their aliases.
-	 * @param int                    $through The bucket before the range.
+	 * @param string                 $window  A `WINDOW_FALLBACK` table.
+	 * @param array{0:int,1:int}     $range   The spec's one bucket range.
 	 */
-	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
+	private static function window_holds( Row_Reader $reader, array $aliases, string $window, array $range ): bool {
 		$marks = $reader->rows(
-			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, $alias ), $aliases ) ),
-			[]
+			\implode(
+				' UNION ALL ',
+				\array_map( static fn ( string $alias ): string => \sprintf( self::WINDOW_CHECK, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, $alias ), $alias, $window ), $aliases )
+			),
+			\array_fill( 0, \count( $aliases ), $range[1] )
 		);
-		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $through !== Core::as_int( $mark[0] ) );
+		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $range[0] - 1 !== Core::as_int( $mark[0] ) || 0 !== Core::as_int( $mark[1] ) );
 	}
 
 	/**
@@ -856,7 +944,7 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings_page | timings | owner_timings_site | owner_timings | requests_hourly | requests.
+	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings_page | timings | owner_timings_site | owner_timings | requests_hourly | urls_window | requests.
 	 *
 	 * A timings spec over exactly the `Bucket::window()` buckets ending at the
 	 * bucket of its `now`, naming only the window's fields, reads
@@ -867,7 +955,9 @@ final class Stats_Query {
 	 * searches none, else `timings`. A requests spec
 	 * reads `requests_hourly` when the rollup keeps
 	 * every field and measure it names, its `top_by` among them, and every
-	 * bucket range covers whole hours.
+	 * bucket range covers whole hours; else `urls_window` when it reads the
+	 * same whole window, searches nothing, and names only the fields and
+	 * measures a URL's window row keeps; else `requests`.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string, now?:int|null} $spec
 	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
@@ -884,16 +974,32 @@ final class Stats_Query {
 				$by_page = ! \in_array( 'url', $named, true ) && '' === ( $spec['search'] ?? '' );
 				return $by_page ? 'timings_page' : 'timings';
 			}
-			$range = 1 === \count( $spec['buckets'] ) ? $spec['buckets'][0] : null;
-			$now   = $spec['now'] ?? null;
-			$span  = null !== $range && null !== $now && Bucket::id( $now ) === $range[1] && Bucket::window() === $range[1] - $range[0] + 1;
-			return $span && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
+			return self::whole_window( $spec ) && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
 		}
 		$hourly = ! $by_url
 			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
 			&& [] === \array_diff( $measures, self::HOURLY_MEASURES )
 			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
-		return $hourly ? 'requests_hourly' : 'requests';
+		if ( $hourly ) {
+			return 'requests_hourly';
+		}
+		$windowed = self::whole_window( $spec )
+			&& '' === ( $spec['search'] ?? '' )
+			&& [] === \array_diff( $named, \array_keys( self::TABLES['urls_window']['fields'] ) )
+			&& [] === \array_diff( $measures, \array_keys( self::TABLES['urls_window']['measures'] ) );
+		return $windowed ? 'urls_window' : 'requests';
+	}
+
+	/**
+	 * Whether a spec reads exactly the `Bucket::window()` buckets ending at
+	 * the bucket of its `now`: the span the live windows keep.
+	 *
+	 * @param array{buckets:list<array{0:int,1:int}>, now?:int|null} $spec
+	 */
+	private static function whole_window( array $spec ): bool {
+		$range = 1 === \count( $spec['buckets'] ) ? $spec['buckets'][0] : null;
+		$now   = $spec['now'] ?? null;
+		return null !== $range && null !== $now && Bucket::id( $now ) === $range[1] && Bucket::window() === $range[1] - $range[0] + 1;
 	}
 
 	/**
@@ -1098,9 +1204,11 @@ final class Stats_Query {
 		}
 		$joins   = [];
 		$one_url = [] !== \array_intersect_key( $spec['filter'], self::URL_FIELDS );
-		foreach ( Core::arr( $def['joins'] ) as $name => $join ) {
+		foreach ( Core::arr( $def['joins'] ) as $name => $named ) {
 			if ( \in_array( $name, [ ...$joined, ...$inputs ], true ) ) {
-				$joins[] = $one_url && self::SEEKING_SERVER_JOIN === $join ? self::SERVER_JOIN : Core::as_string( $join );
+				foreach ( (array) $named as $join ) {
+					$joins[] = $one_url && self::SEEKING_SERVER_JOIN === $join ? self::SERVER_JOIN : Core::as_string( $join );
+				}
 			}
 		}
 		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM %1\$s.{$table} AS t "

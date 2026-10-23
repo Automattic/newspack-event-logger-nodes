@@ -86,6 +86,7 @@ use Newspack_Nodes\Service_CI_Node;
  *
  * @phpstan-import-type Url_Filters from Ask_Assembler
  * @phpstan-type Context_Entry array{type:string, id:string, descriptor:string}
+ * @phpstan-type Url_Set array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string, now:int}
  */
 class Performance_CI_Node extends Service_CI_Node {
 
@@ -1969,14 +1970,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The requests a `urls` question reads, as the spec its totals and its
 	 * listing share: the filter, the page `--page` names, the scope, the
-	 * buckets and the search. A named page owns the page field, so a filter
+	 * buckets, the search and the clock, which lets a listing over the whole
+	 * window read the URL window. A named page owns the page field, so a filter
 	 * token naming it is refused beside one.
 	 *
 	 * @param string      $page    The page `--page` names, by its hash; '' names none.
 	 * @param string      $server  Server to scope to; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
 	 * @param int         $now     The reply's clock.
-	 * @return array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string}
+	 * @return Url_Set
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a filter `url_filter_of()` refuses.
 	 */
 	private static function url_set( string $page, string $server, array $filters, int $now ): array {
@@ -1988,13 +1990,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			'filter'  => $filter,
 			'buckets' => self::buckets_of( $filters['bucket'], $now ),
 			'search'  => $filters['search'],
+			'now'     => $now,
 		];
 	}
 
 	/**
 	 * A URL set's totals: `URL_TOTALS`, ungrouped.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
+	 * @param Url_Set $base A `url_set()`.
 	 * @return array{columns: list<string>, rows: list<list<mixed>>, available: bool}
 	 */
 	private static function url_totals( array $base ): array {
@@ -2005,7 +2008,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One listing of a URL set's URLs, `url`-grouped over `URL_MEASURES`,
 	 * the slowest ten as `also`.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
+	 * @param Url_Set $base A `url_set()`.
 	 * @param string $sort   A `URL_SORTS` key.
 	 * @param string $order  'asc' or 'desc'.
 	 * @param int    $offset Listing offset.
@@ -2021,7 +2024,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `URL_MEASURES` as the snapshot keeps them, the slowest ten as `also`,
 	 * each row's `shapes` and `hash` after its measures.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param Url_Set $base A `url_set()` naming no page.
 	 * @param string $sort   A `URL_SORTS` key.
 	 * @param string $order  'asc' or 'desc'.
 	 * @param int    $offset Listing offset.
@@ -2067,7 +2070,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * URLs it holds, and the one URL's hash and name where it holds one, else
 	 * null.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param Url_Set $base A `url_set()` naming no page.
 	 * @param list<list<mixed>> $rows Page rows, each its hash, name and server first.
 	 * @return array<string,array<string,array{0:int,1:?string,2:?string}>>
 	 */
@@ -2090,7 +2093,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `$group` over one measure, `Stats_Query::MAX_LIMIT` at a time until a
 	 * short read; past `Stats_Query::MAX_OFFSET` the query refuses.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param Url_Set $base A `url_set()` naming no page.
 	 * @param array<list<mixed>> $rows    Page rows, each its hash first.
 	 * @param list<string>       $group   The fields to group by, `page` first.
 	 * @param string             $measure The measure.

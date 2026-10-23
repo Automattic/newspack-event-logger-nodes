@@ -185,6 +185,308 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
 	}
 
+	/** The server the URL window traffic files most requests under. */
+	private const KEA = 'kea-7110.example';
+
+	/** The second server the URL window traffic files under. */
+	private const KAKA = 'kaka-7110.example';
+
+	/** The page of the URL window traffic's two shapes of one address. */
+	private const TUI_PAGE = 'kea-7110.example/tui-7110/';
+
+	/**
+	 * A requests spec over the whole window ending at the tick, as the
+	 * snapshot's group step and the live `urls` listing ask it.
+	 *
+	 * @param array<string,mixed> $over The groups, filters and the rest.
+	 * @return array<string,mixed>
+	 */
+	private static function url_spec( array $over ): array {
+		return $over + [
+			'source'  => 'requests',
+			'filter'  => [],
+			'measure' => Performance_CI_Node::URL_MEASURES,
+			'buckets' => Bucket::last( Bucket::window(), self::NOW ),
+			'now'     => self::NOW,
+		];
+	}
+
+	/**
+	 * Requests in partitions 0 and 2 over the window: both servers, both
+	 * worker flags, two shapes of one page, a URL never timed, a timeout and
+	 * a fatal, every status class, and one request before the window.
+	 */
+	private function seed_url_traffic(): void {
+		$now  = Bucket::id( self::NOW );
+		$kea  = [ 'server' => self::KEA ];
+		$kaka = [ 'server' => self::KAKA ];
+		$at   = static fn ( int $bucket, int $second ): array => [
+			'bucket'      => $bucket,
+			'finished_at' => (float) ( $bucket * Bucket::SECONDS + $second ),
+		];
+		$this->seed_requests(
+			[
+				$kea + $at( $now, 11 ) + [ 'url' => 'https://kea-7110.example/tui-7110/', 'ms' => 413.25, 'peak_mb' => 41.5, 'status' => 204 ],
+				$kea + $at( $now - 3, 12 ) + [ 'url' => 'https://kea-7110.example/tui-7110/?x=1', 'ms' => null, 'peak_mb' => 18.25, 'status' => 302 ],
+				$kea + $at( $now - 2, 13 ) + [ 'url' => 'https://kea-7110.example/jobs/weka-7110', 'ms' => 97.5, 'peak_mb' => 22.5, 'worker' => 1 ],
+				$kaka + $at( $now - 5, 14 ) + [ 'url' => 'https://kaka-7110.example/hoiho-7110/', 'ms' => 150.75, 'peak_mb' => 30.0, 'status' => 503, 'error' => 'F' ],
+				$kea + $at( $now - Bucket::window(), 15 ) + [ 'url' => 'https://kea-7110.example/tui-7110/', 'ms' => 9000.5, 'peak_mb' => 99.5 ],
+			],
+			0
+		);
+		$this->seed_requests(
+			[
+				$kea + $at( $now - 1, 21 ) + [ 'url' => 'https://kea-7110.example/tui-7110/', 'ms' => 12.25, 'peak_mb' => 88.75, 'status' => 404 ],
+				$kaka + $at( $now - 7, 22 ) + [ 'url' => 'https://kaka-7110.example/hoiho-7110/', 'ms' => 220.5, 'peak_mb' => 12.0, 'status' => 0, 'error' => 'T' ],
+				$kaka + $at( $now - 4, 23 ) + [ 'url' => 'https://kaka-7110.example/kokako-7110/', 'ms' => null, 'peak_mb' => 19.75, 'status' => 301 ],
+				$kea + $at( $now, 24 ) + [ 'url' => 'https://kea-7110.example/jobs/weka-7110', 'ms' => 81.25, 'peak_mb' => 57.75, 'worker' => 1 ],
+			],
+			2
+		);
+	}
+
+	/**
+	 * A `urls_window` row whose sums no request backs, on `$url` under the
+	 * kea server, last moved in `$last_bucket`.
+	 *
+	 * @param string $url         The logged URL.
+	 * @param int    $last_bucket Its last bucket.
+	 * @return array<string,mixed>
+	 */
+	private static function phantom_url_row( string $url, int $last_bucket ): array {
+		return [
+			'url'         => $url,
+			'server'      => self::KEA,
+			'worker'      => 0,
+			'count'       => 7,
+			'timed'       => 7,
+			'count_2xx'   => 7,
+			'count_3xx'   => 0,
+			'count_4xx'   => 0,
+			'count_5xx'   => 0,
+			'errors'      => 0,
+			'sum_ms'      => 6391.75,
+			'sum_peak_mb' => 77.0,
+			'min_ms'      => 3.25,
+			'max_ms'      => 5000.5,
+			'max_peak_mb' => 11.0,
+			'last_seen'   => (float) ( $last_bucket * Bucket::SECONDS ),
+			'last_bucket' => $last_bucket,
+		];
+	}
+
+	/**
+	 * Only a requests spec over the whole window ending at the tick, naming
+	 * no field but a URL's, its server and the worker flag, measuring only
+	 * what a URL row stores and searching nothing, reads the URL window.
+	 */
+	public function test_the_picker_reads_urls_window_only_for_the_whole_window(): void {
+		$span     = $this->last_span();
+		$snapshot = self::url_spec( [ 'group' => [ 'url', 'page' ], 'sort' => 'url' ] );
+
+		$this->assertSame( 'urls_window', Stats_Query::table_for( $snapshot ) );
+		$this->assertSame( 'urls_window', Stats_Query::table_for( self::url_spec( [ 'group' => [ 'page', 'server' ], 'filter' => Performance_CI_Node::scope( self::KEA, false ) ] ) ) );
+		$this->assertSame( 'urls_window', Stats_Query::table_for( self::url_spec( [ 'group' => [ 'url' ], 'filter' => [ 'page' => [ Log_Manager::url_hash( self::TUI_PAGE ) ] ] + Performance_CI_Node::scope( '', true ) ] ) ) );
+		foreach ( Performance_CI_Node::URL_MEASURES as $measure ) {
+			$this->assertSame( 'urls_window', Stats_Query::table_for( [ 'measure' => [ $measure ] ] + $snapshot ), $measure );
+		}
+
+		$narrower = [
+			'a range one bucket short'      => [ 'buckets' => [ [ $span[0][0] + 1, $span[0][1] ] ] ],
+			'a range ending a bucket early' => [ 'buckets' => [ [ $span[0][0] - 1, $span[0][1] - 1 ] ] ],
+			'two ranges'                    => [ 'buckets' => [ [ $span[0][0], $span[0][0] ], [ $span[0][0] + 1, $span[0][1] ] ] ],
+			'no clock'                      => [ 'now' => null ],
+			'a status filter'               => [ 'filter' => [ 'status' => [ 404 ] ] ],
+			'a country group'               => [ 'group' => [ 'url', 'country' ] ],
+			'a bucket group'                => [ 'group' => [ 'bucket', 'url' ] ],
+			'a p95_ms measure'              => [ 'measure' => [ 'count', 'p95_ms' ] ],
+			'a urls measure'                => [ 'measure' => [ 'urls' ] ],
+			'a search'                      => [ 'search' => 'tui' ],
+			'a rid'                         => [ 'filter' => [ 'rid' => [ 'rid-seed-1' ] ] ],
+		];
+		foreach ( $narrower as $why => $over ) {
+			$this->assertSame( 'requests', Stats_Query::table_for( $over + $snapshot ), $why );
+		}
+	}
+
+	/**
+	 * The URL window, read through the picker, answers what `requests` does
+	 * for the snapshot's group and each live listing, per server and per
+	 * worker flag, across two partitions, a spent row filtered out.
+	 */
+	public function test_urls_window_answers_as_requests_do(): void {
+		$this->seed_url_traffic();
+		$through = Bucket::id( self::NOW ) - Bucket::window();
+		$this->seed_url_window( 0, $through );
+		$this->seed_url_window( 2, $through );
+		$this->seed_rows( 2, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/spent-7110/', $through ) ] ] );
+
+		$slowest = [
+			'sort'  => 'avg_ms',
+			'order' => 'desc',
+			'limit' => 10,
+		];
+		$specs   = [ 'the snapshot group' => self::url_spec( [ 'group' => [ 'url', 'page' ], 'sort' => 'url' ] ) ];
+		foreach ( [ false, true ] as $workers ) {
+			foreach ( [ '', self::KEA, self::KAKA ] as $server ) {
+				$scope = Performance_CI_Node::scope( $server, $workers );
+				$specs[ "pages of '{$server}', workers " . (int) $workers ] = self::url_spec( [ 'group' => [ 'page', 'server' ], 'filter' => $scope, 'sort' => 'count', 'order' => 'desc', 'also' => $slowest ] );
+				$specs[ "urls of '{$server}', workers " . (int) $workers ]  = self::url_spec( [ 'group' => [ 'url' ], 'filter' => $scope, 'sort' => 'url_name', 'also' => $slowest ] );
+			}
+			$specs[ 'urls of one page, workers ' . (int) $workers ] = self::url_spec( [ 'group' => [ 'url' ], 'filter' => [ 'page' => [ Log_Manager::url_hash( self::TUI_PAGE ) ] ] + Performance_CI_Node::scope( '', $workers ), 'sort' => 'max_ms', 'order' => 'desc' ] );
+		}
+
+		foreach ( $specs as $name => $spec ) {
+			$window   = Stats_Query::run( $spec );
+			$requests = Stats_Query::run( [ 'now' => null ] + $spec );
+			$this->assertSame( 'urls_window', $window['table'], $name );
+			$this->assertSame( 'requests', $requests['table'], $name );
+			$this->assertNotSame( [], $window['rows'], $name );
+			$this->assertSame( $requests['rows'], $window['rows'], $name );
+			$this->assertSame( $requests['also'] ?? null, $window['also'] ?? null, $name );
+		}
+		$urls = \array_column( Stats_Query::run( $specs['the snapshot group'] )['rows'], 1 );
+		$this->assertCount( 5, $urls, 'every URL of the window, the spent one left out' );
+		$this->assertNotContains( 'https://kea-7110.example/spent-7110/', $urls );
+	}
+
+	/** While any partition's watermark lags the window's start, the URL window is not read. */
+	public function test_a_lagging_watermark_reads_requests(): void {
+		$this->seed_url_traffic();
+		$through = Bucket::id( self::NOW ) - Bucket::window();
+		$this->seed_url_window( 0, $through );
+		$this->seed_url_window( 2, $through - 1 );
+		$this->seed_rows( 0, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/moa-7110/', Bucket::id( self::NOW ) ) ] ] );
+		$spec = self::url_spec( [ 'group' => [ 'url' ], 'sort' => 'url_name' ] );
+
+		$r = Stats_Query::run( $spec );
+
+		$this->assertSame( 'requests', $r['table'] );
+		$this->assertSame( Stats_Query::run( [ 'now' => null ] + $spec )['rows'], $r['rows'] );
+		$this->assertNotContains( 'https://kea-7110.example/moa-7110/', \array_column( $r['rows'], 1 ) );
+	}
+
+	/**
+	 * A builder a bucket ahead of the reader has added rows past the reader's
+	 * range before it expires the bucket the range starts after: the URL
+	 * window does not answer, and `requests` lists the URL with only the
+	 * requests inside the range.
+	 */
+	public function test_a_url_window_row_past_the_ranges_end_reads_requests(): void {
+		$now = Bucket::id( self::NOW );
+		$url = 'https://kea-7110.example/ruru-7117/';
+		$this->seed_requests(
+			[
+				[ 'server' => self::KEA, 'url' => $url, 'bucket' => $now, 'finished_at' => (float) ( $now * Bucket::SECONDS + 41 ), 'ms' => 413.25, 'peak_mb' => 41.5 ],
+				[ 'server' => self::KEA, 'url' => $url, 'bucket' => $now + 1, 'finished_at' => (float) ( ( $now + 1 ) * Bucket::SECONDS + 42 ), 'ms' => 97.5, 'peak_mb' => 18.25 ],
+			],
+			0
+		);
+		$this->seed_url_window( 0, $now - Bucket::window() );
+		$spec = self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ] );
+
+		$r = Stats_Query::run( $spec );
+
+		$this->assertSame( 'requests', $r['table'] );
+		$this->assertSame( [ [ Url_Parts::hash( $url ), $url, 1, 413.25 ] ], $r['rows'] );
+	}
+
+	/**
+	 * The same race on the category window: a row a bucket past the range
+	 * sends the leaderboard to `timings_site`, which counts the range alone.
+	 */
+	public function test_a_category_window_row_past_the_ranges_end_reads_timings_site(): void {
+		$now = Bucket::id( self::NOW );
+		$this->seed_rows( 0, [
+			[ 'ignore', 'window_expiry', [ 'bucket' => $now - Bucket::window() ] ],
+			[ 'add', 'category_window', self::window_row( 'hook:kahu_init', 34.75, 2, 2, $now + 1 ) ],
+		] );
+		$this->seed_site_timings( [
+			[ 'category' => 'hook:kahu_init', 'bucket' => $now, 'ms' => 21.5 ],
+			[ 'category' => 'hook:kahu_init', 'bucket' => $now + 1, 'ms' => 13.25 ],
+		] );
+
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'now' => self::NOW ] );
+
+		$this->assertSame( 'timings_site', $r['table'] );
+		$this->assertSame( [ [ 'hook:kahu_init', 21.5 ] ], $r['rows'] );
+	}
+
+	/**
+	 * A builder flushing the next bucket between the window check and the
+	 * row read changes neither: the read sees the snapshot the check saw, so
+	 * the URL still answers from the window with its sums as checked.
+	 */
+	public function test_a_flush_between_the_window_check_and_the_read_is_not_seen(): void {
+		$now = Bucket::id( self::NOW );
+		$url = 'https://kea-7110.example/toroa-7121/';
+		$this->seed_requests( [ [ 'server' => self::KEA, 'url' => $url, 'bucket' => $now, 'finished_at' => (float) ( $now * Bucket::SECONDS + 43 ), 'ms' => 413.25, 'peak_mb' => 41.5 ] ], 0 );
+		$this->seed_url_window( 0, $now - Bucket::window() );
+		$flushed                = false;
+		Stats_Query::$read_rows = function ( Row_Reader $reader, array $aliases, array $spec, string $table ) use ( $url, $now, &$flushed ): array {
+			$this->seed_rows( 0, [ [ 'add', 'urls_window', self::phantom_url_row( $url, $now + 1 ) ] ] );
+			$flushed = true;
+			return ( new \ReflectionMethod( Stats_Query::class, 'rows' ) )->invoke( null, $reader, $aliases, $spec, $table );
+		};
+
+		try {
+			$r = Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ] ) );
+		} finally {
+			Stats_Query::$read_rows = null;
+		}
+
+		$this->assertTrue( $flushed, 'the flush ran between the check and the read' );
+		$this->assertSame( 'urls_window', $r['table'] );
+		$this->assertSame( [ [ Url_Parts::hash( $url ), $url, 1, 413.25 ] ], $r['rows'] );
+		$this->assertSame( 'requests', Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count' ] ] ) )['table'], 'the next read sees the flush and falls back' );
+	}
+
+	/** The window check seeks each window's newest `last_bucket` and the newest expiry. */
+	public function test_the_window_check_seeks_each_windows_last_bucket(): void {
+		$this->seed_url_traffic();
+		$check = Core::as_string( ( new \ReflectionClassConstant( Stats_Query::class, 'WINDOW_CHECK' ) )->getValue() );
+		foreach ( [ 'urls_window', 'category_window' ] as $window ) {
+			$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $check, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, 'p0' ), 'p0', $window ), [ Bucket::id( self::NOW ) ] ) );
+
+			$this->assertMatchesRegularExpression( "/SEARCH p0\\.{$window} USING COVERING INDEX {$window}_last \\(last_bucket>\\?\\)/", $plan );
+			$this->assertDoesNotMatchRegularExpression( '/SCAN p0\./', $plan, 'no table of the file is walked' );
+		}
+	}
+
+	/**
+	 * The live `urls` listing asks its question over the whole window ending
+	 * at the reply's clock, so its URLs and its pages read the URL window:
+	 * a window row no request backs lists, and the pages answer as before.
+	 */
+	public function test_the_live_urls_listing_reads_the_url_window(): void {
+		$this->seed_url_traffic();
+		$page    = Log_Manager::url_hash( self::TUI_PAGE );
+		$listing = static fn ( string $args ): array => Core::arr( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $args ) );
+		$names   = static fn ( array $answer ): array => \array_column( Core::arr( $answer['data'] ), 'url' );
+		$before  = [ $listing( '' ), $listing( '--server=' . self::KAKA . ' --include_workers=1' ) ];
+
+		$this->seed_url_window( 0, Bucket::id( self::NOW ) - Bucket::window() );
+		$this->seed_url_window( 2, Bucket::id( self::NOW ) - Bucket::window() );
+
+		$this->assertSame( $before, [ $listing( '' ), $listing( '--server=' . self::KAKA . ' --include_workers=1' ) ] );
+		$this->assertNotContains( 'https://kea-7110.example/tui-7110/?y=2', $names( $listing( "--page={$page}" ) ) );
+		$this->seed_rows( 0, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/tui-7110/?y=2', Bucket::id( self::NOW ) ) ] ] );
+		$this->assertContains( 'https://kea-7110.example/tui-7110/?y=2', $names( $listing( "--page={$page}" ) ) );
+	}
+
+	/**
+	 * A server's URL listing seeks the server by name, its URLs by server,
+	 * and each URL's window row by its key; it reads no `requests` row.
+	 */
+	public function test_a_server_scoped_url_listing_seeks_its_urls_window_rows(): void {
+		$this->seed_url_traffic();
+
+		$plan = self::plan_of( self::url_spec( [ 'group' => [ 'url' ], 'filter' => Performance_CI_Node::scope( self::KEA, false ) ] ) );
+
+		$this->assertStringNotContainsString( 'requests', $plan );
+		$this->assertMatchesRegularExpression( "/^SEARCH us USING COVERING INDEX sqlite_autoindex_servers_1 \\(name=\\?\\)\nSEARCH u USING COVERING INDEX urls_server_id \\(server_id=\\?\\)\nSEARCH t USING INDEX sqlite_autoindex_urls_window_1 \\(url_id=\\? AND worker=\\?\\)$/m", $plan );
+	}
+
 	private static function spec( array $over ): array {
 		return $over + [ 'group' => [], 'filter' => [], 'measure' => [ 'count' ] ];
 	}
