@@ -31,6 +31,50 @@ import SelectorModal from './SelectorModal';
 const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
+ * Hook names the "Plugin time" button adds to the pending selection.
+ *
+ * PHP publishes the `owner_time_events` config list on the window, as it does
+ * the recommended one.
+ *
+ * @type {Set<string>}
+ */
+export const OWNER_TIME_HOOKS = new Set(
+	window.newspackNodesOwnerTimeEvents || []
+);
+
+/**
+ * Patterns for hooks that fire too often to select in bulk.
+ *
+ * PHP publishes the `noisy_log_events` list as regex sources, already
+ * validated server-side.
+ *
+ * @type {RegExp[]}
+ */
+const NOISY_PATTERNS = ( window.newspackNodesNoisyHooks || [] ).flatMap(
+	( source ) => {
+		try {
+			return [ new RegExp( source ) ];
+		} catch ( error ) {
+			// PCRE accepts syntax JS rejects; skip it, keep the picker.
+			// eslint-disable-next-line no-console
+			console.warn(
+				`Skipping noisy hook pattern ${ source }: ${ error.message }`
+			);
+			return [];
+		}
+	}
+);
+
+/**
+ * Whether a hook name matches a noisy pattern.
+ *
+ * @param {string} hook Hook name.
+ * @return {boolean} True when bulk selections skip the hook.
+ */
+export const isNoisy = ( hook ) =>
+	NOISY_PATTERNS.some( ( pattern ) => pattern.test( hook ) );
+
+/**
  * Hook Selector Modal component.
  *
  * A closed picker renders nothing and passes `isOpen` down to the catalog
@@ -104,7 +148,12 @@ export default function HookSelectorModal( {
 			const recommendedInCategory = hooks.filter( ( h ) =>
 				RECOMMENDED_HOOKS.has( h )
 			).length;
+			const selectable = hooks.filter( ( h ) => ! isNoisy( h ) );
 			counts[ category ] = {
+				selectable: selectable.length,
+				selectableSelected: selectable.filter( ( h ) =>
+					chosen.has( h )
+				).length,
 				selected: selectedInCategory,
 				total: hooks.length,
 				recommended: recommendedInCategory,
@@ -114,16 +163,19 @@ export default function HookSelectorModal( {
 	}, [ chosen, hooksByCategory ] );
 
 	/**
-	 * Toggle every hook in a category, on unless they are already all on.
+	 * Toggle every non-noisy hook in a category, on unless they are all on.
 	 *
 	 * The whole category toggles, hooks the search hides included, which is
-	 * what keeps the header checkbox agreeing with its own count badge.
+	 * what keeps the header checkbox agreeing with its own count badge. A
+	 * header is a bulk selection, so it leaves noisy hooks alone.
 	 *
 	 * @param {string} category Category name.
 	 */
 	const toggleCategory = ( category ) => {
-		const hooks = hooksByCategory[ category ] || [];
-		if ( hooks.every( ( h ) => chosen.has( h ) ) ) {
+		const hooks = ( hooksByCategory[ category ] || [] ).filter(
+			( h ) => ! isNoisy( h )
+		);
+		if ( hooks.length > 0 && hooks.every( ( h ) => chosen.has( h ) ) ) {
 			chosen.removeAll( hooks );
 		} else {
 			chosen.addAll( hooks );
@@ -157,6 +209,10 @@ export default function HookSelectorModal( {
 	const getVisibleHooks = () =>
 		Object.values( filteredCategories ).filter( Array.isArray ).flat();
 
+	// Bulk selections skip noisy hooks; a noisy hook stays checkable alone.
+	const getSelectableHooks = () =>
+		getVisibleHooks().filter( ( hook ) => ! isNoisy( hook ) );
+
 	if ( ! isOpen ) {
 		return null;
 	}
@@ -187,7 +243,7 @@ export default function HookSelectorModal( {
 					<button
 						type="button"
 						className="button"
-						onClick={ () => chosen.addAll( getVisibleHooks() ) }
+						onClick={ () => chosen.addAll( getSelectableHooks() ) }
 					>
 						{ isFiltered
 							? sprintf(
@@ -211,6 +267,19 @@ export default function HookSelectorModal( {
 						}
 					>
 						{ __( 'Recommended', 'newspack-event-logger-nodes' ) }
+					</button>
+					<button
+						type="button"
+						className="button"
+						onClick={ () =>
+							chosen.addAll(
+								[ ...OWNER_TIME_HOOKS ].filter(
+									( hook ) => ! isNoisy( hook )
+								)
+							)
+						}
+					>
+						{ __( 'Plugin time', 'newspack-event-logger-nodes' ) }
 					</button>
 					<button
 						type="button"
@@ -268,9 +337,9 @@ export default function HookSelectorModal( {
 					};
 					const isExpanded = expandedCategories.has( category );
 					const allSelected =
-						counts.selected === counts.total && counts.total > 0;
-					const someSelected =
-						counts.selected > 0 && counts.selected < counts.total;
+						counts.selectable > 0 &&
+						counts.selectableSelected === counts.selectable;
+					const someSelected = ! allSelected && counts.selected > 0;
 
 					return (
 						<div
@@ -356,6 +425,14 @@ export default function HookSelectorModal( {
 													{ isRecommended && (
 														<span className="hook-selector-recommended-star">
 															★
+														</span>
+													) }
+													{ isNoisy( hook ) && (
+														<span className="hook-selector-noisy">
+															{ __(
+																'noisy',
+																'newspack-event-logger-nodes'
+															) }
 														</span>
 													) }
 												</span>
