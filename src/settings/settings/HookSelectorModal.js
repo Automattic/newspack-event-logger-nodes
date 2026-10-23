@@ -31,18 +31,6 @@ import SelectorModal from './SelectorModal';
 const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
- * Hook names the "Plugin time" button adds to the pending selection.
- *
- * PHP publishes the `owner_time_events` config list on the window, as it does
- * the recommended one.
- *
- * @type {Set<string>}
- */
-export const OWNER_TIME_HOOKS = new Set(
-	window.newspackNodesOwnerTimeEvents || []
-);
-
-/**
  * Patterns for hooks that fire too often to select in bulk.
  *
  * PHP publishes the `noisy_log_events` list as regex sources, already
@@ -73,6 +61,18 @@ const NOISY_PATTERNS = ( window.newspackNodesNoisyHooks || [] ).flatMap(
  */
 export const isNoisy = ( hook ) =>
 	NOISY_PATTERNS.some( ( pattern ) => pattern.test( hook ) );
+
+/**
+ * Hook names "Plugin time" and the rule editor's "Measure plugin time" add.
+ *
+ * PHP publishes the `owner_time_events` config list on the window, as it does
+ * the recommended one; a noisy name is left out.
+ *
+ * @type {string[]}
+ */
+export const PLUGIN_TIME_HOOKS = (
+	window.newspackNodesOwnerTimeEvents || []
+).filter( ( hook ) => ! isNoisy( hook ) );
 
 /**
  * Hook Selector Modal component.
@@ -271,13 +271,7 @@ export default function HookSelectorModal( {
 					<button
 						type="button"
 						className="button"
-						onClick={ () =>
-							chosen.addAll(
-								[ ...OWNER_TIME_HOOKS ].filter(
-									( hook ) => ! isNoisy( hook )
-								)
-							)
-						}
+						onClick={ () => chosen.addAll( PLUGIN_TIME_HOOKS ) }
 					>
 						{ __( 'Plugin time', 'newspack-event-logger-nodes' ) }
 					</button>

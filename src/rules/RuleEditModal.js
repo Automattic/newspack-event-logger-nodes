@@ -38,7 +38,9 @@ import {
 } from '@wordpress/components';
 
 import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
-import HookSelectorModal from '../settings/settings/HookSelectorModal';
+import HookSelectorModal, {
+	PLUGIN_TIME_HOOKS,
+} from '../settings/settings/HookSelectorModal';
 
 /**
  * Every skin class this modal's own stylesheet needs.
@@ -144,12 +146,32 @@ export default function RuleEditModal( {
 	const [ traceCallers, setTraceCallers ] = useState(
 		String( rule?.trace_callers ?? 0 )
 	);
+	const [ significantKey, setSignificantKey ] = useState( 0 );
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
 	const [ isCustomOpen, setIsCustomOpen ] = useState( false );
 	const [ confirmDelete, setConfirmDelete ] = useState( false );
 
 	const isLog = 'log' === action;
+
+	/**
+	 * Stage everything that times time by plugin owner.
+	 *
+	 * Adds the lifecycle hooks to both lists, `sql` and `http` to the
+	 * significant events, and turns the three span switches on. It edits the
+	 * pending draft only; Save writes it.
+	 */
+	const measurePluginTime = () => {
+		const union = ( list, add ) => [ ...new Set( [ ...list, ...add ] ) ];
+		setHooks( union( hooks, PLUGIN_TIME_HOOKS ) );
+		setSignificant(
+			union( significant, [ ...PLUGIN_TIME_HOOKS, 'sql', 'http' ] )
+		);
+		setSignificantKey( ( key ) => key + 1 );
+		setLogQueries( true );
+		setLogHttp( true );
+		setLogPluginLoads( true );
+	};
 
 	/**
 	 * Assemble the draft and hand it to `onSave`, refusing an empty pattern.
@@ -326,11 +348,22 @@ export default function RuleEditModal( {
 								) }
 							>
 								<TagInputField
+									key={ significantKey }
 									{ ...significantBase.controlProps }
 									initialValues={ significant }
 									onChange={ setSignificant }
 								/>
 							</BaseControl>
+							<button
+								type="button"
+								className="button"
+								onClick={ measurePluginTime }
+							>
+								{ __(
+									'Measure plugin time',
+									'newspack-event-logger-nodes'
+								) }
+							</button>
 
 							<div className="rule-edit-threshold-row">
 								<TextControl
