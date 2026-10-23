@@ -130,9 +130,56 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 'hook:ruru_init', 17.5 ] ], $r['rows'] );
 	}
 
-	public function test_a_server_scoped_or_shorter_ranking_never_reads_the_window(): void {
+	/**
+	 * A server's leaderboard over the whole window, built as the
+	 * `server_overview` the prefetch job stores builds it, reads the window,
+	 * grouped or filtered by server, and answers what `timings_site` does.
+	 */
+	public function test_a_servers_whole_window_leaderboard_reads_the_category_window(): void {
 		$span = $this->last_span();
-		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
+		foreach ( [ 0, 2 ] as $p ) {
+			$this->seed_rows( $p, [
+				[ 'ignore', 'window_expiry', [ 'bucket' => $span[0][0] - 1 ] ],
+				[ 'add', 'category_window', [ 'server' => 'kea.example' ] + self::window_row( 'hook:ruru_init', 21.5 + $p, 3, 2, $span[0][1] ) ],
+				[ 'add', 'category_window', [ 'server' => 'kea.example', 'entry' => 'weka_cb' ] + self::window_row( 'hook:ruru_init', 8.25, 1, 1, $span[0][1] ) ],
+				[ 'add', 'category_window', [ 'server' => 'tui.example' ] + self::window_row( 'hook:ruru_init', 900.0, 9, 9, $span[0][1] ) ],
+			] );
+			$this->seed_site_timings( [
+				[ 'server' => 'kea.example', 'category' => 'hook:ruru_init', 'entry' => '', 'ms' => 21.5 + $p, 'calls' => 3, 'requests' => 2 ],
+				[ 'server' => 'kea.example', 'category' => 'hook:ruru_init', 'entry' => 'weka_cb', 'ms' => 8.25, 'calls' => 1, 'requests' => 1 ],
+				[ 'server' => 'tui.example', 'category' => 'hook:ruru_init', 'entry' => '', 'ms' => 900.0, 'calls' => 9, 'requests' => 9 ],
+			], $p );
+		}
+		$board = [
+			'source'  => 'timings',
+			'group'   => [ 'category', 'entry', 'listener' ],
+			'filter'  => Performance_CI_Node::scope( 'kea.example', false ),
+			'measure' => [ 'ms', 'calls', 'requests' ],
+			'buckets' => Bucket::last( Bucket::window(), self::NOW ),
+			'now'     => self::NOW,
+			'sort'    => 'ms',
+			'order'   => 'desc',
+			'limit'   => Stats_Query::MAX_LIMIT,
+			'offset'  => 0,
+		];
+
+		$live = Stats_Query::run( $board );
+
+		$this->assertSame( 'category_window', $live['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', '', 0, 45.0, 6, 4 ], [ 'hook:ruru_init', 'weka_cb', 0, 16.5, 2, 2 ] ], $live['rows'] );
+		$this->assertSame( $live['rows'], Stats_Query::run( \array_diff_key( $board, [ 'now' => true ] ) )['rows'], 'timings_site answers the same' );
+		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'group' => [ 'server', 'category' ], 'filter' => [ 'worker' => [ 0 ] ] ] + $board ) );
+
+		$site = [ 'filter' => Performance_CI_Node::scope( '', false ) ] + $board;
+		$all  = Stats_Query::run( $site );
+
+		$this->assertSame( 'category_window', $all['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', '', 0, 1845.0, 24, 22 ], [ 'hook:ruru_init', 'weka_cb', 0, 16.5, 2, 2 ] ], $all['rows'], 'the site board sums both servers' );
+		$this->assertSame( $all['rows'], Stats_Query::run( \array_diff_key( $site, [ 'now' => true ] ) )['rows'], 'timings_site answers the same' );
+	}
+
+	public function test_a_shorter_or_bucketed_ranking_never_reads_the_window(): void {
+		$span = $this->last_span();
 		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => [ [ $span[0][0] + 1, $span[0][1] ] ], 'now' => self::NOW ] ) );
 		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
 		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
@@ -396,6 +443,7 @@ final class StatsQueryTest extends TestCase {
 			'server on requests_hourly' => [ [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'count' ] ], true, 'requests_hourly', 'requests_hourly_server_id' ],
 			'category on timings_site'  => [ [ 'source' => 'timings', 'group' => [ 'bucket' ], 'filter' => [ 'category' => [ 'init hook @10' ] ], 'measure' => [ 'ms' ] ], false, 'timings_site', 'timings_site_category_id' ],
 			'entry on timings_site'     => [ [ 'source' => 'timings', 'group' => [ 'bucket' ], 'filter' => [ 'entry' => [ 'kea_init' ] ], 'measure' => [ 'ms' ] ], false, 'timings_site', 'timings_site_entry_id' ],
+			'category on category_window' => [ [ 'source' => 'timings', 'group' => [ 'entry' ], 'filter' => [ 'category' => [ 'init hook @10' ], 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'now' => self::NOW ], false, 'category_window', 'category_window_category_id' ],
 		];
 	}
 
@@ -432,6 +480,19 @@ final class StatsQueryTest extends TestCase {
 		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea-7003.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH t USING .*\(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	/** A server's whole-window leaderboard seeks the window's server-led key. */
+	public function test_a_server_filter_on_the_category_window_seeks_its_server_led_key(): void {
+		$this->seed_rows( 0, [
+			[ 'add', 'category_window', [ 'server' => 'kea-7007.example' ] + self::window_row( 'hook:hoiho_init', 41.5, 3, 2, Bucket::id( self::NOW ) ) ],
+			[ 'add', 'category_window', [ 'server' => 'kaka-7007.example' ] + self::window_row( 'hook:hoiho_init', 7.25, 1, 1, Bucket::id( self::NOW ) ) ],
+		] );
+
+		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category', 'entry', 'listener' ], 'filter' => Performance_CI_Node::scope( 'kea-7007.example', false ), 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => Bucket::last( Bucket::window(), self::NOW ), 'now' => self::NOW ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING .*\(server_id=\?\)/', $plan );
+		$this->assertStringNotContainsString( 'category_window_last', $plan );
 	}
 
 	public function test_a_server_filter_on_timings_site_answers_the_named_servers_rows(): void {

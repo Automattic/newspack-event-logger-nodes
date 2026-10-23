@@ -11,10 +11,10 @@
  * Flame_Facts`, and a reader finds that name through
  * `Bootstrap::row_table()`.
  *
- * `category_window` holds each category's and entry's sums over the last
- * `Bucket::window()`, and `window_expiry` one row per bucket expired, so a
- * replayed expiry subtracts nothing twice; its newest bucket is the
- * window's watermark.
+ * `category_window` holds each server's sums per category and entry over
+ * the last `Bucket::window()`, and `window_expiry` one row per bucket
+ * expired, so a replayed expiry subtracts nothing twice; its newest bucket
+ * is the window's watermark.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -225,6 +225,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 			],
 			'category_window' => [
 				'columns' => [
+					'server_id'   => 'INTEGER NOT NULL',
 					'category_id' => 'INTEGER NOT NULL',
 					'entry_id'    => 'INTEGER NOT NULL',
 					'listener'    => 'INTEGER NOT NULL',
@@ -234,7 +235,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests'    => 'INTEGER NOT NULL',
 					'last_bucket' => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'category_id', 'entry_id', 'worker' ],
+				'key'     => [ 'server_id', 'category_id', 'entry_id', 'worker' ],
 				'add'     => [
 					'ms'          => 'sum',
 					'calls'       => 'sum',
@@ -351,6 +352,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 10;
+		return 11;
 	}
 }

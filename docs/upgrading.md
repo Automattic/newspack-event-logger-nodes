@@ -6,14 +6,17 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **The stats schema is version 10, and a site refills its stats once.** The
-  `flame-facts` Row_Table gains `pages` and `timings_page`, and its
-  `requests_url` index widens. A builder that opens a version 9 file
-  discards it and starts empty, so every chart and table reads only what
-  the builder has written since. Refill them from the retained flames as
-  the version 9 step below does: `wp nodes stop`, delete each
-  `flames:consumer` cursor, then `wp nodes start`. A `query` naming a page
-  and no URL now answers `table` `timings_page` rather than `timings`.
+- **The stats schema is version 11, and a site refills its stats once.** The
+  `flame-facts` Row_Table gains `pages` and `timings_page`, its
+  `requests_url` index widens, and `category_window` is keyed by server. A
+  builder that opens a version 9 or 10 file discards it and starts empty,
+  so every chart and table reads only what the builder has written since.
+  Refill them from the retained flames as the version 9 step below does:
+  `wp nodes stop`, delete each `flames:consumer` cursor, then
+  `wp nodes start`. A `query` naming a page and no URL now answers `table`
+  `timings_page` rather than `timings`, and a whole-window `timings` query
+  grouped or filtered by `server` answers `category_window` rather than
+  `timings_site`.
 - **The stats schema is version 9, and a site refills its stats once.** The
   `flame-facts` Row_Table gains `owners`, `owner_timings` and
   `owner_timings_site`. A builder that opens a version 8 file discards it

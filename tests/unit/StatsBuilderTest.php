@@ -1826,13 +1826,14 @@ final class StatsBuilderTest extends TestCase {
 		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $bucket ] ] ] );
 	}
 
-	/** One timed request whose profile spends `$ms` in `$category`. */
-	private function fold( Stats_Builder_Node $sb, string $rid, string $category, float $ms, int $finished ): void {
+	/** One timed request on `$server` whose profile spends `$ms` in `$category`. */
+	private function fold( Stats_Builder_Node $sb, string $rid, string $category, float $ms, int $finished, string $server = 'example.com' ): void {
 		$this->fill_flame(
 			$sb,
 			$this->completed_request(
 				[
 					'rid'         => $rid,
+					'url'         => "https://{$server}/post/123",
 					'timestamp'   => $finished - 1,
 					'duration_ms' => 1000.0,
 					'profiles'    => [ $category => [ 'time' => $ms, 'count' => 2, 'entries' => [] ] ],
@@ -1852,9 +1853,61 @@ final class StatsBuilderTest extends TestCase {
 		return $out;
 	}
 
+	/** The window's live rows as server => category => [ ms, calls, requests ]. */
+	private function window_by_server(): array {
+		$w    = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT MAX( bucket ) FROM p0.window_expiry', [] ) );
+		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT s.name, c.name, w.ms, w.calls, w.requests FROM p0.category_window AS w JOIN p0.servers AS s ON s.id = w.server_id JOIN p0.categories AS c ON c.id = w.category_id JOIN p0.entries AS e ON e.id = w.entry_id WHERE w.last_bucket > ? AND w.requests > 0 AND e.name = ? ORDER BY s.name, c.name', [ $w[0][0], '' ] ) );
+		$out  = [];
+		foreach ( $rows as [ $server, $category, $ms, $calls, $requests ] ) {
+			$out[ $server ][ $category ] = [ $ms, $calls, $requests ];
+		}
+		return $out;
+	}
+
 	/** Every window row as stored, zeroed and negative rows included. */
 	private function raw_window(): array {
 		return Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT w.ms, w.calls, w.requests FROM p0.category_window AS w JOIN p0.categories AS c ON c.id = w.category_id ORDER BY c.name', [] ) );
+	}
+
+	/**
+	 * Each server's sums stay its own: a rebuild files `timings_site` per
+	 * server, a fold adds to its server's row, an expiry subtracts each
+	 * server's own share of the bucket leaving, and a rebuild after the folds
+	 * reproduces each server's rows.
+	 */
+	public function test_the_category_window_keeps_each_servers_sums(): void {
+		$this->window_world();
+		$oldest = Bucket::id( self::NOW ) - Bucket::window() + 1;
+		$this->seed_rows(
+			0,
+			[
+				[ 'add', 'timings_site', [ 'bucket' => $oldest, 'server' => 'kea.example', 'worker' => 0, 'category' => 'hook:kaka_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $oldest + 3, 'server' => 'kea.example', 'worker' => 0, 'category' => 'hook:kaka_init', 'entry' => '', 'listener' => 0, 'ms' => 2.0, 'calls' => 1, 'requests' => 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $oldest, 'server' => 'tui.example', 'worker' => 0, 'category' => 'hook:kaka_init', 'entry' => '', 'listener' => 0, 'ms' => 6.25, 'calls' => 1, 'requests' => 1 ] ],
+			]
+		);
+		$sb = $this->window_builder();
+		$sb->flush();
+
+		$this->assertSame( [ 'kea.example' => [ 'hook:kaka_init' => [ 32.5, 5, 3 ] ], 'tui.example' => [ 'hook:kaka_init' => [ 6.25, 1, 1 ] ] ], $this->window_by_server(), 'the rebuild files each server apart' );
+
+		$this->fold( $sb, 'rid-kea-1', 'hook:kaka_init', 12.5, self::NOW, 'kea.example' );
+		$this->fold( $sb, 'rid-tui-1', 'hook:kaka_init', 7.25, self::NOW, 'tui.example' );
+		$sb->flush();
+
+		$this->assertSame( [ 'kea.example' => [ 'hook:kaka_init' => [ 45.0, 7, 4 ] ], 'tui.example' => [ 'hook:kaka_init' => [ 13.5, 3, 2 ] ] ], $this->window_by_server(), 'each fold adds to its own server' );
+
+		Core::$now += Bucket::SECONDS;
+		$sb->flush();
+
+		$this->assertSame( [ 'kea.example' => [ 'hook:kaka_init' => [ 14.5, 3, 2 ] ], 'tui.example' => [ 'hook:kaka_init' => [ 7.25, 2, 1 ] ] ], $this->window_by_server(), 'the expiry subtracts each server\'s own share' );
+
+		// A row only a rebuild negates, so the restart below proves it rebuilt.
+		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, Bucket::id( (int) Core::$now ) ) ] ] ) );
+		Core::$now += ( Bucket::RETAIN_SLACK + 1 ) * Bucket::SECONDS;
+		$this->restarted( $sb )->flush();
+
+		$this->assertSame( [ 'kea.example' => [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], 'tui.example' => [ 'hook:kaka_init' => [ 7.25, 2, 1 ] ] ], $this->window_by_server(), 'a rebuild after the folds files each server\'s folds apart' );
 	}
 
 	public function test_a_folded_request_adds_its_categories_to_the_window(): void {

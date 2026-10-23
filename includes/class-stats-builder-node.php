@@ -21,14 +21,15 @@
  * applied only when that row inserted, so a replay of records already
  * written adds nothing.
  *
- * The builder also keeps `category_window`, each category's and entry's
- * sums over the last `Bucket::window()`: a request adds its timings when its
- * bucket is newer than the window's watermark, and every write subtracts
- * each bucket that left the window, once per `window_expiry` row. The
- * watermark is the newest bucket `window_expiry` holds, read once, before
- * the first fold. With none, or one older than `timings_site` holds, the
- * window is rebuilt from `timings_site`; one past the window's start, a span
- * grown since, expires nothing until the start passes it.
+ * The builder also keeps `category_window`, each server's sums per
+ * category and entry over the last `Bucket::window()`: a request adds its
+ * timings when its bucket is newer than the window's watermark, and every
+ * write subtracts each bucket that left the window, once per
+ * `window_expiry` row. The watermark is the newest bucket `window_expiry`
+ * holds, read once, before the first fold. With none, or one older than
+ * `timings_site` holds, the window is rebuilt from `timings_site`; one past
+ * the window's start, a span grown since, expires nothing until the start
+ * passes it.
  *
  * A flame whose record is gone — no `request_at`, a place that does not
  * parse, or a read that finds nothing — is skipped and counted, never
@@ -430,7 +431,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$then[] = [ 'add', 'timings_page', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_page', $named + $by_page ) ];
 				$then[] = [ 'add', 'timings_site', [ $bucket, null, $worker, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_site', $named + $site ) ];
 				if ( $windowed ) {
-					$then[] = [ ...self::window_op( [ null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named ) ];
+					$then[] = [ ...self::window_op( [ null, null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named + $site ) ];
 				}
 			}
 		}
@@ -781,8 +782,8 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * One `ignore` per bucket from `$first` through `$last`, each carrying the
-	 * negation of that bucket's `timings_site` sums as `then` ops, so a
-	 * replayed expiry subtracts nothing twice.
+	 * negation of that bucket's `timings_site` sums per server as `then` ops,
+	 * so a replayed expiry subtracts nothing twice.
 	 *
 	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
 	 * @param int        $first  The first bucket to expire.
@@ -792,7 +793,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private static function window_expiries( Row_Reader $reader, int $first, int $last ): array {
 		$sums = self::own_rows(
 			$reader,
-			'SELECT bucket, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, category_id, entry_id, listener, worker',
+			'SELECT bucket, server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, server_id, category_id, entry_id, listener, worker',
 			[ $first, $last ]
 		);
 		$then = \array_fill_keys( \range( $first, $last ), [] );
@@ -821,16 +822,16 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private static function window_rebuild( Row_Reader $reader, int $through, int $now ): array {
 		$batch = [];
-		foreach ( self::own_rows( $reader, 'SELECT category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
-			$batch[] = self::window_op( $row, -1, Core::as_int( $row[7] ) );
+		foreach ( self::own_rows( $reader, 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
+			$batch[] = self::window_op( $row, -1, Core::as_int( $row[8] ) );
 		}
 		$sums = self::own_rows(
 			$reader,
-			'SELECT category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY category_id, entry_id, listener, worker',
+			'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY server_id, category_id, entry_id, listener, worker',
 			[ $through + 1, $now ]
 		);
 		foreach ( $sums as $row ) {
-			$batch[] = self::window_op( $row, 1, Core::as_int( $row[7] ) );
+			$batch[] = self::window_op( $row, 1, Core::as_int( $row[8] ) );
 		}
 		foreach ( \range( $through - Bucket::RETAIN_SLACK + 1, $through ) as $bucket ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
@@ -839,18 +840,18 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * A `category_window` add of one category's and entry's sums, added at
-	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. The op's
-	 * `ids` map fills any null id.
+	 * A `category_window` add of one server's sums for a category and entry,
+	 * added at `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. The
+	 * op's `ids` map fills any null id.
 	 *
-	 * @param list<mixed> $sums Category id, entry id, listener, worker, ms, calls, requests.
+	 * @param list<mixed> $sums Server id, category id, entry id, listener, worker, ms, calls, requests.
 	 * @param int         $sign 1 or -1.
 	 * @param int         $last The bucket the row last moved in.
 	 * @return Row_Op
 	 */
 	private static function window_op( array $sums, int $sign, int $last ): array {
-		[ $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
-		return [ 'add', 'category_window', [ null === $category ? null : Core::as_int( $category ), null === $entry ? null : Core::as_int( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
+		[ $server, $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
+		return [ 'add', 'category_window', [ null === $server ? null : Core::as_int( $server ), null === $category ? null : Core::as_int( $category ), null === $entry ? null : Core::as_int( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
 	}
 
 	/**
