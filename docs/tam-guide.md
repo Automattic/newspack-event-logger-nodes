@@ -131,11 +131,11 @@ A session is a credential Claude uses in the name of whoever issued it, limited 
 
 1. wp-admin → **Nodes** → the **Sessions** tab → **+ Issue Session**.
 2. **Label:** who it is for and why, such as `Jane — Claude, slow homepage`. The label is how you find it again to revoke it.
-3. **Scope:** **read** for everything in this guide. Choose **tune** only if Claude should also change logging rules itself. Never choose **manage** for Claude: it adds no tools here, and the same key also reaches the site's fleet controls. A scope above your own is lowered to yours, which the key panel shows.
+3. **Scope:** **read** for everything in this guide. Choose **tune** only if Claude should also change logging rules itself. The tab offers no **manage**, because a key you carry should not reach the site's fleet controls. A scope above your own is lowered to yours, which the key panel shows.
 4. **Lifetime (seconds):** from 60 to 86,400, one day; it starts at 3,600. The session then stops working, and you issue another.
 5. Press **Issue Session** and copy the key it shows, two long codes joined by a dot. It is shown once and cannot be recovered.
 
-With WP-CLI on the server, one command issues the session and registers it. `wp nodes session issue <label> [<role>] [<ttl>] --user=<login>` prints only the key, so the shell can hand it straight to `claude mcp add`. Name the role: it defaults to **manage**.
+With WP-CLI on the server, one command issues the session and registers it. `wp nodes session issue <label> [<role>] [<ttl>] --user=<login>` prints only the key, so the shell can hand it straight to `claude mcp add`. The role is `read` or `tune` and defaults to **tune**; `manage` is refused.
 
 ```sh
 claude mcp add --transport http slow-site https://<site>/wp-json/newspack-event-logger-nodes/v1/mcp \
