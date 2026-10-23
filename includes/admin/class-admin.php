@@ -65,8 +65,6 @@ class Admin {
 
 	/**
 	 * WP-option name prefix. All admin-managed options live under this prefix.
-	 * Worker-restart classification (see `maybe_request_worker_restart`) keys
-	 * off it.
 	 */
 	public const OPTION_PREFIX = 'newspack_event_logger_nodes_';
 
@@ -95,8 +93,8 @@ class Admin {
 	/**
 	 * Register the whole admin surface: the Settings submenu, the Settings-API
 	 * wiring, the reset-to-defaults handler, the three panels below the form,
-	 * the restart request on `added_option` / `updated_option`, and the
-	 * default-write skip on `pre_update_option`.
+	 * the substrate's restart listener, and the default-write skip on
+	 * `pre_update_option`.
 	 *
 	 * Constructing a second Admin double-registers every hook, so the plugin
 	 * builds exactly one.
@@ -109,10 +107,7 @@ class Admin {
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
 
-		// Per-option worker-restart on every row write: add, update, reset.
-		\add_action( 'updated_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
-		\add_action( 'added_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
-		\add_action( 'deleted_option', [ $this, 'maybe_request_worker_restart' ], 10, 1 );
+		Restart_Planner::listen( Settings_Schema::get() );
 
 		// Skip storing an option equal to the file default (strict compare).
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
@@ -477,45 +472,4 @@ class Admin {
 		<?php
 	}
 
-	/**
-	 * Per-option granular worker-restart on save.
-	 *
-	 * Application-level options only. Substrate options (base_directory,
-	 * partitioning, memcache_servers, etc.) are handled by
-	 * `\Newspack_Nodes\Admin\Admin::maybe_request_worker_restart()`.
-	 *
-	 * The save's restart classification is by CONSUMER NODE TYPE (the Field's
-	 * `restart:` key — [], 'all', or node-type tokens like
-	 * `Flame_Builder` / `Discovery_Collector`), which `Restart_Planner` resolves
-	 * to the set of live topologies whose graphs instantiate that node and touches
-	 * each one's per-partition lock dir. A worker sees the flag on its next
-	 * `Worker_Base::should_continue()` check and exits for a peer's scan to
-	 * respawn.
-	 *
-	 * `Restart_Planner::plan()` is the recipe, the same one the substrate's
-	 * own settings save runs: restart what the classification names, then ask
-	 * every live worker to re-read.
-	 *
-	 * The option row is already written when this runs, so a failure to
-	 * resolve the locks directory, or a flag that would not land, propagates
-	 * to the writer after every lock dir was offered its flag: the save
-	 * stands, and the error says which workers never heard of it. WordPress
-	 * fires this from inside `update_option()`, so `options.php` stops at the
-	 * first option whose signal throws and the fields after it in that
-	 * submission go unsaved.
-	 *
-	 * @param string $option Option name (full WP option key).
-	 * @throws \Throwable What `Restart_Planner::plan()` raised.
-	 */
-	public function maybe_request_worker_restart( string $option ): void {
-		if ( ! \str_starts_with( $option, self::OPTION_PREFIX ) ) {
-			return;
-		}
-
-		// Reset cached config so a later read this request sees the new value.
-		Config::reset();
-
-		$short = \substr( $option, \strlen( self::OPTION_PREFIX ) );
-		Restart_Planner::plan( Settings_Schema::get()->restart_for( $short ) );
-	}
 }

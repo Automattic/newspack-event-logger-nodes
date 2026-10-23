@@ -178,22 +178,32 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'reset=1', $GLOBALS['_last_redirect'] );
 	}
 
-	// ---- maybe_request_worker_restart ------------------------------------
+	/**
+	 * One wp-admin request that writes $option through $hook, then ends.
+	 *
+	 * @param string $option Full option name.
+	 * @param string $hook   The option action WordPress fires for the write.
+	 */
+	private function save_in_admin( string $option, string $hook = 'updated_option' ): void {
+		new Admin();
+		\do_action( $hook, $option );
+		\do_action( 'shutdown' );
+	}
 
-	public function test_maybe_request_worker_restart_no_op_for_unrelated_option(): void {
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'completely_unrelated_option' );
+	// ---- worker restart on save -----------------------------------------
+
+	public function test_a_save_no_op_for_unrelated_option(): void {
+		$this->save_in_admin( 'completely_unrelated_option' );
 
 		// No lock dir created — nothing happened.
 		$this->assertFalse( \is_dir( $this->base_dir . '/locks' ) );
 	}
 
-	public function test_maybe_request_worker_restart_no_op_for_no_impact_options(): void {
+	public function test_a_save_no_op_for_no_impact_options(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_urls' );
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_skip_urls' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_log_urls' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_skip_urls' );
 
 		// log_urls / skip_urls are read per-request in the web process — no
 		// long-lived worker caches them, so nothing restarts.
@@ -208,21 +218,20 @@ class AdminTest extends TestCase {
 		$this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );
 
-		( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_urls' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_log_urls' );
 
 		$this->assertFileExists( $this->base_dir . '/locks/combined.p0.lock.d/' . Lock_Node::RELOAD_FLAG );
 		$this->assertFileExists( $this->base_dir . '/locks/aggregator.p0.lock.d/' . Lock_Node::RELOAD_FLAG );
 		$this->assertRestartNotFlagged( 'combined', 0 );
 	}
 
-	public function test_maybe_request_worker_restart_enable_logging_restarts_all_live_topologies(): void {
+	public function test_a_save_enable_logging_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
 		// enable_logging is cached in the Log_Manager per-process singleton,
 		// which every long-lived worker holds → 'all' → restart every live topology.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_enable_logging' );
 		$this->assertRestartFlagged( 'combined', 0 );
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
@@ -231,15 +240,13 @@ class AdminTest extends TestCase {
 		// A reset or a save of the default deletes the row: deleted_option fires.
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'aggregator', 0 );
-		$GLOBALS['_wp_actions'] = [];
-		new Admin();
 
-		\do_action( 'deleted_option', 'newspack_event_logger_nodes_enable_logging' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_enable_logging', 'deleted_option' );
 
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
 
-	public function test_maybe_request_worker_restart_all_class_restarts_all_live_topologies(): void {
+	public function test_a_save_all_class_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );
@@ -247,10 +254,9 @@ class AdminTest extends TestCase {
 		// that touched it would silently restart nothing real.
 		$this->prepare_lock_dir( 'request-workers', 0 );
 
-		$admin = new Admin();
 		// enable_logging is cached in the Log_Manager per-process singleton
 		// (every worker) → 'all' → restart every live topology, combined included.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_enable_logging' );
 
 		$this->assertRestartFlagged( 'combined', 0 );
 		$this->assertRestartFlagged( 'aggregator', 0 );
@@ -258,7 +264,7 @@ class AdminTest extends TestCase {
 		$this->assertFileDoesNotExist( $this->base_dir . '/locks/request-workers.p0.lock.d/' . Lock_Node::RESTART_FLAG );
 	}
 
-	public function test_maybe_request_worker_restart_iterates_all_partitions(): void {
+	public function test_a_save_iterates_all_partitions(): void {
 		// Force num_partitions=4 via the substrate WP option (substrate owns
 		// num_partitions). The flame-builder topology fans out over every partition.
 		$this->register_topologies();
@@ -269,8 +275,7 @@ class AdminTest extends TestCase {
 			$this->prepare_lock_dir( 'flame-builder', $p );
 		}
 
-		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_enable_logging' );
 
 		for ( $p = 0; $p < 4; $p++ ) {
 			$this->assertRestartFlagged( 'flame-builder', $p );
@@ -278,27 +283,30 @@ class AdminTest extends TestCase {
 	}
 
 	/**
-	 * A flag that would not land propagates: the option row is written, and
-	 * the save must learn that one live worker never heard of it — after
-	 * every other worker was told.
+	 * A flag that would not land reaches the user who saved, as a notice on
+	 * their next admin page, after every other worker was told.
 	 */
-	public function test_maybe_request_worker_restart_propagates_a_flag_that_would_not_land(): void {
+	public function test_a_flag_that_would_not_land_leaves_its_user_a_notice(): void {
 		$this->register_topologies();
 		$refusing = $this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );
 		\chmod( $refusing, 0555 );
+		$GLOBALS['_current_user_id'] = 6203;
 
-		$thrown = null;
 		try {
-			( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
-		} catch ( \RuntimeException $e ) {
-			$thrown = $e;
+			$this->save_in_admin( 'newspack_event_logger_nodes_enable_logging' );
 		} finally {
 			\chmod( $refusing, 0755 );
 		}
-
-		$this->assertNotNull( $thrown, 'a flag write that failed must reach the save' );
-		$this->assertStringContainsString( $refusing, $thrown->getMessage() );
+		\ob_start();
+		try {
+			\do_action( 'admin_notices' );
+		} finally {
+			$html = (string) \ob_get_clean();
+			unset( $GLOBALS['_current_user_id'] );
+		}
+		$this->assertStringContainsString( 'Changed enable_logging, but the running workers were not told', $html );
+		$this->assertStringContainsString( $refusing, $html );
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
 
@@ -566,14 +574,13 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	// ---- maybe_request_worker_restart additional branches ---------------
+	// ---- worker restart on save: additional branches ---------------------
 
-	public function test_maybe_request_worker_restart_skips_unknown_application_option(): void {
+	public function test_a_save_skips_unknown_application_option(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
-		$admin = new Admin();
 		// An option in the prefix but not in any Field — must be a no-op.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_unknown_option' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_unknown_option' );
 		$this->assertRestartNotFlagged( 'combined', 0 );
 	}
 
@@ -794,14 +801,15 @@ class AdminTest extends TestCase {
 
 	/**
 	 * A save the fleet never hears of must not read as a clean one: with the
-	 * locks directory unresolvable, the signal's failure reaches the writer.
+	 * locks directory unresolvable, a stderr line names the setting.
 	 */
-	public function test_maybe_request_worker_restart_propagates_an_unresolvable_locks_directory(): void {
+	public function test_an_unresolvable_locks_directory_is_reported_naming_the_setting(): void {
 		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/lantern-moth/cannot/be/created' ] );
+		$lines = $this->capture_stderr();
 
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( '/proc/lantern-moth/cannot/be/created' );
-		( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
+		$this->save_in_admin( 'newspack_event_logger_nodes_significant_events' );
+
+		$this->assertCount( 1, self::stderr_lines( $lines, 'settings: significant_events: ' ) );
 	}
 
 	// ---- additional edge cases for higher coverage --------------------------
