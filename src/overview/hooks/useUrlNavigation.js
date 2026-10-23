@@ -1,17 +1,18 @@
 /**
  * useUrlNavigation — the Performance Dashboard's address bar.
  *
- * The dashboard's selection lives here: which URL is open (`selectedUrl`) and
- * which of its requests (`selectedRequest`). The hook keeps that selection and
- * the `?url=` / `?request=` pair in step, so every view is a shareable link and
- * Back/Forward walks the views the operator visited. `?search=` it only reads,
- * once on mount, leaving the writing to the owner.
+ * The dashboard's selection lives here: which subject is open
+ * (`selectedSubject`, as `detailSubject` describes it) and which of its
+ * requests (`selectedRequest`). The hook keeps that selection and the
+ * `?url=` or `?page_hash=` beside `?request=` in step, so every view is a
+ * shareable link and Back/Forward walks the views the operator visited.
+ * `?search=` it only reads, once on mount, leaving the writing to the owner.
  *
  * Traffic runs both ways. Inbound, the query params seed the selection — on
  * mount and again on every Back/Forward, because the address bar IS the link.
- * Only the server can answer for a `?url=` hash outside the loaded page of the
- * catalog, or for a `?request=`, whose rid names its URL, so the owner
- * supplies the resolvers. Outbound, every later selection change pushes a
+ * Only the server can answer for a subject no loaded row of the catalog
+ * opens, or for a `?request=`, whose rid names its URL, so the owner supplies
+ * the resolvers. Outbound, every later selection change pushes a
  * history entry — every one the OPERATOR makes, that is. A selection the address
  * bar itself dictated is not written back, and the suppression is armed by the
  * same comparison that decides whether the selection moves at all, so the flush
@@ -30,6 +31,12 @@ import {
 	getQueryParam,
 	setQueryParams,
 } from '@newspack-nodes/shared/utils/queryParams';
+import {
+	findSubject,
+	linkedSubject,
+	sameSubject,
+	subjectLink,
+} from '../detailSubject';
 
 /**
  * Validate request ID format (alphanumeric, underscore, hyphen).
@@ -45,49 +52,37 @@ const isValidRequestId = ( id ) =>
 	typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test( id );
 
 /**
- * The page row naming a URL hash, when the loaded page holds one: a page of
- * one shape, whose `hash` is that URL's; a page of more names none.
- *
- * @param {Array}   urls One page of the URL table's page rows.
- * @param {?string} hash The hash to resolve.
- * @return {?Object} The entry carrying that hash, or null.
- */
-const findUrl = ( urls, hash ) =>
-	( hash && urls.find( ( u ) => u.hash === hash ) ) || null;
-
-/**
  * Hold the selection the dashboard renders, and the address bar that names it.
  *
- * The returned object carries the selection — `selectedUrl`, an object
- * carrying the URL's `hash` and, when the row it came from names one, its
- * `url` — and `selectedRequest`, a request id — with a setter for each. It also
+ * The returned object carries the selection — `selectedSubject`, its
+ * `{ field, hash, url }`, `url` its title when the row it came from names one
+ * — and `selectedRequest`, a request id — with a setter for each. It also
  * carries `initialSearchQuery`, the `?search=` value read once on mount: the
  * owner runs that search and then clears the value through
  * `setInitialSearchQuery`, or it runs on every render.
  *
- * A `?url=` / `?request=` deep link is an INTENT this hook holds and reports:
+ * A subject or `?request=` deep link is an INTENT this hook holds and reports:
  * it resolves one it can answer from the loaded page itself, and otherwise
- * hands the caller `deepLink` — `{ requestId, urlHash }` — and `clearDeepLink`.
+ * hands the caller `deepLink` — `{ requestId, subject }`, the subject as
+ * `{ field, hash }` — and `clearDeepLink`.
  * The caller asks the server, because asking is a command and the commands
- * belong beside the state their replies set. An explicit `selectUrl` /
+ * belong beside the state their replies set. An explicit `selectSubject` /
  * `selectRequest` SUPERSEDES a link still being resolved: it cancels the intent,
  * so a reply landing afterwards answers nothing and is dropped by the caller.
  *
- * @param {Array} urls One page of the URL table's page rows; a one-shape
- *                     page's `hash` is its URL's.
+ * @param {Array} urls One page of the URL table's page rows, each opening
+ *                     the subject `subjectOfRow()` names.
  * @return {Object} Navigation state and callbacks.
  */
 export default function useUrlNavigation( urls ) {
 	// Selection state.
-	const [ selectedUrl, setSelectedUrl ] = useState( null );
+	const [ selectedSubject, setSelectedSubject ] = useState( null );
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
 
 	// @longform Seeded from the query string on mount, these hold the part of
-	// the link nothing has answered yet: popstate re-seeds the hash and the
+	// the link nothing has answered yet: popstate re-seeds the subject and the
 	// rid, while the search query is read once and the owner clears it.
-	const [ initialUrlHash, setInitialUrlHash ] = useState( () =>
-		getQueryParam( 'url' )
-	);
+	const [ initialSubject, setInitialSubject ] = useState( linkedSubject );
 	const [ initialRequestId, setInitialRequestId ] = useState( () => {
 		const rid = getQueryParam( 'request' );
 		return rid && isValidRequestId( rid ) ? rid : null;
@@ -103,16 +98,16 @@ export default function useUrlNavigation( urls ) {
 	// @longform What the popstate listener reads. It registers once, so it
 	// would otherwise close over the first render's selection and catalog
 	// page; assigning during render keeps it reading what is on screen.
-	const selectedUrlRef = useRef( null );
+	const selectedSubjectRef = useRef( null );
 	const selectedRequestRef = useRef( null );
 	const urlsRef = useRef( urls );
-	selectedUrlRef.current = selectedUrl;
+	selectedSubjectRef.current = selectedSubject;
 	selectedRequestRef.current = selectedRequest;
 	urlsRef.current = urls;
 
 	/**
 	 * Report the link as answered. `'request'` drops only the rid, which is
-	 * how a rid the server cannot find falls THROUGH to the `?url=` hash
+	 * how a rid the server cannot find falls THROUGH to the linked subject
 	 * instead of being re-asked forever.
 	 *
 	 * @param {string} [part] `'request'` for the rid alone; omit for the link.
@@ -120,24 +115,24 @@ export default function useUrlNavigation( urls ) {
 	const clearDeepLink = useCallback( ( part ) => {
 		setInitialRequestId( null );
 		if ( 'request' !== part ) {
-			setInitialUrlHash( null );
+			setInitialSubject( null );
 		}
 	}, [] );
 
 	/**
-	 * Open a URL, or close the selection.
+	 * Open a subject, or close the selection.
 	 *
-	 * @param {Object|null} url URL object carrying a `hash`, or null to clear.
+	 * @param {Object|null} subject Its `{ field, hash, url }`, or null.
 	 */
-	const selectUrl = useCallback(
-		( url ) => {
+	const selectSubject = useCallback(
+		( subject ) => {
 			// @longform An explicit selection SUPERSEDES a link still being
 			// resolved: the operator has said what they want, so the reply
 			// must not reopen what they closed nor yank them off what they
 			// opened. Reporting a link goes through the raw setters, so this
 			// cancels only what the operator or a resolver asks for.
 			clearDeepLink();
-			setSelectedUrl( url );
+			setSelectedSubject( subject );
 		},
 		[ clearDeepLink ]
 	);
@@ -155,41 +150,38 @@ export default function useUrlNavigation( urls ) {
 		[ clearDeepLink ]
 	);
 
-	// @longform Restore the selection a `?url=` / `?request=` link asks for.
+	// @longform Restore the selection a subject / `?request=` link asks for.
 	//
-	// What this hook can answer, it answers: a hash already on the loaded page
+	// What this hook can answer, it answers: a subject a loaded row opens
 	// needs no round trip. Anything else is reported as an intent, because
 	// resolving it means asking the server, and a command belongs beside the
 	// state its reply sets — held here it would need a resolver threaded in,
 	// a one-at-a-time latch and a backoff, all of which a retried read already
 	// does.
 	useEffect( () => {
-		if ( ! initialUrlHash ) {
-			return;
-		}
-		const urlObj = findUrl( urls, initialUrlHash );
-		if ( ! urlObj ) {
+		const found = findSubject( urls, initialSubject );
+		if ( ! found ) {
 			return;
 		}
 		// @longform Answering the link is not a navigation, so it suppresses
-		// the write-back: the bar already reads this hash, and writing the
+		// the write-back: the bar already reads this subject, and writing the
 		// selection alone would DELETE a `?request=` still being resolved and
 		// push an entry for the deletion. Armed by the same comparison that
 		// decides whether anything commits, so the flush spends what it armed.
-		isAddressBarNavigation.current = urlObj !== selectedUrlRef.current;
-		setSelectedUrl( urlObj );
-		// @longform The hash is answered, so it stops being an intent. The RID
-		// beside it stays REPORTED: the caller resolves it, which answers the
-		// URL it was made on, and selects the two together.
-		setInitialUrlHash( null );
-	}, [ urls, initialUrlHash ] );
+		isAddressBarNavigation.current = found !== selectedSubjectRef.current;
+		setSelectedSubject( found );
+		// @longform The subject is answered, so it stops being an intent. The
+		// RID beside it stays REPORTED: the caller resolves it, which answers
+		// the URL it was made on, and selects the two together.
+		setInitialSubject( null );
+	}, [ urls, initialSubject ] );
 
 	// @longform The link's unanswered part, packaged for the caller. Memoized
 	// because the caller keys an effect on it: a fresh literal each render
 	// re-fires the deep-link read.
 	const deepLink = useMemo(
-		() => ( { requestId: initialRequestId, urlHash: initialUrlHash } ),
-		[ initialRequestId, initialUrlHash ]
+		() => ( { requestId: initialRequestId, subject: initialSubject } ),
+		[ initialRequestId, initialSubject ]
 	);
 
 	// @longform Write the operator's selection back as a history entry. A
@@ -211,20 +203,20 @@ export default function useUrlNavigation( urls ) {
 		// The pushed state is never read back: popstate re-reads the bar.
 		setQueryParams(
 			{
-				url: selectedUrl?.hash || null,
+				...subjectLink( selectedSubject ),
 				request: selectedRequest || null,
 			},
 			{ push: true }
 		);
-	}, [ selectedUrl, selectedRequest ] );
+	}, [ selectedSubject, selectedRequest ] );
 
 	// @longform Browser back/forward re-enters through the deep-link path a
 	// fresh load takes: the address bar is the link, so the rid is REPORTED
-	// and the hash is answered from the loaded page where it can be, so
+	// and the subject is answered from the loaded page where it can be, so
 	// Forward opens a request exactly as a reload of the same URL does.
 	useEffect( () => {
 		const handlePopState = () => {
-			const urlHash = getQueryParam( 'url' );
+			const linked = linkedSubject();
 			const rawRequestId = getQueryParam( 'request' );
 			const requestId =
 				rawRequestId && isValidRequestId( rawRequestId )
@@ -234,12 +226,14 @@ export default function useUrlNavigation( urls ) {
 			// @longform What the loaded page can answer is answered HERE, in
 			// the same flush: resolved a commit later instead, the write-back
 			// runs in between on a selection that is only half the link. The
-			// hash it cannot answer selects nothing — leaving the URL the
-			// operator came from open would make Back read as a no-op.
-			const nextUrl =
-				selectedUrlRef.current?.hash === urlHash
-					? selectedUrlRef.current
-					: findUrl( urlsRef.current, urlHash );
+			// subject it cannot answer selects nothing — leaving the window
+			// the operator came from open would make Back read as a no-op.
+			const nextSubject = sameSubject(
+				selectedSubjectRef.current,
+				linked
+			)
+				? selectedSubjectRef.current
+				: findSubject( urlsRef.current, linked );
 
 			// @longform Armed only when this popstate really moves the
 			// selection, so the flush that move causes is what spends it.
@@ -247,13 +241,13 @@ export default function useUrlNavigation( urls ) {
 			// nothing — the rid is REPORTED, never selected — and the
 			// operator's next change, closing the modal, goes unpushed.
 			isAddressBarNavigation.current =
-				nextUrl !== selectedUrlRef.current ||
+				nextSubject !== selectedSubjectRef.current ||
 				null !== selectedRequestRef.current;
 
 			// Raw setters: reporting the link must not cancel it.
-			setSelectedUrl( nextUrl );
+			setSelectedSubject( nextSubject );
 			setSelectedRequest( null );
-			setInitialUrlHash( nextUrl ? null : urlHash );
+			setInitialSubject( nextSubject ? null : linked );
 			setInitialRequestId( requestId );
 		};
 
@@ -262,9 +256,9 @@ export default function useUrlNavigation( urls ) {
 	}, [] );
 
 	return {
-		selectedUrl,
+		selectedSubject,
 		selectedRequest,
-		selectUrl,
+		selectSubject,
 		selectRequest,
 		initialSearchQuery,
 		setInitialSearchQuery,

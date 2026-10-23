@@ -173,6 +173,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** What a `urls` row measures. */
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
+	/** The `page` arg `urls` and `dump_url` each declare beside a description. */
+	private const PAGE_ARG = [ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '' ];
+
 	/** The `filter` arg `query`, `urls`, `dump_url` and `ask` each declare. */
 	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values, and `field!=value` keeps the rows matching none of their values. A field matches in any case, and a repeated token counts once. A field another argument owns is refused; `query`, where none does, takes a bucket by its key.' ];
 
@@ -185,11 +188,18 @@ class Performance_CI_Node extends Service_CI_Node {
 		'bucket' => [ '--bucket', 'buckets' ],
 	];
 
-	/** The field `--page` owns while it names a page. */
-	private const PAGE_OWNER = [ 'page' => [ '--page', 'page' ] ];
+	/**
+	 * The subjects a window shows, keyed by the field its rows key on, which
+	 * is also the arg `dump_url` and `urls` name it by; each holds that
+	 * option and the noun it names, as `URL_SET_OWNERS` spells an owner.
+	 */
+	private const SUBJECTS = [
+		'url'  => [ '--url', 'URL' ],
+		'page' => [ '--page', 'page' ],
+	];
 
-	/** The fields a one-URL filter may not name: a URL-set's, and the hash's. */
-	private const ONE_URL_OWNERS = self::URL_SET_OWNERS + [ 'url' => [ 'the hash', 'URL' ] ];
+	/** What owns a subject's field in `ask`: the descriptor naming it. */
+	private const DESCRIPTOR_OWNER = 'the descriptor';
 
 	/** Entries past which a leaderboard category keeps only its slowest. */
 	private const ENTRY_TRIM_ABOVE = 100;
@@ -438,11 +448,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string              $descriptor The target.
 	 * @param list<string>        $context    Its containers, outermost last.
 	 * @param string              $server     Reporting server the brief answers for; '' is every server.
-	 * @param Url_Filters         $filters    The url filters in force, which `overview:` reads whole and `url:` reads for `filter` and `bucket`, the list the URL modal holds: every other descriptor names one thing, and a filtered view of one thing is the same thing, so only those two read the selection, or refuse it, and carry its canonical spelling.
+	 * @param Url_Filters         $filters    The url filters in force, which `overview:` reads whole and `url:` and `page:` read for `filter` and `bucket`, the list their window holds: every other descriptor names one thing, and a filtered view of one thing is the same thing, so only those three read the selection, or refuse it, and carry its canonical spelling.
 	 * @param int                 $now        The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor, a missing context, or an absent subject.
-	 * @throws \InvalidArgumentException On a selection `overview:` or `url:` refuses.
+	 * @throws \InvalidArgumentException On a selection `overview:`, `url:` or `page:` refuses.
 	 */
 	private static function assemble_ask( string $descriptor, array $context, string $server, array $filters, int $now ): array {
 		$target = Ask_Assembler::parse_descriptor( $descriptor )
@@ -457,7 +467,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'overview':
 				return self::ask_overview( $server, $filters, $now );
 			case 'url':
-				return self::ask_url( $target['id'], $server, $filters, $now );
+			case 'page':
+				return self::ask_subject( $target['type'], $target['id'], $server, $filters, $now );
 			case 'request':
 				return self::ask_request( $target['id'], $chain, $server );
 			case 'span':
@@ -572,11 +583,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `url:` brief — stats, worst recent requests, and the cold-start
-	 * finding when nothing governs it, of the requests `dump_url` reads
-	 * under the same server, `filter` and `bucket`.
+	 * The `url:` or `page:` brief — stats, worst recent requests, and the
+	 * cold-start finding when nothing governs it, of the requests `dump_url`
+	 * reads under the same server, `filter` and `bucket`, the rule matched
+	 * against the name its stats carry.
 	 *
-	 * @param string      $hash    12-char URL hash the descriptor names.
+	 * @param string      $field   A `SUBJECTS` field, the descriptor's type.
+	 * @param string      $hash    The hash the descriptor names.
 	 * @param string      $server  Server the brief answers for; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
 	 * @param int         $now     The reply's clock, read once at its entry.
@@ -584,10 +597,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
-	private static function ask_url( string $hash, string $server, array $filters, int $now ): array {
-		$detail            = self::url_detail( $hash, $server, $filters['filter'], $filters['bucket'], $now, self::RECENT_REQUEST_LIMIT );
+	private static function ask_subject( string $field, string $hash, string $server, array $filters, int $now ): array {
+		$detail            = self::subject_detail( $field, $hash, [ self::DESCRIPTOR_OWNER, self::subject_noun( $field ) ], $server, $filters['filter'], $filters['bucket'], $now, self::RECENT_REQUEST_LIMIT );
 		$filters['bucket'] = $detail['bucket'];
 		return Ask_Assembler::for_url(
+			$field,
 			$detail['stats'],
 			self::url_requests( $detail['listed'] ),
 			$detail['requests_capped'],
@@ -599,33 +613,34 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `request:` brief. Picked inside the URL modal, the chain names the
-	 * URL too, and the brief carries a pointer to it.
+	 * The `request:` brief. Picked inside a URL's or a page's window, the
+	 * chain names that subject too, and the brief carries a pointer to it.
 	 *
 	 * @param string       $rid     Request id the descriptor names.
 	 * @param list<Context_Entry> $context The parsed containers, outermost last.
-	 * @param string       $server  Server the modal is scoped to; rides the URL pointer.
+	 * @param string       $server  Server the modal is scoped to; rides the subject's pointer.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no row names the rid, or the rows did not open.
 	 */
 	private static function ask_request( string $rid, array $context, string $server ): array {
-		$record = self::load_request( $rid );
-		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), self::descriptor_of( $context, 'url' ), $server );
+		$record  = self::load_request( $rid );
+		$subject = self::subject_in_context( $context );
+		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), null === $subject ? [] : [ $subject['type'] => $subject['id'] ], $server );
 	}
 
 	/**
 	 * The `span:` brief. A span is not addressable on its own — it needs the
 	 * tree it sits in, which the descriptor chain supplies: the request it ran
-	 * in, or the URL whose aggregate flame folds it, rebuilt from the flames
-	 * of its newest requests over the chart's buckets, on the server the
-	 * modal is scoped to.
+	 * in, or the URL or page whose aggregate flame folds it, rebuilt from the
+	 * flames of its newest requests over the chart's buckets, on the server
+	 * the window is scoped to.
 	 *
 	 * @param string       $name    Span name the descriptor carries.
 	 * @param list<Context_Entry> $context The parsed containers, outermost last.
 	 * @param string       $server  Server the URL modal is scoped to; '' is every server.
 	 * @param int          $now     The reply's clock.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException With neither context, an unknown URL, no flame to read, or an absent span.
+	 * @throws \RuntimeException With no context, an unknown URL or page, no flame to read, or an absent span.
 	 */
 	private static function ask_span( string $name, array $context, string $server, int $now ): array {
 		$record = self::request_in_context( $context );
@@ -637,33 +652,36 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			return $brief;
 		}
-		$url = self::context_entry( $context, 'url' );
-		if ( null === $url ) {
-			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
+		$subject = self::subject_in_context( $context );
+		if ( null === $subject ) {
+			throw new \RuntimeException( \esc_html( 'a span needs its request, its URL or its page for context' ) );
 		}
-		$detail = self::url_detail( $url['id'], $server, [], '', $now, self::FLAME_REQUEST_LIMIT );
+		$noun   = self::subject_noun( $subject['type'] );
+		$detail = self::subject_detail( $subject['type'], $subject['id'], [ self::DESCRIPTOR_OWNER, $noun ], $server, [], '', $now, self::FLAME_REQUEST_LIMIT );
 		if ( ! $detail['available'] ) {
-			throw self::stats_outage( "no aggregate for URL {$url['id']}" );
+			throw self::stats_outage( "no aggregate for {$noun} {$subject['id']}" );
 		}
-		$flame = self::url_flame( $detail['listed'] ) ?? throw new \RuntimeException( \esc_html( "no aggregate for URL {$url['id']}: its flame rebuild ran out of time" ) );
+		$flame = self::subject_flame( $detail['listed'] ) ?? throw new \RuntimeException( \esc_html( "no aggregate for {$noun} {$subject['id']}: its flame rebuild ran out of time" ) );
 		$named = $detail['stats']['url'];
-		$brief = Ask_Assembler::for_url_span( $flame, $name, $named, Rule_Set::load()->for_url( $named ), $url['descriptor'], $server );
+		$brief = Ask_Assembler::for_url_span( $flame, $name, $named, Rule_Set::load()->for_url( $named ), $subject['descriptor'], $server );
 		if ( null === $brief ) {
-			throw new \RuntimeException( \esc_html( "no span '{$name}' in this URL's aggregate" ) );
+			throw new \RuntimeException( \esc_html( "no span '{$name}' in this {$noun}'s aggregate" ) );
 		}
 		return $brief;
 	}
 
 	/**
-	 * One URL over a selection's buckets, or the chart's: its stats and the
-	 * rows of its newest `$limit` requests, worker traffic counted, which
-	 * `url_requests()` shapes as `dump_url` lists them and `url_flame()` reads
+	 * One subject over a selection's buckets, or the chart's: its stats and
+	 * the rows of its newest `$limit` requests, worker traffic counted, which
+	 * `url_requests()` shapes as `dump_url` lists them and `subject_flame()` reads
 	 * each request's partition off, and whether the list holds fewer than the
 	 * stats count. A filter narrows the stats and the list together, and a
 	 * filter on `worker` replaces the scope's. A stats file that will not
 	 * open answers zero stats and no list, `available` false (decision 3).
 	 *
-	 * @param string       $hash     12-char URL hash.
+	 * @param string       $field    A `SUBJECTS` field, the one the reads key on.
+	 * @param string       $hash     The hash it names.
+	 * @param array{0:string,1:string} $owner What owns `$field` for the caller and the noun it names, which a refusal points to.
 	 * @param string       $server   Server to scope to; '' is every server.
 	 * @param list<string> $tokens   `field=value` filter tokens.
 	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
@@ -673,19 +691,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
-	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now, int $limit ): array {
+	private static function subject_detail( string $field, string $hash, array $owner, string $server, array $tokens, string $spelling, int $now, int $limit ): array {
 		$buckets = self::buckets_of( $spelling, $now );
-		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens, self::ONE_URL_OWNERS ) + self::scope( $server, true );
+		$filter  = [ $field => [ $hash ] ] + self::url_filter_of( $tokens, self::URL_SET_OWNERS + [ $field => $owner ] ) + self::scope( $server, true );
 		$answer  = Stats_Query::run(
 			[
 				'source'  => 'requests',
-				'group'   => [ 'url' ],
+				'group'   => [ $field ],
 				'filter'  => $filter,
 				'measure' => [ ...self::URL_MEASURES, ...self::URL_DETAIL_EXTRAS ],
 				'buckets' => $buckets,
 			]
 		);
-		$stats  = self::url_stats( $hash, $server, $answer, $buckets, $now );
+		$stats  = self::subject_stats( $field, $hash, $server, $answer, $buckets, $now );
 		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter, $buckets, $limit ) : [];
 		return [
 			'stats'           => $stats,
@@ -698,24 +716,26 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A URL's stats out of its `url`-grouped `URL_MEASURES` answer, as the
-	 * `urls` row carries them, with its rate over the seconds the buckets
-	 * have run. A URL with no request there answers zero, its means and
-	 * extremes null, named by `url_name()` on its server alone, so a filter
-	 * matching none of its requests answers zero rather than not-found.
+	 * A subject's stats out of its `$field`-grouped `URL_MEASURES` answer, as
+	 * the `urls` row carries them, named by `row_name()`, with its rate over
+	 * the seconds the buckets have run. One with no request there answers
+	 * zero, its means and extremes null, named by `subject_name()` on its
+	 * server alone, so a filter matching none of its requests answers zero
+	 * rather than not-found.
 	 *
-	 * @param string                                                                   $hash    12-char URL hash.
-	 * @param string                                                                   $server  Server the URL is named on; '' is every server.
-	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool} $answer  The URL's answer over `$buckets`.
+	 * @param string                                                                   $field   A `SUBJECTS` field, the one the answer is grouped by.
+	 * @param string                                                                   $hash    The hash it names.
+	 * @param string                                                                   $server  Server it is named on; '' is every server.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool} $answer  Its answer over `$buckets`.
 	 * @param list<array{0:int,1:int}>                                                 $buckets The buckets read.
 	 * @param int                                                                      $now     The reply's clock.
 	 * @return array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}
 	 * @throws \RuntimeException When no request row names the hash.
 	 */
-	private static function url_stats( string $hash, string $server, array $answer, array $buckets, int $now ): array {
-		$rows = self::url_rows( $answer );
-		$row  = [] !== $rows ? $rows[0] : [
-			'url'          => $answer['available'] ? self::url_name( $hash, $server, $now ) : '',
+	private static function subject_stats( string $field, string $hash, string $server, array $answer, array $buckets, int $now ): array {
+		$found = [] === $answer['rows'] ? null : \array_combine( $answer['columns'], $answer['rows'][0] );
+		$row   = null !== $found ? [ 'url' => self::row_name( $field, $found ) ] + self::measured( $found ) : [
+			'url'          => $answer['available'] ? self::subject_name( $field, $hash, $server, $now ) : '',
 			'count'        => 0,
 			'avg_ms'       => null,
 			'min_ms'       => null,
@@ -726,8 +746,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			'errors'       => 0,
 		];
 		$extra = \array_fill_keys( self::URL_DETAIL_EXTRAS, null );
-		if ( [] !== $rows ) {
-			$extra = \array_intersect_key( \array_combine( $answer['columns'], $answer['rows'][0] ), $extra );
+		if ( null !== $found ) {
+			$extra = \array_intersect_key( $found, $extra );
 		}
 		return [
 			'hash'                => $hash,
@@ -813,11 +833,12 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `category:` brief. A breakdown row inside a request shows THAT
-	 * request's profile, and one inside the URL modal shows that URL's
-	 * profile on the modal's server, so the context chain decides which board
-	 * answers — the global leaderboard describes a different thing entirely.
+	 * request's profile, and one inside a URL's or a page's window shows that
+	 * subject's profile on the window's server, so the context chain decides
+	 * which board answers — the global leaderboard describes a different
+	 * thing entirely.
 	 *
-	 * A URL with no profile answers from the scoped leaderboard.
+	 * A subject with no profile answers from the scoped leaderboard.
 	 *
 	 * @param string       $name    Category name the descriptor carries.
 	 * @param list<Context_Entry> $context The parsed containers, outermost last.
@@ -825,7 +846,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *                              fallback answer for; '' is every server.
 	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When no board holds the category, the name is a callback row, or a URL's stats did not open or name it.
+	 * @throws \RuntimeException When no board holds the category, the name is a callback row, or a subject's stats did not open or name it.
 	 */
 	private static function ask_category( string $name, array $context, string $server, int $now ): array {
 		// A callback row is not a board; its time counts inside its hook.
@@ -839,14 +860,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$url = self::context_entry( $context, 'url' );
-		if ( null !== $url ) {
+		$subject = self::subject_in_context( $context );
+		if ( null !== $subject ) {
 			$scope = self::scope( $server, true );
-			$named = self::url_name( $url['id'], $server, $now );
+			$named = self::subject_name( $subject['type'], $subject['id'], $server, $now );
 			if ( '' === $named ) {
-				throw self::stats_outage( "no aggregate for URL {$url['id']}" );
+				throw self::stats_outage( 'no aggregate for ' . self::subject_noun( $subject['type'] ) . " {$subject['id']}" );
 			}
-			$profile = self::url_profile( $url['id'], $scope, Bucket::last( Stats_Query::retention( 'timings' ), $now ), $now );
+			$profile = self::subject_profile( $subject['type'], $subject['id'], $scope, Bucket::last( Stats_Query::retention( 'timings' ), $now ), $now );
 			$brief   = null === $profile ? null : Ask_Assembler::for_url_category( $profile, $name, $named, $server );
 			if ( null !== $brief ) {
 				return $brief;
@@ -861,22 +882,24 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The URL a request row on `$server` in the buckets the rows keep names
-	 * `$hash` by, server and path joined, worker traffic counted; '' when the
-	 * stats file will not open, which means no stats rather than no URL
-	 * (decision 3). No filter narrows it: a URL exists or it does not.
+	 * The name `row_name()` gives the subject a request row on `$server` in
+	 * the buckets the rows keep keys `$field` to `$hash`, worker traffic
+	 * counted; '' when the stats file will not open, which means no stats
+	 * rather than no subject (decision 3). No filter narrows it: a subject
+	 * exists or it does not.
 	 *
-	 * @param string $hash   12-char URL hash.
+	 * @param string $field  A `SUBJECTS` field, the one the hash is of.
+	 * @param string $hash   The hash it names.
 	 * @param string $server Server to scope to; '' is every server.
 	 * @param int    $now    The reply's clock.
 	 * @throws \RuntimeException When the rows open and none names it.
 	 */
-	private static function url_name( string $hash, string $server, int $now ): string {
+	private static function subject_name( string $field, string $hash, string $server, int $now ): string {
 		$answer = Stats_Query::run(
 			[
 				'source'  => 'requests',
-				'group'   => [ 'url' ],
-				'filter'  => [ 'url' => [ $hash ] ] + self::scope( $server, true ),
+				'group'   => [ $field ],
+				'filter'  => [ $field => [ $hash ] ] + self::scope( $server, true ),
 				'measure' => [ 'count' ],
 				'buckets' => Bucket::last( Stats_Query::retention( 'requests' ), $now ),
 			]
@@ -885,28 +908,53 @@ class Performance_CI_Node extends Service_CI_Node {
 			return '';
 		}
 		if ( [] === $answer['rows'] ) {
-			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
+			throw new \RuntimeException( \esc_html( \ucfirst( self::subject_noun( $field ) ) . " not found: {$hash}" ) );
 		}
-		return Core::as_string( \array_combine( $answer['columns'], $answer['rows'][0] )['url_name'] );
+		return self::row_name( $field, \array_combine( $answer['columns'], $answer['rows'][0] ) );
 	}
 
 	/**
-	 * A URL's category profile over `$buckets`, in the leaderboard's shape,
-	 * or null over no profiled request.
+	 * The name a `$field`-grouped row shows its subject by: a URL's own,
+	 * server and path joined, and a page's as `page_url()` spells it.
 	 *
-	 * @param string                     $hash    12-char URL hash.
+	 * @param string              $field A `SUBJECTS` field, the one grouped by.
+	 * @param array<string,mixed> $row   The row by column.
+	 * @throws \UnhandledMatchError On a field naming no subject.
+	 */
+	private static function row_name( string $field, array $row ): string {
+		return match ( $field ) {
+			'url'  => Core::as_string( $row['url_name'] ),
+			'page' => self::page_url( $row['page_name'] ),
+		};
+	}
+
+	/**
+	 * The noun a window keyed on `$field` names its subject by.
+	 *
+	 * @param string $field A `SUBJECTS` field.
+	 */
+	private static function subject_noun( string $field ): string {
+		return self::SUBJECTS[ $field ][1];
+	}
+
+	/**
+	 * A subject's category profile over `$buckets`, in the leaderboard's
+	 * shape, or null over no profiled request.
+	 *
+	 * @param string                     $field   A `SUBJECTS` field, the one the hash is of.
+	 * @param string                     $hash    The hash it names.
 	 * @param array<string,list<scalar>> $scope   The server scope; worker traffic counts.
 	 * @param list<array{0:int,1:int}>   $buckets The buckets read.
 	 * @param int                        $now     The reply's clock.
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}|null
 	 */
-	private static function url_profile( string $hash, array $scope, array $buckets, int $now ): ?array {
-		$board = self::leaderboard( $scope + [ 'url' => [ $hash ] ], $buckets, $now );
+	private static function subject_profile( string $field, string $hash, array $scope, array $buckets, int $now ): ?array {
+		$board = self::leaderboard( $scope + [ $field => [ $hash ] ], $buckets, $now );
 		return 0 === $board['count'] ? null : $board;
 	}
 
 	/**
-	 * A URL's aggregate flame, folded from the flames its newest
+	 * A subject's aggregate flame, folded from the flames its newest
 	 * FLAME_REQUEST_LIMIT listed requests stored, in the display shape: the
 	 * empty tree over no stored flame.
 	 *
@@ -915,14 +963,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * since a flame lands in the partition its request did, and each is
 	 * folded as the builder folds it, its timing counted where its duration
 	 * is. The lookups share MAX_SCAN_S, and one it cuts answers null, because
-	 * a partial fold would read as the URL's whole flame. A
+	 * a partial fold would read as the subject's whole flame. A
 	 * stored flame has lost the suffixes that hold a request's same-named
 	 * siblings apart, so those merge into one node here.
 	 *
-	 * @param list<array<string,mixed>> $listed The listed rows, as `url_detail()` keeps them.
+	 * @param list<array<string,mixed>> $listed The listed rows, as `subject_detail()` keeps them.
 	 * @return array<array-key,mixed>|null
 	 */
-	private static function url_flame( array $listed ): ?array {
+	private static function subject_flame( array $listed ): ?array {
 		$listed    = \array_slice( $listed, 0, self::FLAME_REQUEST_LIMIT );
 		$durations = [];
 		$since     = [];
@@ -1028,17 +1076,28 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The first container of a given type in a context chain — for a span or
-	 * a category picked inside the URL modal, the `url:` the chain names
-	 * beside no request — or null when it names none.
+	 * The `SUBJECTS` container a context chain names — for a span or a
+	 * category picked inside a window, the `url:` or `page:` beside no
+	 * request — or null when it names none.
 	 *
 	 * @param list<Context_Entry> $context The parsed containers.
-	 * @param string              $type    Descriptor type to look for.
 	 * @return Context_Entry|null
 	 */
-	private static function context_entry( array $context, string $type ): ?array {
+	private static function subject_in_context( array $context ): ?array {
+		return self::context_entry( $context, ...\array_keys( self::SUBJECTS ) );
+	}
+
+	/**
+	 * The first container of any of the given types in a context chain, or
+	 * null when it names none.
+	 *
+	 * @param list<Context_Entry> $context The parsed containers.
+	 * @param string              ...$types Descriptor types to look for.
+	 * @return Context_Entry|null
+	 */
+	private static function context_entry( array $context, string ...$types ): ?array {
 		foreach ( $context as $entry ) {
-			if ( $type === $entry['type'] ) {
+			if ( \in_array( $entry['type'], $types, true ) ) {
 				return $entry;
 			}
 		}
@@ -1811,7 +1870,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a filter `url_filter_of()` refuses.
 	 */
 	private static function url_set( string $page, string $server, array $filters, int $now ): array {
-		$filter  = self::url_filter_of( $filters['filter'], '' === $page ? self::URL_SET_OWNERS : self::URL_SET_OWNERS + self::PAGE_OWNER );
+		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS + ( '' === $page ? [] : [ 'page' => self::SUBJECTS['page'] ] ) );
 		$filter += '' === $page ? [] : [ 'page' => [ $page ] ];
 		$filter += self::scope( $server, $filters['include_workers'] || \in_array( 'worker', Stats_Query::filtered( $filter ), true ) );
 		return [
@@ -2056,10 +2115,19 @@ class Performance_CI_Node extends Service_CI_Node {
 				'server'    => $row['server'],
 				'shapes'    => $row['shapes'],
 				'hash'      => $row['hash'],
-				'url'       => 1 === Core::num_int( $row['shapes'] ) ? $row['url_name'] : 'https://' . Core::as_string( $row['page_name'] ),
+				'url'       => 1 === Core::num_int( $row['shapes'] ) ? $row['url_name'] : self::page_url( $row['page_name'] ),
 			] + self::measured( $row );
 		}
 		return $rows;
+	}
+
+	/**
+	 * The name a page of several shapes shows: `https://` and the page.
+	 *
+	 * @param mixed $page_name A row's `page_name`, its lowercased host and path.
+	 */
+	private static function page_url( mixed $page_name ): string {
+		return 'https://' . Core::as_string( $page_name );
 	}
 
 	/**
@@ -2194,7 +2262,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * lists is refused, naming its owner.
 	 *
 	 * @param list<string>                                 $tokens The filter tokens.
-	 * @param array<string,array{0:string,1:string}> $owners `URL_SET_OWNERS` or `ONE_URL_OWNERS`.
+	 * @param array<string,array{0:string,1:string}> $owners `URL_SET_OWNERS`, plus the subject's field and its owner where an arg or a descriptor names one.
 	 * @return array<string,list<string>>
 	 * @throws \InvalidArgumentException On a token `filter_of()` refuses, or one naming an owned field.
 	 */
@@ -2397,7 +2465,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ],
+						[ 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ] + self::PAGE_ARG,
 						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most ' . $span . ' buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last ' . $span . '. `filters.bucket` echoes the canonical spelling.' ],
@@ -2427,15 +2495,21 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the `bucket` selection or, with none, the ' . $kept . ' buckets the timings keep, null over no profiled request; `aggregate_owners` follows the same selection. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
+					'description' => 'One URL, named by `--url=<hash>` or first by position, or every shape of one page, named by `--page=<page hash>`, from its request rows, worker traffic counted; exactly one of the two is named, and both or neither is refused. A page answers the same shape as a URL, every read keyed on its page: `stats.hash` is the page hash, `stats.url` the name a `urls` page row of several shapes shows, `https://` and the page, and an unknown page is `Page not found`. Its `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the `bucket` selection or, with none, the ' . $kept . ' buckets the timings keep, null over no profiled request; `aggregate_owners` follows the same selection. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list; a filter naming `url` is refused beside `--url`, and one naming `page` beside `--page`. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL, or to the page by `page=`.',
 					'args'        => [
-						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'url', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A URL\'s hash: answers that URL. It owns the url field, so a `url=` or `url!=` filter beside it is refused. Refused beside `page`.' ],
+						[ 'description' => 'A page\'s hash, `page_hash`: answers every shape of that page in place of one URL. It owns the page field, so a `page=` or `page!=` filter beside it is refused. Refused beside `url`.' ] + self::PAGE_ARG,
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						self::FILTER_ARG,
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets, as `urls` takes it: the stats and the list become the requests completing in them, zero where the URL has none, and no flame is rebuilt from the list. A selection `urls` refuses is refused.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$hash = Core::as_string( $args['hash'] );
+				$url  = Core::as_string( $args['url'] );
+				$page = Core::as_string( $args['page'] );
+				if ( ( '' === $url ) === ( '' === $page ) ) {
+					throw new \RuntimeException( 'name one URL by --url or one page by --page, and not both' );
+				}
+				[ $field, $hash ] = '' === $url ? [ 'page', $page ] : [ 'url', $url ];
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
@@ -2447,18 +2521,18 @@ class Performance_CI_Node extends Service_CI_Node {
 				$tokens   = self::filter_tokens( $args['filter'] );
 				$spelling = Core::as_string( $args['bucket'] );
 				$now      = self::now();
-				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now, self::RECENT_REQUEST_LIMIT );
-				// A narrowed list's flame would not describe the URL.
+				$detail   = self::subject_detail( $field, $hash, self::SUBJECTS[ $field ], $server, $tokens, $spelling, $now, self::RECENT_REQUEST_LIMIT );
+				// A narrowed list's flame would not describe the subject.
 				$rebuilt = $detail['available'] && [] === $tokens && '' === $spelling;
-				$flame   = $rebuilt ? self::url_flame( $detail['listed'] ) : null;
+				$flame   = $rebuilt ? self::subject_flame( $detail['listed'] ) : null;
 				return [
 					'stats'              => $detail['stats'],
 					'requests'           => self::url_requests( $detail['listed'] ),
 					'requests_capped'    => $detail['requests_capped'],
 					'aggregate_flame'    => $flame,
 					'flame_cut'          => $rebuilt && null === $flame,
-					'aggregate_profiles' => self::url_profile( $hash, self::scope( $server, true ), '' === $spelling ? Bucket::last( Stats_Query::retention( 'timings' ), $now ) : $detail['buckets'], $now ),
-					'aggregate_owners'   => self::owner_board( self::scope( $server, true ) + [ 'url' => [ $hash ] ], '' === $spelling ? Bucket::last( Stats_Query::retention( 'owners' ), $now ) : $detail['buckets'], $now ),
+					'aggregate_profiles' => self::subject_profile( $field, $hash, self::scope( $server, true ), '' === $spelling ? Bucket::last( Stats_Query::retention( 'timings' ), $now ) : $detail['buckets'], $now ),
+					'aggregate_owners'   => self::owner_board( self::scope( $server, true ) + [ $field => [ $hash ] ], '' === $spelling ? Bucket::last( Stats_Query::retention( 'owners' ), $now ) : $detail['buckets'], $now ),
 				];
 					},
 				],
@@ -2516,17 +2590,17 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'ask',
 					'capability'  => Capabilities::READ,
-					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last. `filter` narrows an `overview:` and a `url:` brief as `urls` and `dump_url` narrow them, and `bucket` to a selection of stored buckets.',
+					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last. `page:<page hash>` briefs every shape of a page as `url:<hash>` briefs one URL, and a `span:` or `category:` under either answers from its aggregate. `filter` narrows an `overview:`, a `url:` and a `page:` brief as `urls` and `dump_url` narrow them, and `bucket` to a selection of stored buckets.',
 					'args'        => [
 						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
 						// The trailing descriptors, or `--context=` repeated.
 						[ 'name' => 'context', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						// Overview briefs read all four; URL briefs two.
+						// overview: reads all four; url: and page: two.
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'Narrows an `overview:` brief to a selection of buckets as `urls` narrows it, and a `url:` brief as `dump_url` does, to the requests completing inside them, the brief carrying the canonical spelling. Every other descriptor ignores it, and neither checks nor refuses it.' ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'Narrows an `overview:` brief to a selection of buckets as `urls` narrows it, and a `url:` or `page:` brief as `dump_url` does, to the requests completing inside them, the brief carrying the canonical spelling. Every other descriptor ignores it, and neither checks nor refuses it.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				return self::assemble_ask(

@@ -39,7 +39,8 @@ import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
 import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
 import FindingList from './FindingList';
 import { GROUPS } from '../constants';
-import { filterTokens, withoutUrlChips } from '../chartSlots';
+import { filterTokens, withoutChips } from '../chartSlots';
+import { SUBJECT_PARAMS } from '../detailSubject';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -48,11 +49,11 @@ import { filterTokens, withoutUrlChips } from '../chartSlots';
  * assembles the brief. Nothing is shaped here; <AskPanel> renders what arrives.
  *
  * Every ask carries the dashboard's server filter, and the assembler applies it
- * where a server can narrow the answer: a `url:` brief, a `category:` brief
- * from the leaderboard, and the URL pointer a request picked under a URL
- * carries. A span or category inside the URL modal answers from the URL's
- * aggregate, which covers every server; a request, and anything inside it, one
- * server already served.
+ * where a server can narrow the answer: a `url:` or `page:` brief, a
+ * `category:` brief from the leaderboard, and the URL pointer a request picked
+ * under a URL carries. A span or category inside the detail modal answers
+ * from its URL's or page's aggregate, which covers every server; a request,
+ * and anything inside it, one server already served.
  *
  * @param {Object}   options
  * @param {Function} [options.onError]      Called with a message when an ask fails.
@@ -69,7 +70,8 @@ import { filterTokens, withoutUrlChips } from '../chartSlots';
  *                                          `filter` token goes out as its own
  *                                          `--filter=`, but a `url=` chip
  *                                          under a `url:` pick, which names
- *                                          its URL by hash.
+ *                                          its URL by hash, and a `page=`
+ *                                          chip under a `page:` pick.
  * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
  *   The mode and what it gathered: `start` and `cancel` arm and disarm the
  *   picker, `briefs` holds one assembled reply per standing pick, in pick order,
@@ -137,6 +139,7 @@ export function useAsk( {
 			// filters names a server the table is not showing yet.
 			const server = urlFilters?.server ?? serverFilter;
 			const chips = urlFilters?.filter ?? [];
+			const [ field ] = descriptors[ 0 ].split( ':' );
 			ask( [
 				...formatCommandArgs( descriptors, {
 					...( server ? { server } : {} ),
@@ -150,10 +153,10 @@ export function useAsk( {
 						? { bucket: urlFilters.bucket }
 						: {} ),
 				} ),
-				// A `url:` brief is one URL, whose hash owns the `url` field.
+				// A `url:` or `page:` brief's hash owns its own field.
 				...filterTokens(
-					descriptors[ 0 ].startsWith( 'url:' )
-						? withoutUrlChips( chips )
+					Object.hasOwn( SUBJECT_PARAMS, field )
+						? withoutChips( chips, field )
 						: chips
 				),
 			] );

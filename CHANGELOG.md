@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A page of several shapes opens its own window.** Its row opened nothing and only expanded, so a page's folded figures were all a reader got: bangordailynews.com's home page folds 24,565 requests across its shapes, with no request list, flame, breakdown or owners for the page as a whole. Clicking the row, or Enter, now opens the URL window asked of every request on the page; a click on its caret, or ArrowRight and ArrowLeft on the row, expands and shuts it. `dump_url --page=<page hash>` answers it, `ask page:<page hash>` briefs it, and `?page_hash=` links to it, since `?page=` is the admin screen's slug. Nothing new is stored; every source already carries the page (decision 39, amended).
+
+### Changed
+- **`dump_url` names a URL by `url`, not `hash`.** Each subject field is now spelled by its own name, `--url=` and `--page=`, as the `url=` and `page=` filters and the `url:` and `page:` briefs already were. The argument stays first, so `dump_url <hash>` still works; an MCP caller passing `hash` by name must pass `url`, and a filter naming `url` beside it is refused as belonging to `--url`.
+- **A server-scoped read of one URL or page seeks that URL's rows.** With a server named, the `requests` read drove SQLite through `requests_server` and walked every row the server had in the window to find one URL's or page's: 22.9 ms a read for a 948-request page on a 228,840-row window, three reads a poll of an open window. A read filtered by `url` or `page` now joins the server through the unary plus, so the plan seeks `urls_page` or the URL, then `requests_url`: 0.22 ms. Server-wide reads keep the seeking join.
+
 ## [0.155.1] - 2026-10-23
 
 ### Changed

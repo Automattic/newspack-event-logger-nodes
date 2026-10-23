@@ -3,7 +3,7 @@
  * with the address bar and history stack.
  *
  * Behaviour covered:
- *   - bootstraps selectedUrl/selectedRequest from ?url= / ?request= on mount
+ *   - bootstraps selectedSubject/selectedRequest from ?url= / ?request= on mount
  *   - reports a ?url= / ?request= it cannot answer from the loaded page
  *   - pushes history entries when selection changes after mount
  *   - reacts to popstate (back/forward) to restore selection
@@ -54,11 +54,12 @@ describe( 'useUrlNavigation', () => {
 		);
 		await act( async () => {} );
 
-		expect( result.current.selectedUrl ).toEqual( {
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
 			hash: 'aaa',
 			url: '/foo',
 		} );
-		expect( result.current.deepLink.urlHash ).toBeNull();
+		expect( result.current.deepLink.subject ).toBeNull();
 		unmount();
 	} );
 
@@ -69,8 +70,11 @@ describe( 'useUrlNavigation', () => {
 		);
 		await act( async () => {} );
 
-		expect( result.current.selectedUrl ).toBeNull();
-		expect( result.current.deepLink.urlHash ).toBe( 'notinpage' );
+		expect( result.current.selectedSubject ).toBeNull();
+		expect( result.current.deepLink.subject ).toEqual( {
+			field: 'url',
+			hash: 'notinpage',
+		} );
 		unmount();
 	} );
 
@@ -82,7 +86,7 @@ describe( 'useUrlNavigation', () => {
 		await act( async () => {} );
 
 		expect( result.current.deepLink.requestId ).toBe( 'abc123def4567890' );
-		expect( result.current.deepLink.urlHash ).toBeNull();
+		expect( result.current.deepLink.subject ).toBeNull();
 		unmount();
 	} );
 
@@ -94,10 +98,13 @@ describe( 'useUrlNavigation', () => {
 			useUrlNavigation( URLS )
 		);
 		await act( async () => {} );
-		expect( result.current.deepLink.urlHash ).toBe( 'notinpage' );
+		expect( result.current.deepLink.subject ).toEqual( {
+			field: 'url',
+			hash: 'notinpage',
+		} );
 
 		act( () => result.current.clearDeepLink() );
-		expect( result.current.deepLink.urlHash ).toBeNull();
+		expect( result.current.deepLink.subject ).toBeNull();
 		unmount();
 	} );
 
@@ -105,19 +112,22 @@ describe( 'useUrlNavigation', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
-		expect( result.current.selectedUrl ).toBeNull();
+		expect( result.current.selectedSubject ).toBeNull();
 		expect( result.current.selectedRequest ).toBeNull();
-		expect( typeof result.current.selectUrl ).toBe( 'function' );
+		expect( typeof result.current.selectSubject ).toBe( 'function' );
 		expect( typeof result.current.selectRequest ).toBe( 'function' );
 		unmount();
 	} );
 
-	it( 'bootstraps selectedUrl from ?url= when found in the URLs list', () => {
+	it( 'bootstraps selectedSubject from ?url= when found in the URLs list', () => {
 		setLocation( 'http://localhost/wp-admin/?url=aaa' );
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
-		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...URLS[ 0 ],
+		} );
 		unmount();
 	} );
 
@@ -128,7 +138,10 @@ describe( 'useUrlNavigation', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
-		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...URLS[ 0 ],
+		} );
 		expect( result.current.selectedRequest ).toBeNull();
 		expect( result.current.deepLink.requestId ).toBe( 'req_123' );
 		unmount();
@@ -178,7 +191,7 @@ describe( 'useUrlNavigation', () => {
 		// First effect run is the mount; pushSpy should NOT fire yet.
 		expect( pushSpy ).not.toHaveBeenCalled();
 		act( () => {
-			result.current.selectUrl( URLS[ 1 ] );
+			result.current.selectSubject( { field: 'url', ...URLS[ 1 ] } );
 		} );
 		expect( pushSpy ).toHaveBeenCalled();
 		const [ , , newUrl ] = pushSpy.mock.calls[ 0 ];
@@ -191,13 +204,16 @@ describe( 'useUrlNavigation', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
-		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...URLS[ 0 ],
+		} );
 
 		setLocation( 'http://localhost/wp-admin/' );
 		act( () => {
 			window.dispatchEvent( new Event( 'popstate' ) );
 		} );
-		expect( result.current.selectedUrl ).toBeNull();
+		expect( result.current.selectedSubject ).toBeNull();
 		expect( result.current.selectedRequest ).toBeNull();
 		unmount();
 	} );
@@ -232,7 +248,10 @@ describe( 'useUrlNavigation', () => {
 			useUrlNavigation( paged )
 		);
 		await act( async () => {} );
-		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...paged[ 0 ],
+		} );
 
 		setLocation(
 			'http://localhost/wp-admin/?url=zeta7&request=q9kfwjrid42'
@@ -243,7 +262,10 @@ describe( 'useUrlNavigation', () => {
 
 		expect( result.current.selectedRequest ).toBeNull();
 		expect( result.current.deepLink.requestId ).toBe( 'q9kfwjrid42' );
-		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...paged[ 0 ],
+		} );
 		unmount();
 	} );
 
@@ -292,7 +314,10 @@ describe( 'useUrlNavigation', () => {
 		// Not-found is an answer: the rid drops, the hash gets its turn.
 		act( () => result.current.clearDeepLink( 'request' ) );
 		expect( result.current.deepLink.requestId ).toBeNull();
-		expect( result.current.deepLink.urlHash ).toBe( 'kappa9' );
+		expect( result.current.deepLink.subject ).toEqual( {
+			field: 'url',
+			hash: 'kappa9',
+		} );
 		unmount();
 	} );
 
@@ -313,8 +338,8 @@ describe( 'useUrlNavigation', () => {
 		} );
 
 		expect( result.current.deepLink.requestId ).toBeNull();
-		expect( result.current.deepLink.urlHash ).toBeNull();
-		expect( result.current.selectedUrl ).toBeNull();
+		expect( result.current.deepLink.subject ).toBeNull();
+		expect( result.current.selectedSubject ).toBeNull();
 		unmount();
 	} );
 
@@ -328,7 +353,10 @@ describe( 'useUrlNavigation', () => {
 		);
 		await act( async () => {} );
 
-		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...URLS[ 0 ],
+		} );
 		expect( result.current.deepLink.requestId ).toBe( 'req_9pk4tz' );
 		expect( pushSpy ).not.toHaveBeenCalled();
 		expect( window.location.search ).toContain( 'request=req_9pk4tz' );
@@ -346,7 +374,10 @@ describe( 'useUrlNavigation', () => {
 			useUrlNavigation( paged )
 		);
 		await act( async () => {} );
-		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...paged[ 0 ],
+		} );
 		pushSpy.mockClear();
 
 		// Forward into a request of the URL already open: the rid is reported
@@ -361,7 +392,7 @@ describe( 'useUrlNavigation', () => {
 
 		// The operator closes the modal before the resolver answers.
 		await act( async () => {
-			result.current.selectUrl( null );
+			result.current.selectSubject( null );
 		} );
 
 		expect( pushSpy ).toHaveBeenCalled();
@@ -379,15 +410,117 @@ describe( 'useUrlNavigation', () => {
 			useUrlNavigation( paged )
 		);
 		await act( async () => {} );
-		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			...paged[ 0 ],
+		} );
 
 		setLocation( 'http://localhost/wp-admin/?url=sigma88' );
 		await act( async () => {
 			window.dispatchEvent( new Event( 'popstate' ) );
 		} );
 
-		expect( result.current.selectedUrl ).toBeNull();
-		expect( result.current.deepLink.urlHash ).toBe( 'sigma88' );
+		expect( result.current.selectedSubject ).toBeNull();
+		expect( result.current.deepLink.subject ).toEqual( {
+			field: 'url',
+			hash: 'sigma88',
+		} );
+		unmount();
+	} );
+	// ── a page window ─────────────────────────────────────────────────────
+	//
+	// A page links as `?page_hash=`, since `?page=` names the admin screen.
+
+	const PAGED = [
+		{ hash: 'aaa', url: '/foo' },
+		{
+			page_hash: 'beadfeed4401',
+			page: 'takahe-4401.example/',
+			server: 'takahe-4401.example',
+			shapes: 2,
+			hash: null,
+			url: 'https://takahe-4401.example/',
+		},
+	];
+	const PAGE_SUBJECT = {
+		field: 'page',
+		hash: 'beadfeed4401',
+		url: 'https://takahe-4401.example/',
+	};
+
+	it( 'opens the page window a ?page_hash= names when its row is loaded', async () => {
+		setLocation(
+			'http://localhost/wp-admin/admin.php?page=perf&page_hash=beadfeed4401'
+		);
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( PAGED )
+		);
+		await act( async () => {} );
+
+		expect( result.current.selectedSubject ).toEqual( PAGE_SUBJECT );
+		expect( result.current.deepLink.subject ).toBeNull();
+		expect( pushSpy ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'reports a ?page_hash= the loaded rows cannot answer', async () => {
+		setLocation(
+			'http://localhost/wp-admin/admin.php?page=perf&page_hash=beadfeed4402'
+		);
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( PAGED )
+		);
+		await act( async () => {} );
+
+		expect( result.current.selectedSubject ).toBeNull();
+		expect( result.current.deepLink.subject ).toEqual( {
+			field: 'page',
+			hash: 'beadfeed4402',
+		} );
+		unmount();
+	} );
+
+	it( 'writes a page window as ?page_hash=, and closing it drops the param', () => {
+		setLocation( 'http://localhost/wp-admin/admin.php?page=perf&url=aaa' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( PAGED )
+		);
+		pushSpy.mockImplementation( ( state, title, url ) =>
+			window.history.replaceState( state, title, url )
+		);
+
+		act( () => result.current.selectSubject( PAGE_SUBJECT ) );
+		let query = new URLSearchParams( window.location.search );
+		expect( query.get( 'page_hash' ) ).toBe( 'beadfeed4401' );
+		expect( query.get( 'url' ) ).toBeNull();
+		expect( query.get( 'page' ) ).toBe( 'perf' );
+
+		act( () => result.current.selectSubject( null ) );
+		query = new URLSearchParams( window.location.search );
+		expect( query.get( 'page_hash' ) ).toBeNull();
+		expect( query.get( 'page' ) ).toBe( 'perf' );
+		unmount();
+	} );
+
+	it( 'walks Back from a page window to the URL window it left', async () => {
+		setLocation(
+			'http://localhost/wp-admin/admin.php?page=perf&page_hash=beadfeed4401'
+		);
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( PAGED )
+		);
+		await act( async () => {} );
+		expect( result.current.selectedSubject ).toEqual( PAGE_SUBJECT );
+
+		setLocation( 'http://localhost/wp-admin/admin.php?page=perf&url=aaa' );
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			hash: 'aaa',
+			url: '/foo',
+		} );
 		unmount();
 	} );
 } );

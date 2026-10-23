@@ -23,6 +23,7 @@ jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import UrlTable from '../UrlTable';
+import { subjectOfRow } from '../detailSubject';
 import { views } from '../nodes/register';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import { slotsEndingAt } from '../../test-helpers/chartWire';
@@ -87,7 +88,7 @@ beforeEach( () => {
 function mount( overrides = {} ) {
 	const props = {
 		urls: URLS,
-		selectedUrl: null,
+		selectedSubject: null,
 		onSelect: jest.fn(),
 		onParamsChange: jest.fn(),
 		totalRows: 3,
@@ -158,7 +159,7 @@ describe( 'UrlTable', () => {
 		const onParamsChange = jest.fn();
 		const props = {
 			urls: URLS,
-			selectedUrl: null,
+			selectedSubject: null,
 			onSelect: jest.fn(),
 			onParamsChange,
 			totalRows: 800,
@@ -483,11 +484,12 @@ describe( 'UrlTable', () => {
 
 	it( 'shows keyboard selection with the canonical selected-row state', () => {
 		function KeyboardSelectionHarness() {
-			const [ selectedUrl, setSelectedUrl ] = React.useState( null );
+			const [ selectedSubject, setSelectedSubject ] =
+				React.useState( null );
 			return React.createElement( UrlTable, {
 				urls: URLS,
-				selectedUrl,
-				onSelect: setSelectedUrl,
+				selectedSubject,
+				onSelect: ( row ) => setSelectedSubject( subjectOfRow( row ) ),
 				onParamsChange: jest.fn(),
 				totalRows: 3,
 			} );
@@ -511,6 +513,61 @@ describe( 'UrlTable', () => {
 		} );
 		expect( row.classList.contains( 'is-selected' ) ).toBe( true );
 		expect( row.classList.contains( 'selected' ) ).toBe( false );
+		unmount();
+	} );
+
+	// @longform UrlRow is memoized so one row's change repaints that row
+	// alone: a row reads its bar field each time it renders, so the count of
+	// those reads on a row the selection never touched is its render count.
+	it( 'a selection change re-renders only the rows it selects or leaves', () => {
+		let barReads = 0;
+		const untouched = { ...URLS[ 2 ] };
+		const avgMs = untouched.avg_ms;
+		Object.defineProperty( untouched, 'avg_ms', {
+			enumerable: true,
+			get: () => {
+				barReads++;
+				return avgMs;
+			},
+		} );
+		const urls = [ URLS[ 0 ], URLS[ 1 ], untouched ];
+		const onParamsChange = jest.fn();
+		// Stable, as the dashboard's own `useCallback` handler is.
+		function SelectionHarness() {
+			const [ selectedSubject, setSelectedSubject ] =
+				React.useState( null );
+			const onSelect = React.useCallback(
+				( row ) => setSelectedSubject( subjectOfRow( row ) ),
+				[]
+			);
+			return React.createElement( UrlTable, {
+				urls,
+				selectedSubject,
+				onSelect,
+				onParamsChange,
+				totalRows: 3,
+			} );
+		}
+
+		const { container, unmount } = renderComponent(
+			React.createElement( SelectionHarness )
+		);
+		const rowOf = ( path ) =>
+			Array.from(
+				container.querySelectorAll( '.event-logger-table__row' )
+			).find( ( candidate ) => candidate.textContent.includes( path ) );
+		const settled = barReads;
+
+		act( () => rowOf( '/foo' ).click() );
+		act( () => rowOf( '/bar' ).click() );
+
+		expect( rowOf( '/bar' ).classList.contains( 'is-selected' ) ).toBe(
+			true
+		);
+		expect( rowOf( '/foo' ).classList.contains( 'is-selected' ) ).toBe(
+			false
+		);
+		expect( barReads ).toBe( settled );
 		unmount();
 	} );
 
@@ -1139,7 +1196,7 @@ describe( 'the address bar', () => {
 		const onParamsChange = jest.fn();
 		const props = {
 			urls: [],
-			selectedUrl: null,
+			selectedSubject: null,
 			onSelect: jest.fn(),
 			onParamsChange,
 			totalRows: null,
@@ -1308,6 +1365,13 @@ describe( 'pages and their shapes', () => {
 			);
 		} );
 
+	const keyDown = ( element, key ) =>
+		act( () => {
+			element.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key, bubbles: true } )
+			);
+		} );
+
 	it( 'renders a one-shape page as a leaf that opens its URL', () => {
 		const onSelect = jest.fn();
 		const onToggleExpand = jest.fn();
@@ -1325,6 +1389,7 @@ describe( 'pages and their shapes', () => {
 		expect( row.getAttribute( 'data-ask' ) ).toBe( 'url:d4a1e00c3381' );
 		expect( row.getAttribute( 'aria-expanded' ) ).toBeNull();
 		expect( row.querySelector( '.newspack-nodes-disclosure' ) ).toBeNull();
+		keyDown( row, 'ArrowRight' );
 		click( row );
 
 		expect( onSelect ).toHaveBeenCalledTimes( 1 );
@@ -1351,7 +1416,7 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
-	it( 'toggles a page of several shapes, opening no URL window', () => {
+	it( 'opens the page window of a page of several shapes from its row', () => {
 		const onSelect = jest.fn();
 		const onToggleExpand = jest.fn();
 		const { container, unmount } = mount( {
@@ -1362,18 +1427,106 @@ describe( 'pages and their shapes', () => {
 		} );
 
 		const [ row ] = rowsOf( container );
-		expect( row.getAttribute( 'aria-expanded' ) ).toBe( 'false' );
-		expect( row.getAttribute( 'data-ask' ) ).toBeNull();
-		const caret = row.querySelector( '.newspack-nodes-disclosure' );
-		expect( caret ).toBeTruthy();
-		click( caret );
+		expect( row.getAttribute( 'data-ask' ) ).toBe( 'page:b17e0a99c4d2' );
 		click( row );
+		keyDown( row, 'Enter' );
+		keyDown( row, ' ' );
 
-		expect( onToggleExpand.mock.calls ).toEqual( [
-			[ PIWAKAWAKA_KEY ],
-			[ PIWAKAWAKA_KEY ],
+		expect( onSelect.mock.calls ).toEqual( [
+			[ PIWAKAWAKA ],
+			[ PIWAKAWAKA ],
+			[ PIWAKAWAKA ],
 		] );
+		expect( onToggleExpand ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'expands a page from a caret click, the caret no control of its own', () => {
+		const onSelect = jest.fn();
+		const onToggleExpand = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			onSelect,
+			onToggleExpand,
+		} );
+
+		const [ row ] = rowsOf( container );
+		const caret = row.querySelector( '.newspack-nodes-disclosure' );
+		expect( caret.getAttribute( 'role' ) ).toBeNull();
+		expect( caret.getAttribute( 'tabindex' ) ).toBeNull();
+		expect( caret.getAttribute( 'aria-hidden' ) ).toBe( 'true' );
+		expect( row.querySelectorAll( '[role], [tabindex]' ) ).toHaveLength(
+			0
+		);
+		click( caret );
+
+		expect( onToggleExpand.mock.calls ).toEqual( [ [ PIWAKAWAKA_KEY ] ] );
 		expect( onSelect ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'expands a page row on ArrowRight and shuts it on ArrowLeft, as a tree row', () => {
+		const onSelect = jest.fn();
+		const onToggleExpand = jest.fn();
+		const props = {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			onSelect,
+			onToggleExpand,
+			onParamsChange: jest.fn(),
+		};
+		const { container, rerender, unmount } = mount( props );
+
+		const [ shut ] = rowsOf( container );
+		expect( shut.getAttribute( 'aria-expanded' ) ).toBe( 'false' );
+		keyDown( shut, 'ArrowLeft' );
+		expect( onToggleExpand ).not.toHaveBeenCalled();
+		keyDown( shut, 'ArrowRight' );
+		expect( onToggleExpand.mock.calls ).toEqual( [ [ PIWAKAWAKA_KEY ] ] );
+
+		rerender(
+			React.createElement( UrlTable, {
+				...props,
+				expanded: [ PIWAKAWAKA_KEY ],
+			} )
+		);
+		const [ open ] = rowsOf( container );
+		expect( open.getAttribute( 'aria-expanded' ) ).toBe( 'true' );
+		keyDown( open, 'ArrowRight' );
+		expect( onToggleExpand ).toHaveBeenCalledTimes( 1 );
+		keyDown( open, 'ArrowLeft' );
+		expect( onToggleExpand ).toHaveBeenCalledTimes( 2 );
+		expect( onSelect ).not.toHaveBeenCalled();
+
+		keyDown( open, 'Enter' );
+		expect( onSelect.mock.calls ).toEqual( [ [ PIWAKAWAKA ] ] );
+		expect( onToggleExpand ).toHaveBeenCalledTimes( 2 );
+		unmount();
+	} );
+
+	it( 'marks a page row selected by its page window, never a URL of its hash', () => {
+		const { container, rerender, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			selectedSubject: { field: 'page', hash: 'b17e0a99c4d2' },
+		} );
+		expect( container.querySelectorAll( '.is-selected' ) ).toHaveLength(
+			1
+		);
+
+		rerender(
+			React.createElement( UrlTable, {
+				urls: [ PIWAKAWAKA ],
+				selectedSubject: { field: 'url', hash: 'b17e0a99c4d2' },
+				onSelect: jest.fn(),
+				onParamsChange: jest.fn(),
+				totalRows: 1,
+			} )
+		);
+		expect( container.querySelectorAll( '.is-selected' ) ).toHaveLength(
+			0
+		);
 		unmount();
 	} );
 
@@ -1416,7 +1569,7 @@ describe( 'pages and their shapes', () => {
 			urls: [ PIWAKAWAKA ],
 			totalRows: 1,
 			expanded: [ PIWAKAWAKA_KEY ],
-			selectedUrl: { hash: 'a1c0ffee2002' },
+			selectedSubject: { field: 'url', hash: 'a1c0ffee2002' },
 		} );
 
 		const selected = container.querySelectorAll( '.is-selected' );
@@ -1446,7 +1599,7 @@ describe( 'pages and their shapes', () => {
 		rerender(
 			React.createElement( UrlTable, {
 				urls: [ PIWAKAWAKA ],
-				selectedUrl: null,
+				selectedSubject: null,
 				onSelect: jest.fn(),
 				onParamsChange: jest.fn(),
 				totalRows: 1,
@@ -1537,7 +1690,7 @@ describe( 'pages and their shapes', () => {
 		const onParamsChange = jest.fn();
 		const props = {
 			urls: [ { ...PIWAKAWAKA, shapes: 2400 } ],
-			selectedUrl: null,
+			selectedSubject: null,
 			onSelect: jest.fn(),
 			onParamsChange,
 			totalRows: 1,
@@ -1596,7 +1749,7 @@ describe( 'pages and their shapes', () => {
 			urls: [ RURU, PIWAKAWAKA ],
 			totalRows: 2,
 			expanded: [ PIWAKAWAKA_KEY ],
-			busy: 'd4a1e00c3381',
+			busy: { field: 'url', hash: 'd4a1e00c3381' },
 		} );
 
 		let busy = container.querySelectorAll( '[aria-busy="true"]' );
@@ -1608,12 +1761,12 @@ describe( 'pages and their shapes', () => {
 		rerender(
 			React.createElement( UrlTable, {
 				urls: [ RURU, PIWAKAWAKA ],
-				selectedUrl: null,
+				selectedSubject: null,
 				onSelect: jest.fn(),
 				onParamsChange: jest.fn(),
 				totalRows: 2,
 				expanded: [ PIWAKAWAKA_KEY ],
-				busy: 'a1c0ffee2002',
+				busy: { field: 'url', hash: 'a1c0ffee2002' },
 			} )
 		);
 		busy = container.querySelectorAll( '[aria-busy="true"]' );

@@ -73,6 +73,9 @@ function Harness( {
 			<span data-ask="url:/shop-7" id="other">
 				/shop-7
 			</span>
+			<span data-ask="page:3c0ffee5ab09" id="page">
+				/kereru-5509/
+			</span>
 			<span data-ask={ LONG_SPAN } id="long">
 				long span
 			</span>
@@ -236,6 +239,28 @@ test( 'a url pick leaves a url chip behind and carries the rest', () => {
 			'--filter=url=9f1c2e7a4b30',
 			'--filter=status_class=5',
 			'--filter=url=4d8e0b6c2a19',
+		],
+	] );
+} );
+
+// A `page:` brief is one page, whose hash owns the `page` field, so a `page=`
+// chip stays behind as a `url=` one does under a `url:` pick; a `url=` rides.
+test( 'a page pick leaves a page chip behind and carries the rest', () => {
+	render( {
+		urlFilters: {
+			filter: [ 'page=7e57ab1e5509', 'url=9f1c2e7a5509', 'method=PUT' ],
+		},
+	} );
+
+	pick( { id: 'page' } );
+
+	expect( sent ).toEqual( [
+		[
+			'page:3c0ffee5ab09',
+			'overview:site',
+			{},
+			'--filter=url=9f1c2e7a5509',
+			'--filter=method=PUT',
 		],
 	] );
 } );

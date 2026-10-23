@@ -67,7 +67,7 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 
 test( 'a selected URL names itself and what it is', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'aaa', url: '/slow' },
+		selectedSubject: { field: 'url', hash: 'aaa', url: '/slow' },
 		urlDetail: { stats: { count: 4, avg_ms: 900, max_ms: 2600 } },
 	} );
 
@@ -78,7 +78,7 @@ test( 'a selected URL names itself and what it is', () => {
 
 test( 'a selected URL nothing timed reached carries max_ms as unmeasured, not 0', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'moa', url: '/moa' },
+		selectedSubject: { field: 'url', hash: 'moa', url: '/moa' },
 		urlDetail: {
 			stats: {
 				count: 3,
@@ -101,7 +101,7 @@ test( 'a selected URL nothing timed reached carries max_ms as unmeasured, not 0'
 
 test( 'a URL names the chips its header and list were narrowed by, beside its stats', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'kea', url: '/kea' },
+		selectedSubject: { field: 'url', hash: 'kea', url: '/kea' },
 		urlDetail: {
 			stats: {
 				count: 4210,
@@ -129,7 +129,7 @@ test( 'a URL names the chips its header and list were narrowed by, beside its st
 
 test( 'a URL no chip narrows names an empty filter', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'kea', url: '/kea' },
+		selectedSubject: { field: 'url', hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 4210 } },
 	} );
 
@@ -139,7 +139,7 @@ test( 'a URL no chip narrows names an empty filter', () => {
 test( "a URL names the modal's own selection, beside the table's filters", () => {
 	const facts = pageFacts( {
 		urlFilters: { bucket: '2026-10-04-13-35,2026-10-04-14-00' },
-		selectedUrl: { hash: 'kea', url: '/kea' },
+		selectedSubject: { field: 'url', hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 17, avg_ms: 240, max_ms: 910 } },
 		detailFilters: {
 			bucket: '2026-10-04-13-40..2026-10-04-13-55',
@@ -153,7 +153,7 @@ test( "a URL names the modal's own selection, beside the table's filters", () =>
 
 test( 'a URL listing its whole window names no bucket', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'kea', url: '/kea' },
+		selectedSubject: { field: 'url', hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 4210 } },
 		detailFilters: { bucket: '' },
 	} );
@@ -163,7 +163,7 @@ test( 'a URL listing its whole window names no bucket', () => {
 
 test( 'a URL no timed request reached carries its mean as unmeasured', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'ccc', url: '/ruru-6603' },
+		selectedSubject: { field: 'url', hash: 'ccc', url: '/ruru-6603' },
 		urlDetail: { stats: { count: 6, avg_ms: null, max_ms: 0 } },
 	} );
 
@@ -191,7 +191,7 @@ test( 'a slowest row no timed request reached carries its mean as unmeasured', (
 
 test( 'a selected request wins over its URL, and carries its findings', () => {
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'aaa', url: '/slow' },
+		selectedSubject: { field: 'url', hash: 'aaa', url: '/slow' },
 		selectedRequest: 'rid-1',
 		requestDetail: {
 			duration_ms: 812,
@@ -225,7 +225,7 @@ test( 'every surface names what it is scoped to', () => {
 	// the provenance cannot live inside one branch — a reader that cannot see
 	// the screen has only this to go on.
 	const facts = pageFacts( {
-		selectedUrl: { hash: 'h1', url: '/foo' },
+		selectedSubject: { field: 'url', hash: 'h1', url: '/foo' },
 		urlDetail: { stats: { count: 12 } },
 		urlFilters: {
 			server: 'edge-01',
@@ -397,4 +397,44 @@ test( 'the slowest are pages, each named by its page, its server and its shapes'
 			count: 12,
 		},
 	] );
+} );
+
+test( 'a page window names itself as its page, shaped as a URL window is', () => {
+	const facts = pageFacts( {
+		selectedSubject: {
+			field: 'page',
+			hash: 'face5a1e8801',
+			url: 'https://karearea-8801.example/',
+		},
+		urlDetail: { stats: { count: 24565, avg_ms: 712, max_ms: 9100 } },
+		detailChips: [ 'url=0ddba11c8801' ],
+	} );
+
+	expect( facts.surface ).toBe( 'page' );
+	expect( facts.page ).toEqual( {
+		hash: 'face5a1e8801',
+		url: 'https://karearea-8801.example/',
+	} );
+	expect( facts ).not.toHaveProperty( 'url' );
+	expect( facts.filter ).toEqual( [ 'url=0ddba11c8801' ] );
+	expect( facts.stats.count ).toBe( 24565 );
+} );
+
+test( 'a request opened from a page window names the page it sits under', () => {
+	const facts = pageFacts( {
+		selectedSubject: {
+			field: 'page',
+			hash: 'face5a1e8801',
+			url: 'https://karearea-8801.example/',
+		},
+		selectedRequest: 'rid-karearea-8801',
+		requestDetail: { duration_ms: 1840, status_code: 503 },
+	} );
+
+	expect( facts.surface ).toBe( 'request' );
+	expect( facts.page ).toEqual( {
+		hash: 'face5a1e8801',
+		url: 'https://karearea-8801.example/',
+	} );
+	expect( facts ).not.toHaveProperty( 'url' );
 } );

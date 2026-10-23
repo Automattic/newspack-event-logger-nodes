@@ -12,6 +12,7 @@ import {
 	CHART_TOP,
 	FILTER_FIELD_OPTIONS,
 	SCOPED_BREAKDOWN_OPTIONS,
+	SUBJECT_CHIP_OPTIONS,
 } from '../constants';
 
 const STATS_QUERY = fs.readFileSync(
@@ -125,4 +126,20 @@ it( 'asks a chart for no more series than Stats_Query::MAX_TOP ranks', () => {
 
 	expect( max ).toBeTruthy();
 	expect( CHART_TOP ).toBe( Number( max[ 1 ] ) );
+} );
+
+describe( 'the chips a detail window offers', () => {
+	it( 'offers every chip field but the one its subject keys on', () => {
+		const values = ( field ) =>
+			SUBJECT_CHIP_OPTIONS[ field ].map( ( o ) => o.value );
+		const every = FILTER_FIELD_OPTIONS.map( ( o ) => o.value );
+
+		expect( values( 'url' ) ).toEqual(
+			every.filter( ( v ) => 'url' !== v )
+		);
+		expect( values( 'page' ) ).toEqual(
+			every.filter( ( v ) => 'page' !== v )
+		);
+		expect( values( 'page' ) ).toContain( 'url' );
+	} );
 } );

@@ -208,8 +208,8 @@ class McpControllerTest extends TestCase {
 		}
 		$owners = [
 			'performance_urls' => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns; `url=<hash>` keeps one URL.',
-			'dump_url'         => 'A filter cannot name `server`, which `server` owns, `bucket`, which `bucket` owns, or `url`, which `hash` owns.',
-			'performance_ask'  => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns, and under a `url:` brief cannot name `url`, which the descriptor\'s hash owns.',
+			'dump_url'         => 'A filter cannot name `server`, which `server` owns, `bucket`, which `bucket` owns, `url` beside `url`, which owns it, or `page` beside `page`, which owns it.',
+			'performance_ask'  => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns, and under a `url:` brief cannot name `url`, or under a `page:` brief `page`, which the descriptor\'s hash owns.',
 		];
 		foreach ( $owners as $tool => $owned ) {
 			$this->assertArrayNotHasKey( 'errors_only', $tools[ $tool ]['inputSchema']['properties'], $tool );
@@ -325,7 +325,6 @@ class McpControllerTest extends TestCase {
 		$tools = $this->tune_tools();
 
 		$required = [
-			'dump_url'        => [ 'hash' ],
 			'search_requests' => [ 'rid' ],
 			'dump_request'    => [ 'rid' ],
 			'grep_requests'   => [ 'pattern' ],
@@ -336,7 +335,8 @@ class McpControllerTest extends TestCase {
 		foreach ( $required as $name => $args ) {
 			$this->assertSame( $args, $tools[ $name ]['inputSchema']['required'] ?? null, $name );
 		}
-		foreach ( [ 'performance_overview', 'performance_urls', 'dump_rules' ] as $name ) {
+		// `dump_url` takes a URL or a page, and refuses both or neither itself.
+		foreach ( [ 'performance_overview', 'performance_urls', 'dump_url', 'dump_rules' ] as $name ) {
 			$this->assertArrayNotHasKey( 'required', $tools[ $name ]['inputSchema'], $name );
 		}
 	}
@@ -1021,7 +1021,7 @@ class McpControllerTest extends TestCase {
 					'jsonrpc' => '2.0',
 					'id'      => 8,
 					'method'  => 'tools/call',
-					'params'  => [ 'name' => 'dump_url', 'arguments' => [ 'hash' => 'not-a-hash' ] ],
+					'params'  => [ 'name' => 'dump_url', 'arguments' => [ 'url' => 'not-a-hash' ] ],
 				],
 				$bearer
 			)

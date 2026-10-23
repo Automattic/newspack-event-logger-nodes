@@ -20,10 +20,11 @@
  * selection and the pages the table expands also live in the address bar, as
  * `?server=`, `?metric=`, `?breakdown=`, `?then=`, one `?chip=` per chip,
  * `?bucket=` and one `?expand=` per page, so a shared link opens the same
- * view. While a URL modal is open, or a link is opening
- * one, its own controls ride there too under a `url_` prefix, as
+ * view. While a detail modal is open, on a URL or on a whole page, or a link
+ * is opening one, its own controls ride there too under a `url_` prefix, as
  * `docs/dashboards.md` lists. The component also runs every command whose
- * reply sets that state: the `?url=` and `?request=` deep-link resolvers, the
+ * reply sets that state: the `?url=` / `?page_hash=` and `?request=`
+ * deep-link resolvers, the
  * title lookup for a hash the loaded catalog page does not carry, the search
  * box's exact-rid lookup and its pattern search, and the ruleset reads and
  * writes behind "Log this URL". It renders the URL / request detail modal and
@@ -63,7 +64,7 @@ import {
 	GROUPS,
 	SCOPED_BREAKDOWN_OPTIONS,
 	SORT_ORDERS,
-	URL_CHIP_OPTIONS,
+	SUBJECT_CHIP_OPTIONS,
 	NO_PAGE_KEYS,
 	PAGE_KEY,
 	pageKey,
@@ -77,6 +78,14 @@ import {
 	NO_DETAIL_CHART,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
+import {
+	findSubject,
+	linkedSubject,
+	sameSubject,
+	subjectArgs,
+	subjectLink,
+	subjectOfRow,
+} from './detailSubject';
 import {
 	useQueryParamChoice,
 	useQueryParamList,
@@ -104,7 +113,7 @@ import {
 	activeChart,
 	answerSlots,
 	useBucketSelection,
-	withoutUrlChips,
+	withoutChips,
 } from './chartSlots';
 
 /**
@@ -378,7 +387,7 @@ export default function PerformanceDashboard( {
 	);
 
 	// Read, never depended on: these keep the callbacks below stable.
-	const selectUrlRef = useRef(
+	const selectSubjectRef = useRef(
 		/** @type {( url: Object|null ) => void} */ ( () => {} )
 	);
 	const selectRequestRef = useRef(
@@ -423,9 +432,9 @@ export default function PerformanceDashboard( {
 	} );
 
 	const {
-		selectedUrl,
+		selectedSubject,
 		selectedRequest,
-		selectUrl,
+		selectSubject,
 		selectRequest: baseSelectRequest,
 		initialSearchQuery,
 		setInitialSearchQuery,
@@ -433,10 +442,10 @@ export default function PerformanceDashboard( {
 		clearDeepLink,
 	} = useUrlNavigation( urls );
 
-	// The URL window's state, held here: the modal unmounts for every request.
+	// The window's state, held here: the modal unmounts for every request.
 	const windowOpen = !! (
-		selectedUrl ||
-		deepLink.urlHash ||
+		selectedSubject ||
+		deepLink.subject ||
 		deepLink.requestId
 	);
 	// The window's state stays off the bar while it is shut.
@@ -465,9 +474,14 @@ export default function PerformanceDashboard( {
 		NO_DETAIL_CHART.thenBy,
 		windowParam
 	);
+	// A linked window's chips are judged by the field its link keys on.
 	const [ detailChips, setDetailChips ] = useQueryParamList(
 		'url_chip',
-		( raw ) => restoreChips( raw, URL_CHIP_OPTIONS ),
+		( raw ) =>
+			restoreChips(
+				raw,
+				SUBJECT_CHIP_OPTIONS[ linkedSubject()?.field ?? 'url' ]
+			),
 		( chips ) => chips,
 		windowParam
 	);
@@ -530,22 +544,22 @@ export default function PerformanceDashboard( {
 		}
 	}, [ windowOpen, resetDetail ] );
 
-	selectUrlRef.current = selectUrl;
+	selectSubjectRef.current = selectSubject;
 	selectRequestRef.current = baseSelectRequest;
 	// @longform What is open RIGHT NOW, for the reply handlers below: a reply
 	// must not yank the operator back to a URL they have already left. Written
 	// where the selection is MADE as well as on render, because a reply can
 	// land before React has re-rendered the selection that preceded it.
-	const selectedUrlRef = useRef( selectedUrl );
-	selectedUrlRef.current = selectedUrl;
+	const selectedSubjectRef = useRef( selectedSubject );
+	selectedSubjectRef.current = selectedSubject;
 	/**
-	 * Select a URL, recording it in `selectedUrlRef` in the same call.
+	 * Select a subject, recording it in `selectedSubjectRef` in the same call.
 	 *
-	 * @param {?Object} urlObj The `{hash, url}` entry to open, or null to close.
+	 * @param {?Object} subject The `{field, hash, url}` to open, or null to close.
 	 */
-	const selectUrlNow = useCallback( ( urlObj ) => {
-		selectedUrlRef.current = urlObj;
-		selectUrlRef.current( urlObj );
+	const selectSubjectNow = useCallback( ( subject ) => {
+		selectedSubjectRef.current = subject;
+		selectSubjectRef.current( subject );
 	}, [] );
 
 	// @longform One picker, several doors. A `url:` or `request:` brief is
@@ -557,14 +571,14 @@ export default function PerformanceDashboard( {
 	// graph, which holds its poll while armed.
 	const askFilters = useMemo(
 		() =>
-			selectedUrl
+			selectedSubject
 				? {
 						...urlFilters,
 						...detailFilters,
 						filter: detailChart.chips,
 				  }
 				: urlFilters,
-		[ selectedUrl, urlFilters, detailFilters, detailChart.chips ]
+		[ selectedSubject, urlFilters, detailFilters, detailChart.chips ]
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
@@ -575,7 +589,7 @@ export default function PerformanceDashboard( {
 		chartThenBy: activeThenBy,
 		chartChips,
 		refreshInterval,
-		selectedUrl,
+		selectedSubject,
 		selectedRequest,
 		detailFilters,
 		detailChart,
@@ -586,7 +600,7 @@ export default function PerformanceDashboard( {
 	// Where the URL detail was scrolled to, restored when the request closes.
 	const urlDetailScrollRef = useRef( 0 );
 	// @longform A one-request row just opened, until its window answers: its
-	// hash, and the window's model at the click, which answers another URL.
+	// subject, and the window's model at the click, which answers another URL.
 	const [ oneRequest, setOneRequest ] = useState( null );
 
 	/**
@@ -612,31 +626,36 @@ export default function PerformanceDashboard( {
 	);
 
 	/**
-	 * Open a URL's modal, leaving behind whatever request was open inside the
-	 * previous one. A URL picked from a narrowed table opens narrowed the same
-	 * way: on the bucket and the chips its rows were fetched under, the echo
-	 * rather than the live pick, less a `url=` chip, since the modal is one
-	 * URL and a chip on another would chart that one instead. A row of one
-	 * request goes on to that request once the window names its rid.
+	 * Open the subject a row names, leaving behind whatever request was open
+	 * inside the previous one. A row picked from a
+	 * narrowed table opens narrowed the same way: on the bucket and the chips
+	 * its rows were fetched under, the echo rather than the live pick, less a
+	 * chip on the modal's own field, since a chip on another URL or page
+	 * would chart that one instead. A row of one request goes on to that
+	 * request once the window names its rid.
 	 *
-	 * @param {Object} url The row: its `hash`, its `url` and its `count`.
+	 * @param {Object} row The row: a page or a shape, with its `count`.
 	 */
-	const openUrl = useCallback(
-		( url ) => {
+	const openSubject = useCallback(
+		( row ) => {
+			const subject = subjectOfRow( row );
 			setOneRequest(
-				1 === url.count
-					? { hash: url.hash, before: urlDetailSliceRef.current }
+				1 === row.count
+					? { subject, before: urlDetailSliceRef.current }
 					: null
 			);
 			selectRequest( null );
-			const chips = withoutUrlChips( urlFilters?.filter ?? [] );
+			const chips = withoutChips(
+				urlFilters?.filter ?? [],
+				subject.field
+			);
 			resetDetail(
 				urlFilters?.bucket ?? '',
 				chips.length ? chips : NO_CHIPS
 			);
-			selectUrlNow( url );
+			selectSubjectNow( subject );
 		},
-		[ selectRequest, selectUrlNow, urlFilters, resetDetail ]
+		[ selectRequest, selectSubjectNow, urlFilters, resetDetail ]
 	);
 
 	// @longform A row of one request opens that request, its rid named by the
@@ -650,8 +669,8 @@ export default function PerformanceDashboard( {
 		if ( ! oneRequest ) {
 			return;
 		}
-		const { hash, before } = oneRequest;
-		if ( selectedUrl?.hash !== hash || selectedRequest ) {
+		const { subject, before } = oneRequest;
+		if ( ! sameSubject( selectedSubject, subject ) || selectedRequest ) {
 			setOneRequest( null );
 			return;
 		}
@@ -659,7 +678,7 @@ export default function PerformanceDashboard( {
 			setOneRequest( null );
 			return;
 		}
-		if ( urlDetail?.stats?.hash !== hash ) {
+		if ( urlDetail?.stats?.hash !== subject.hash ) {
 			return;
 		}
 		setOneRequest( null );
@@ -673,19 +692,19 @@ export default function PerformanceDashboard( {
 		oneRequest,
 		urlDetail,
 		urlDetailSlice,
-		selectedUrl,
+		selectedSubject,
 		selectedRequest,
 		selectRequest,
 	] );
 	const holdingWindow =
 		null !== oneRequest &&
-		selectedUrl?.hash === oneRequest.hash &&
+		sameSubject( selectedSubject, oneRequest.subject ) &&
 		! selectedRequest;
 	/** Cancel a held click: no window opens, and the bar drops `?url=`. */
 	const cancelHold = useCallback( () => {
 		setOneRequest( null );
-		selectUrl( null );
-	}, [ selectUrl ] );
+		selectSubject( null );
+	}, [ selectSubject ] );
 
 	/**
 	 * Sort the URL modal's request table by one column. Clicking the column
@@ -709,7 +728,7 @@ export default function PerformanceDashboard( {
 	 * carry.
 	 *
 	 * A hash becomes a title in two steps that need no pairing: select what is
-	 * already known, then ask for the name. The reply names the hash it
+	 * already known, then ask for the name. The reply names the subject it
 	 * answered, which is how the guard below tells whose title it is.
 	 */
 	const { run: lookupUrl } = useCommandOnce( {
@@ -718,44 +737,44 @@ export default function PerformanceDashboard( {
 		command: 'dump_url',
 		scope: 'url-lookup',
 		retry: true,
-		onDone: ( { result, args } ) => {
+		onDone: ( { result, subject } ) => {
 			const url = result?.stats?.url;
+			const current = selectedSubjectRef.current;
 			// @longform Only the selection this answers: the operator may
 			// have opened another URL while it was in flight, and yanking
 			// them back to the one they left beats an untitled hash.
-			if ( url && selectedUrlRef.current?.hash === args[ 0 ] ) {
-				selectUrlNow( { hash: args[ 0 ], url } );
+			if ( url && current && subject === subjectArgs( current )[ 0 ] ) {
+				selectSubjectNow( { ...current, url } );
 			}
 		},
 	} );
 
 	/**
 	 * Open a request the server has just located, showing it now and letting the
-	 * title fill in when `lookupUrl` answers.
+	 * title fill in when `lookupUrl` answers. It opens inside `linked`, the
+	 * subject a link named beside it, and inside its own URL when none did.
 	 *
-	 * @param {string} rid  The request id that was found.
-	 * @param {Object} data The `search_requests` reply, carrying `url_hash`.
+	 * @param {string}  rid      The request id that was found.
+	 * @param {Object}  data     The `search_requests` reply, carrying `url_hash`.
+	 * @param {?Object} [linked] The `{ field, hash }` the link opens it under.
 	 */
 	const applyFoundRequest = useCallback(
-		( rid, data ) => {
-			const known = urlsRef.current.find(
-				( u ) => u.hash === data.url_hash
-			);
+		( rid, data, linked = null ) => {
+			const found = linked ?? { field: 'url', hash: data.url_hash };
+			const known = findSubject( urlsRef.current, found );
 			// @longform A rid names ONE request; the server filter is a
 			// browsing scope, and `dump_url` honours it. A search landing
 			// outside it would ask for a row the scope excludes and answer
 			// "URL not found" for a URL plainly on screen. The navigation
 			// wins, and the select resets so nothing is hidden.
 			setServerFilter( '' );
-			selectUrlNow(
-				known ?? { hash: data.url_hash, url: UNKNOWN_URL() }
-			);
+			selectSubjectNow( known ?? { ...found, url: UNKNOWN_URL() } );
 			selectRequestRef.current( rid );
 			if ( ! known ) {
-				lookupUrl( formatCommandArgs( [ data.url_hash ] ) );
+				lookupUrl( subjectArgs( found ) );
 			}
 		},
-		[ lookupUrl, selectUrlNow, setServerFilter ]
+		[ lookupUrl, selectSubjectNow, setServerFilter ]
 	);
 
 	/**
@@ -784,31 +803,33 @@ export default function PerformanceDashboard( {
 				return;
 			}
 			if ( found( result ) ) {
-				applyFoundRequest( args[ 0 ], result );
+				// The bar still names the window the request was opened in.
+				applyFoundRequest( args[ 0 ], result, linkedSubject() );
 				clearDeepLinkRef.current();
 				return;
 			}
-			// Not-found is an ANSWER; let the ?url= hash have its turn.
+			// Not-found is an ANSWER; let the linked subject have its turn.
 			clearDeepLinkRef.current( 'request' );
 		},
 	} );
 
 	/**
-	 * Resolve a `?url=` deep link, which needs the server whenever the hash
-	 * falls outside the loaded catalog page and so carries no title.
+	 * Resolve a `?url=` or `?page_hash=` deep link, which needs the server
+	 * whenever no row of the loaded catalog page opens it, and so titles it.
 	 */
-	const { run: askDeepLinkUrl } = useCommandOnce( {
+	const { run: askDeepLinkSubject } = useCommandOnce( {
 		group: GROUPS.url,
 		ci: SERVER,
 		command: 'dump_url',
 		scope: 'url-deeplink',
 		retry: true,
-		onDone: ( { result, args } ) => {
-			if ( deepLinkRef.current.urlHash !== args[ 0 ] ) {
+		onDone: ( { result, subject } ) => {
+			const linked = deepLinkRef.current.subject;
+			if ( ! linked || subject !== subjectArgs( linked )[ 0 ] ) {
 				return;
 			}
-			selectUrlNow( {
-				hash: args[ 0 ],
+			selectSubjectNow( {
+				...linked,
 				url: result?.stats?.url || UNKNOWN_URL(),
 			} );
 			clearDeepLinkRef.current();
@@ -824,16 +845,16 @@ export default function PerformanceDashboard( {
 	const deepLinkRef = useRef( deepLink );
 	deepLinkRef.current = deepLink;
 
-	// The rid answers its URL's hash; `?url=` is the fallback.
+	// The rid answers its URL's hash; the linked subject is the fallback.
 	useEffect( () => {
 		if ( deepLink.requestId ) {
 			askDeepLinkRequest( formatCommandArgs( [ deepLink.requestId ] ) );
 			return;
 		}
-		if ( deepLink.urlHash ) {
-			askDeepLinkUrl( formatCommandArgs( [ deepLink.urlHash ] ) );
+		if ( deepLink.subject ) {
+			askDeepLinkSubject( subjectArgs( deepLink.subject ) );
 		}
-	}, [ deepLink, askDeepLinkRequest, askDeepLinkUrl ] );
+	}, [ deepLink, askDeepLinkRequest, askDeepLinkSubject ] );
 
 	/**
 	 * Look one exact request id up in the request index and open it. A RETRIED
@@ -871,7 +892,11 @@ export default function PerformanceDashboard( {
 			setSearchQuery( '' );
 			// Drops ?search= too; the selection's push then adds nothing.
 			setQueryParams(
-				{ search: null, url: result.url_hash, request: args[ 0 ] },
+				{
+					search: null,
+					...subjectLink( { field: 'url', hash: result.url_hash } ),
+					request: args[ 0 ],
+				},
 				{ push: true }
 			);
 		},
@@ -1042,8 +1067,8 @@ export default function PerformanceDashboard( {
 	// @longform A one-shape page's row names no URL, so its window is named by
 	// what dump_url answers for its hash, never by another URL's answer.
 	const ruleUrl =
-		selectedUrl?.url ||
-		( urlDetail?.stats?.hash === selectedUrl?.hash
+		selectedSubject?.url ||
+		( urlDetail?.stats?.hash === selectedSubject?.hash
 			? urlDetail?.stats?.url
 			: undefined );
 	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
@@ -1224,8 +1249,8 @@ export default function PerformanceDashboard( {
 							urlTotals,
 							urlSlowest,
 							urlFilters,
-							selectedUrl: selectedUrl && {
-								hash: selectedUrl.hash,
+							selectedSubject: selectedSubject && {
+								...selectedSubject,
 								url: ruleUrl,
 							},
 							urlDetail,
@@ -1290,11 +1315,13 @@ export default function PerformanceDashboard( {
 						<CardBody>
 							<UrlTable
 								urls={ urls }
-								selectedUrl={ selectedUrl }
-								onSelect={ openUrl }
+								selectedSubject={ selectedSubject }
+								onSelect={ openSubject }
 								expanded={ expanded }
 								onToggleExpand={ toggleExpanded }
-								busy={ holdingWindow ? oneRequest.hash : null }
+								busy={
+									holdingWindow ? oneRequest.subject : null
+								}
 								onParamsChange={ handleUrlParamsChange }
 								bucket={ tableBucket }
 								slots={ chartSlots }
@@ -1318,7 +1345,7 @@ export default function PerformanceDashboard( {
 			     its own empty state, and a modal that can close is the only way
 			     back out of one. A one-request row holds it until its request
 			     is known, so it opens on the request. */ }
-			{ selectedUrl && ! holdingWindow && (
+			{ selectedSubject && ! holdingWindow && (
 				<Modal
 					title={
 						selectedRequest && requestDetail
@@ -1337,7 +1364,7 @@ export default function PerformanceDashboard( {
 						if ( ruleDraft ) {
 							return;
 						}
-						selectUrl( null );
+						selectSubject( null );
 						selectRequest( null );
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
@@ -1445,7 +1472,7 @@ export default function PerformanceDashboard( {
 							requestSort={ requestSort }
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
-							urlHash={ selectedUrl.hash }
+							subject={ selectedSubject }
 							filters={ detailFilters }
 							onBucketChange={ setDetailBucket }
 							listing={ detailListing }
@@ -1499,7 +1526,7 @@ export default function PerformanceDashboard( {
 			) }
 
 			{ /* Inline rule editor for "Log this URL" (URL-detail view only). */ }
-			{ selectedUrl && ! selectedRequest && ruleDraft && (
+			{ selectedSubject && ! selectedRequest && ruleDraft && (
 				<RuleEditModal
 					rule={ ruleDraft }
 					onSave={ saveRule }

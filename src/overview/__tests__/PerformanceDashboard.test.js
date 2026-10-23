@@ -98,10 +98,13 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 /**
  * Deliver a reply to the verb registered under `key`. One naming its `args`
  * is judged as the gate judges it: dropped unless an ask standing asked
- * exactly those, which it then settles.
+ * exactly those, which it then settles. Its `subject` is what the real hook
+ * reads off the reply's address: the verb's `subjectOf` of those args, by
+ * default the first token, unless the answer names its own.
  *
  * @param {string} key    Scope, or `<ci>:<command>`.
- * @param {Object} answer `{ result, error, args }`, as `onDone` receives it.
+ * @param {Object} answer `{ result, error, args, subject }`, as `onDone`
+ *                        receives it.
  */
 function answerCommand( key, answer ) {
 	const entry = mockCommands[ key ];
@@ -118,12 +121,14 @@ function answerCommand( key, answer ) {
 		}
 		entry.asked.splice( at, 1 );
 	}
+	const subjectOf = entry.opts.subjectOf ?? ( ( args ) => args[ 0 ] ?? null );
 	act( () =>
 		entry.opts.onDone?.( {
 			result: null,
 			error: null,
 			errorData: null,
 			args: [],
+			subject: answer.args ? subjectOf( answer.args ) : null,
 			...answer,
 		} )
 	);
@@ -170,19 +175,19 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 
 // `mock` prefix permits cross-scope reference in jest.mock factories.
 const mockNavState = {
-	selectedUrl: null,
+	selectedSubject: null,
 	selectedRequest: null,
 	// Faithful: the real hook HOLDS the selection, and the dashboard reads it
 	// back to decide whether a reply still belongs to what is open.
-	selectUrl: jest.fn( ( url ) => {
-		mockNavState.selectedUrl = url;
+	selectSubject: jest.fn( ( url ) => {
+		mockNavState.selectedSubject = url;
 	} ),
 	selectRequest: jest.fn( ( rid ) => {
 		mockNavState.selectedRequest = rid;
 	} ),
 	initialSearchQuery: '',
 	setInitialSearchQuery: jest.fn(),
-	deepLink: { requestId: null, urlHash: null },
+	deepLink: { requestId: null, subject: null },
 	clearDeepLink: jest.fn(),
 };
 // On, the dashboard runs the real hook, which pushes the entries it navigates.
@@ -429,11 +434,11 @@ describe( 'PerformanceDashboard', () => {
 			( k ) => delete mockCommands[ k ]
 		);
 		globalThis.__ruleEditProps = null;
-		mockNavState.deepLink = { requestId: null, urlHash: null };
-		mockNavState.selectedUrl = null;
+		mockNavState.deepLink = { requestId: null, subject: null };
+		mockNavState.selectedSubject = null;
 		mockNavState.selectedRequest = null;
 		mockNavState.initialSearchQuery = '';
-		mockNavState.selectUrl.mockClear();
+		mockNavState.selectSubject.mockClear();
 		mockNavState.selectRequest.mockClear();
 		mockRealNavigation = false;
 		jest.clearAllMocks();
@@ -562,7 +567,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'hands the URL modal its chart slices and its chart question, and resets it on close', async () => {
-		mockNavState.selectedUrl = { hash: 'beef7743', url: '/huia' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'beef7743',
+			url: '/huia',
+		};
 		const urlChart = {
 			data: rowsWire( [ 'bucket', 'method', 'count' ], [] ),
 			loading: false,
@@ -1072,7 +1081,11 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			it( 'leaves the URL modal chips off the bar', async () => {
-				mockNavState.selectedUrl = { hash: 'beef7743', url: '/huia' };
+				mockNavState.selectedSubject = {
+					field: 'url',
+					hash: 'beef7743',
+					url: '/huia',
+				};
 				mockView = loadedView( {
 					urlDetail: {
 						data: { stats: {}, requests: [] },
@@ -1251,9 +1264,10 @@ describe( 'PerformanceDashboard', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( globalThis.__urlDetailProps.urlHash ).toBe(
-					'beef7743'
-				);
+				expect( globalThis.__urlDetailProps.subject ).toMatchObject( {
+					field: 'url',
+					hash: 'beef7743',
+				} );
 				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
 				// The first ask already carries the link: no default fetch.
 				expect( mockGraphCalls[ 0 ].detailFilters ).toEqual(
@@ -1275,19 +1289,22 @@ describe( 'PerformanceDashboard', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( sentTo( DEEP_URL ) ).toEqual( [ [ 'beef7743' ] ] );
+				expect( sentTo( DEEP_URL ) ).toEqual( [
+					[ '--url=beef7743' ],
+				] );
 				expect( globalThis.__urlDetailProps ).toBeNull();
 				expect( windowParams() ).toEqual( RESTORED );
 
 				answerCommand( DEEP_URL, {
 					result: { stats: { url: '/huia' } },
-					args: [ 'beef7743' ],
+					args: [ '--url=beef7743' ],
 				} );
 				await flushEffects();
 
-				expect( globalThis.__urlDetailProps.urlHash ).toBe(
-					'beef7743'
-				);
+				expect( globalThis.__urlDetailProps.subject ).toMatchObject( {
+					field: 'url',
+					hash: 'beef7743',
+				} );
 				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
 				expect( windowParams() ).toEqual( RESTORED );
 				unmount();
@@ -1358,7 +1375,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			it( 'opens a linked value no control offers on its default, and drops it', async () => {
-				mockNavState.selectedUrl = ROW;
+				mockNavState.selectedSubject = ROW;
 				linkTo(
 					[
 						'url=beef7743',
@@ -1394,7 +1411,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			it( 'drops a linked Then by that repeats the Breakdown', async () => {
-				mockNavState.selectedUrl = ROW;
+				mockNavState.selectedSubject = ROW;
 				linkTo( 'url=beef7743&url_breakdown=ja4&url_then=ja4' );
 				mockView = detailView( urlsOf( [] ) );
 				const { unmount } = mountDash();
@@ -1435,16 +1452,20 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			it( 'forgets a window closed other than by its X, but keeps its sort', async () => {
-				mockNavState.selectedUrl = ROW;
+				mockNavState.selectedSubject = ROW;
 				mockView = detailView( urlsOf( [] ) );
 				const { rerender, unmount } = mountDash();
 				await flushEffects();
 				narrowWindow();
 
 				// Back closes the window without the modal's close handler.
-				mockNavState.selectedUrl = null;
+				mockNavState.selectedSubject = null;
 				await act( async () => rerender( dashboard() ) );
-				mockNavState.selectedUrl = { hash: 'cafe1234', url: '/kea' };
+				mockNavState.selectedSubject = {
+					field: 'url',
+					hash: 'cafe1234',
+					url: '/kea',
+				};
 				await act( async () => rerender( dashboard() ) );
 
 				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
@@ -1456,7 +1477,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			it( "opens a searched request's URL on the window's defaults", async () => {
-				mockNavState.selectedUrl = ROW;
+				mockNavState.selectedSubject = ROW;
 				mockView = detailView( urlsOf( [] ) );
 				const { rerender, unmount } = mountDash();
 				await flushEffects();
@@ -1471,7 +1492,7 @@ describe( 'PerformanceDashboard', () => {
 				} );
 				await flushEffects();
 
-				expect( mockNavState.selectedUrl.hash ).toBe( 'cafe1234' );
+				expect( mockNavState.selectedSubject.hash ).toBe( 'cafe1234' );
 				// Back from the found request, to the window it opened in.
 				mockNavState.selectedRequest = null;
 				await act( async () => rerender( dashboard() ) );
@@ -1517,7 +1538,7 @@ describe( 'PerformanceDashboard', () => {
 				const { rerender, unmount } = mountDash();
 				await flushEffects();
 
-				mockNavState.selectedUrl = ROW;
+				mockNavState.selectedSubject = ROW;
 				await act( async () => rerender( dashboard() ) );
 
 				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
@@ -1713,7 +1734,11 @@ describe( 'PerformanceDashboard', () => {
 		// URL's series and divided by the buckets it had would read a URL seen
 		// in two of twelve buckets at six times its rate under the same "req/s"
 		// label. One owner, one window, one divisor.
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -1742,7 +1767,11 @@ describe( 'PerformanceDashboard', () => {
 		async ( which, error, request, expected ) => {
 			// Both panels answer the same two questions — is it still coming,
 			// or did it fail — so neither may render empty.
-			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h1',
+				url: '/foo',
+			};
 			mockNavState.selectedRequest = request;
 			const slice = { data: null, loading: null === error, error };
 			mockView = loadedView(
@@ -1759,7 +1788,11 @@ describe( 'PerformanceDashboard', () => {
 	);
 
 	it( 'shows the URL modal header p50, p95, p99 and error rate', async () => {
-		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h9',
+			url: '/heron',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -1790,7 +1823,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'keeps the URL modal mounted while a chip change relists it', async () => {
-		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h9',
+			url: '/heron',
+		};
 		mockNavState.selectedRequest = null;
 		const held = {
 			stats: { errors: 7, avg_ms: 431, requests_per_second: 2.5 },
@@ -1854,7 +1891,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'renders the URL modal when a URL is selected and detail is present', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -1960,7 +2001,11 @@ describe( 'PerformanceDashboard', () => {
 			],
 		],
 	] )( '%s', async ( _name, stats, expected ) => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -1989,7 +2034,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( "heads the URL modal with the URL's errors beside its rate", async () => {
-		mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h7',
+			url: '/kea',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -2051,7 +2100,11 @@ describe( 'PerformanceDashboard', () => {
 					.map( ( chip ) => `chip=${ encodeURIComponent( chip ) }` )
 					.join( '&' ) }`
 			);
-			mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h7',
+				url: '/kea',
+			};
 			mockNavState.selectedRequest = null;
 			mockView = loadedView( {
 				urls: {
@@ -2187,7 +2240,11 @@ describe( 'PerformanceDashboard', () => {
 	] )(
 		'sorts an unmeasured duration last by %s duration, never as the fastest or the slowest',
 		async ( dir, order ) => {
-			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h1',
+				url: '/foo',
+			};
 			mockView = loadedView( {
 				urlDetail: {
 					data: {
@@ -2246,7 +2303,11 @@ describe( 'PerformanceDashboard', () => {
 				'',
 				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35'
 			);
-			mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h7',
+				url: '/kea',
+			};
 			mockNavState.selectedRequest = null;
 			mockView = loadedView( {
 				urls: {
@@ -2391,7 +2452,7 @@ describe( 'PerformanceDashboard', () => {
 				'',
 				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-00'
 			);
-			mockNavState.selectedUrl = null;
+			mockNavState.selectedSubject = null;
 			mockView = loadedView();
 			const { rerender } = mountDash();
 			await flushEffects();
@@ -2538,7 +2599,11 @@ describe( 'PerformanceDashboard', () => {
 			const { rerender } = await openFromBucketedTable();
 			await closeModal( rerender );
 
-			mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h4',
+				url: '/linked',
+			};
 			await act( async () => {
 				rerender( dashboard() );
 			} );
@@ -2579,7 +2644,11 @@ describe( 'PerformanceDashboard', () => {
 	it( 'opens a URL reached any other way with no chip', async () => {
 		// Only the table narrows a URL; closing forgets that, so a deep link
 		// or a request search cannot open on a list hiding what it sought.
-		mockNavState.selectedUrl = { hash: 'h9', url: '/erring' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h9',
+			url: '/erring',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urls: {
@@ -2604,7 +2673,11 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		await closeModal( rerender );
 
-		mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h4',
+			url: '/linked',
+		};
 		await act( async () => {
 			rerender( dashboard() );
 		} );
@@ -2616,7 +2689,11 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'hands the graph a selected request by its rid alone', async () => {
 		// The request's row names its partition, so no caller supplies one.
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
@@ -2668,7 +2745,11 @@ describe( 'PerformanceDashboard', () => {
 		// the detail present, the other needs it unset. A selected request
 		// whose detail never arrived fell between them, and the modal showed
 		// the URL as its title over a blank panel.
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -2687,7 +2768,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'surfaces the reason a request detail failed', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -2710,7 +2795,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'renders the Request modal when a request is selected', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -2773,7 +2862,7 @@ describe( 'PerformanceDashboard', () => {
 			result: { url_hash: 'h1', partition: 0 },
 			args: [ 'r1' ],
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
+		expect( mockNavState.selectSubject ).toHaveBeenCalledWith(
 			expect.objectContaining( { hash: 'h1' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r1' );
@@ -2826,7 +2915,7 @@ describe( 'PerformanceDashboard', () => {
 	// A ?request= deep link asks on its OWN node, and its reply names the
 	// rid's URL, which is why the rid outranks the ?url= hash.
 	it( 'a ?request= deep link selects the URL and the request', async () => {
-		mockNavState.deepLink = { requestId: 'rid-deep', urlHash: null };
+		mockNavState.deepLink = { requestId: 'rid-deep', subject: null };
 		mockView = loadedView( {
 			urls: {
 				data: [ { hash: 'h-known', url: '/known' } ],
@@ -2843,7 +2932,7 @@ describe( 'PerformanceDashboard', () => {
 			result: { rid: 'rid-deep', url_hash: 'h-known' },
 			args: [ 'rid-deep' ],
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
+		expect( mockNavState.selectSubject ).toHaveBeenCalledWith(
 			expect.objectContaining( { hash: 'h-known' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'rid-deep' );
@@ -2855,7 +2944,7 @@ describe( 'PerformanceDashboard', () => {
 	// deep-linked request whose URL is off the loaded page therefore has no
 	// title until the hash is looked up, which is what this asserts.
 	it( 'a deep link asks dump_url for a hash outside the loaded page', async () => {
-		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
+		mockNavState.deepLink = { requestId: 'rid-offpage', subject: null };
 		mockView = loadedView( {
 			urls: {
 				data: [ { hash: 'h-known', url: '/known' } ],
@@ -2870,13 +2959,14 @@ describe( 'PerformanceDashboard', () => {
 			result: { url_hash: 'h-offpage', partition: 3 },
 			args: [ 'rid-offpage' ],
 		} );
-		expect( sentTo( LOOKUP ) ).toContainEqual( [ 'h-offpage' ] );
+		expect( sentTo( LOOKUP ) ).toContainEqual( [ '--url=h-offpage' ] );
 
 		answerCommand( LOOKUP, {
 			result: { stats: { url: '/quokka/census-2026' } },
-			args: [ 'h-offpage' ],
+			args: [ '--url=h-offpage' ],
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenLastCalledWith( {
+		expect( mockNavState.selectSubject ).toHaveBeenLastCalledWith( {
+			field: 'url',
 			hash: 'h-offpage',
 			url: '/quokka/census-2026',
 		} );
@@ -2887,7 +2977,7 @@ describe( 'PerformanceDashboard', () => {
 	// "Log this URL". Titling with the raw hash would re-enable the button and
 	// offer to write a rule whose pattern is a hash.
 	it( 'keeps the Unknown URL sentinel when the hash will not resolve', async () => {
-		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
+		mockNavState.deepLink = { requestId: 'rid-offpage', subject: null };
 		mockView = loadedView();
 		const { unmount } = mountDash();
 		await flushEffects();
@@ -2895,14 +2985,16 @@ describe( 'PerformanceDashboard', () => {
 			result: { url_hash: 'h-offpage', partition: 3 },
 			args: [ 'rid-offpage' ],
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
+			field: 'url',
 			hash: 'h-offpage',
 			url: 'Unknown URL',
 		} );
 
 		// A lookup that answers no url leaves the sentinel standing.
-		answerCommand( LOOKUP, { result: null, args: [ 'h-offpage' ] } );
-		expect( mockNavState.selectUrl ).toHaveBeenLastCalledWith( {
+		answerCommand( LOOKUP, { result: null, args: [ '--url=h-offpage' ] } );
+		expect( mockNavState.selectSubject ).toHaveBeenLastCalledWith( {
+			field: 'url',
 			hash: 'h-offpage',
 			url: 'Unknown URL',
 		} );
@@ -2912,17 +3004,21 @@ describe( 'PerformanceDashboard', () => {
 	// A hash title is not merely ugly: canLogUrl only rejects the sentinel, so
 	// a hash would offer to write a rule keyed on `<hash>?`.
 	it( 'a ?url= deep link applies the sentinel, never a hash title', async () => {
-		mockNavState.deepLink = { requestId: null, urlHash: 'h-empty' };
+		mockNavState.deepLink = {
+			requestId: null,
+			subject: { field: 'url', hash: 'h-empty' },
+		};
 		mockView = loadedView();
 		const { unmount } = mountDash();
 		await flushEffects();
-		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-empty' ] );
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=h-empty' ] );
 
 		answerCommand( DEEP_URL, {
 			result: { stats: { url: '' } },
-			args: [ 'h-empty' ],
+			args: [ '--url=h-empty' ],
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
+			field: 'url',
 			hash: 'h-empty',
 			url: 'Unknown URL',
 		} );
@@ -2933,7 +3029,7 @@ describe( 'PerformanceDashboard', () => {
 	// question nobody is asking any more and must not reopen the modal the
 	// operator just left — nor push a fresh entry over the one they walked to.
 	it( 'a deep-link reply that no longer matches the standing intent is dropped', async () => {
-		mockNavState.deepLink = { requestId: 'tqz9ldm3wp', urlHash: null };
+		mockNavState.deepLink = { requestId: 'tqz9ldm3wp', subject: null };
 		mockView = loadedView( {
 			urls: {
 				data: [ { hash: 'h-omicron', url: '/deep/omicron' } ],
@@ -2947,7 +3043,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'tqz9ldm3wp' ] );
 
 		// Back to the dashboard: the hook drops the intent and the selection.
-		mockNavState.deepLink = { requestId: null, urlHash: null };
+		mockNavState.deepLink = { requestId: null, subject: null };
 		rerender( dashboard() );
 		await flushEffects();
 
@@ -2956,28 +3052,31 @@ describe( 'PerformanceDashboard', () => {
 			args: [ 'tqz9ldm3wp' ],
 		} );
 		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
-		expect( mockNavState.selectUrl ).not.toHaveBeenCalled();
+		expect( mockNavState.selectSubject ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
 	// The same rule on the hash resolver: a `?url=` reply applies only while
 	// that hash is still the standing intent.
 	it( 'a ?url= reply that no longer matches the standing intent is dropped', async () => {
-		mockNavState.deepLink = { requestId: null, urlHash: 'h-sigma88' };
+		mockNavState.deepLink = {
+			requestId: null,
+			subject: { field: 'url', hash: 'h-sigma88' },
+		};
 		mockView = loadedView();
 		const { rerender, unmount } = mountDash();
 		await flushEffects();
-		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-sigma88' ] );
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=h-sigma88' ] );
 
-		mockNavState.deepLink = { requestId: null, urlHash: null };
+		mockNavState.deepLink = { requestId: null, subject: null };
 		rerender( dashboard() );
 		await flushEffects();
 
 		answerCommand( DEEP_URL, {
 			result: { stats: { url: '/deep/sigma' } },
-			args: [ 'h-sigma88' ],
+			args: [ '--url=h-sigma88' ],
 		} );
-		expect( mockNavState.selectUrl ).not.toHaveBeenCalled();
+		expect( mockNavState.selectSubject ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
@@ -3285,7 +3384,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'handleRequestSort flips dir + switches field via UrlDetailView callback', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
@@ -3318,7 +3421,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'modal close clears both selected URL and selected request', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -3340,13 +3447,17 @@ describe( 'PerformanceDashboard', () => {
 		act( () => {
 			globalThis.__modalOnRequestClose();
 		} );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( null );
+		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( null );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
 		unmount();
 	} );
 
 	it( 'request-detail back button returns to URL detail without closing the URL modal', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -3377,7 +3488,7 @@ describe( 'PerformanceDashboard', () => {
 			backButton.click();
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
-		expect( mockNavState.selectUrl ).not.toHaveBeenCalledWith( null );
+		expect( mockNavState.selectSubject ).not.toHaveBeenCalledWith( null );
 		unmount();
 	} );
 
@@ -3387,7 +3498,11 @@ describe( 'PerformanceDashboard', () => {
 	// own root, so document order can never win it and the backdrop — where the
 	// layer lives — carries the class that raises it.
 	it( 'raises the assembled brief above the modal that summoned it', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -3438,7 +3553,11 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'renders the Ask trigger immediately before the request-detail back button', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'h1',
+			url: '/foo',
+		};
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
@@ -3469,7 +3588,7 @@ describe( 'PerformanceDashboard', () => {
 	describe( 'Log this URL affordance', () => {
 		// A URL-detail-loaded view model with the modal open on `url`.
 		function urlModalView( url = '/foo' ) {
-			mockNavState.selectedUrl = { hash: 'h1', url };
+			mockNavState.selectedSubject = { field: 'url', hash: 'h1', url };
 			mockNavState.selectedRequest = null;
 			return loadedView( {
 				urlDetail: {
@@ -3529,7 +3648,11 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'hides the button when a request is drilled in', async () => {
-			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockNavState.selectedSubject = {
+				field: 'url',
+				hash: 'h1',
+				url: '/foo',
+			};
 			mockNavState.selectedRequest = 'r1';
 			mockView = loadedView( {
 				urlDetail: {
@@ -3744,7 +3867,8 @@ describe( 'PerformanceDashboard', () => {
 	// the operator opens renders the stale request instead of itself.
 	describe( 'a found request does not wait on the URL slice', () => {
 		it( 'opens the request detail when only the URL slice is missing', async () => {
-			mockNavState.selectedUrl = {
+			mockNavState.selectedSubject = {
+				field: 'url',
 				hash: '905b81442680',
 				url: 'https://tucsonweekly.example/jobs/filmtimes/import-film-times',
 			};
@@ -3772,7 +3896,8 @@ describe( 'PerformanceDashboard', () => {
 		// the modal must stay up, or the operator is left on a paused dashboard
 		// with the selection still set and no close button to clear it.
 		it( 'keeps the modal up when the request is closed and no URL slice came', async () => {
-			mockNavState.selectedUrl = {
+			mockNavState.selectedSubject = {
+				field: 'url',
 				hash: '905b81442680',
 				url: 'https://tucsonweekly.example/jobs/filmtimes/import-film-times',
 			};
@@ -3809,7 +3934,8 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
-			expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+			expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
+				field: 'url',
 				hash: 'fac69dee1c14',
 				url: 'https://community.example/charlotte/MovieTimes',
 			} );
@@ -3929,7 +4055,7 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( "titles a one-shape page's window, and its rule, by the URL dump_url names", async () => {
-			mockNavState.selectedUrl = HIHI;
+			mockNavState.selectedSubject = { field: 'url', hash: HIHI.hash };
 			mockView = loadedView( {
 				urlDetail: {
 					data: {
@@ -3964,7 +4090,7 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'names a one-shape page by no other URL the window last answered', async () => {
-			mockNavState.selectedUrl = HIHI;
+			mockNavState.selectedSubject = { field: 'url', hash: HIHI.hash };
 			mockView = loadedView( {
 				urlDetail: {
 					data: {
@@ -3988,6 +4114,262 @@ describe( 'PerformanceDashboard', () => {
 				container.querySelector( '.event-logger-rule-control button' )
 					.disabled
 			).toBe( true );
+			unmount();
+		} );
+	} );
+
+	describe( 'a page window', () => {
+		/** A page of three shapes on `hoiho-6610.example`, as `urls` lists it. */
+		const TAKAHE = {
+			page_hash: 'd00dfeed6610',
+			page: 'hoiho-6610.example/takahe-6610/',
+			server: 'hoiho-6610.example',
+			shapes: 3,
+			hash: null,
+			url: 'https://hoiho-6610.example/takahe-6610/',
+			count: 88,
+		};
+		const TAKAHE_SUBJECT = {
+			field: 'page',
+			hash: 'd00dfeed6610',
+			url: 'https://hoiho-6610.example/takahe-6610/',
+		};
+		const param = ( name ) =>
+			new URLSearchParams( window.location.search ).get( name );
+		const linkTo = ( query ) =>
+			window.history.replaceState(
+				null,
+				'',
+				`/wp-admin/admin.php?page=perf&${ query }`
+			);
+		const pageView = ( filter = [] ) =>
+			loadedView( {
+				urls: {
+					data: [ TAKAHE ],
+					rows: 1,
+					filters: { filter, bucket: '' },
+					loading: false,
+					error: null,
+				},
+				urlDetail: {
+					data: { stats: { count: 88 }, requests: [] },
+					loading: false,
+					error: null,
+				},
+			} );
+		const facts = ( container ) =>
+			JSON.parse(
+				container.querySelector( '#newspack-nodes-page-facts' )
+					.textContent
+			);
+
+		it( "opens a page of several shapes as its page, less the table's page chips", async () => {
+			mockRealNavigation = true;
+			mockView = pageView( [
+				'page=d00dfeed6610',
+				'url=0ddba11c6610',
+				'method=PATCH',
+			] );
+			const { container, unmount } = mountDash();
+			await flushEffects();
+
+			await act( async () => {
+				globalThis.__urlTableProps.onSelect( TAKAHE );
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( globalThis.__urlTableProps.selectedSubject ).toEqual(
+				TAKAHE_SUBJECT
+			);
+			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				'url=0ddba11c6610',
+				'method=PATCH',
+			] );
+			expect( globalThis.__urlDetailProps.subject ).toEqual(
+				TAKAHE_SUBJECT
+			);
+			expect(
+				container.querySelector( '[data-testid="modal"] h2' )
+					.textContent
+			).toBe( 'https://hoiho-6610.example/takahe-6610/' );
+			expect( facts( container ).surface ).toBe( 'page' );
+			expect( facts( container ).page ).toEqual( {
+				hash: 'd00dfeed6610',
+				url: 'https://hoiho-6610.example/takahe-6610/',
+			} );
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
+			expect( param( 'url' ) ).toBeNull();
+			expect( param( 'page' ) ).toBe( 'perf' );
+			unmount();
+		} );
+
+		it( 'drops ?page_hash= when the page window closes', async () => {
+			mockRealNavigation = true;
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+			await act( async () => {
+				globalThis.__urlTableProps.onSelect( TAKAHE );
+			} );
+			await flushEffects();
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
+
+			act( () => globalThis.__modalOnRequestClose() );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toBeNull();
+			expect( window.location.search ).toBe( '?page=perf' );
+			unmount();
+		} );
+
+		it( 'restores a linked page window from the loaded rows, its URL chips kept', async () => {
+			mockRealNavigation = true;
+			linkTo( 'page_hash=d00dfeed6610&url_chip=url%3D0ddba11c6611' );
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				'url=0ddba11c6611',
+			] );
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
+			unmount();
+		} );
+
+		it( 'asks dump_url --page= for a linked page off the loaded rows', async () => {
+			mockRealNavigation = true;
+			linkTo( 'page_hash=d00dfeed6612' );
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( sentTo( DEEP_URL ) ).toEqual( [
+				[ '--page=d00dfeed6612' ],
+			] );
+			expect( mockGraphOpts.selectedSubject ).toBeNull();
+
+			answerCommand( DEEP_URL, {
+				result: {
+					stats: {
+						hash: 'd00dfeed6612',
+						url: 'https://hoiho-6610.example/weka-6612/',
+					},
+				},
+				args: [ '--page=d00dfeed6612' ],
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( {
+				field: 'page',
+				hash: 'd00dfeed6612',
+				url: 'https://hoiho-6610.example/weka-6612/',
+			} );
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6612' );
+			expect( param( 'url' ) ).toBeNull();
+			unmount();
+		} );
+
+		it( 'restores a request linked under a page window inside that page window', async () => {
+			mockRealNavigation = true;
+			linkTo( 'page_hash=d00dfeed6610&request=takahe6610rid' );
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [
+				'takahe6610rid',
+			] );
+			answerCommand( DEEP_REQUEST, {
+				result: { url_hash: '0ddba11c6611', partition: 4 },
+				args: [ 'takahe6610rid' ],
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( mockGraphOpts.selectedRequest ).toBe( 'takahe6610rid' );
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
+			expect( param( 'url' ) ).toBeNull();
+			expect( param( 'request' ) ).toBe( 'takahe6610rid' );
+
+			act( () =>
+				document
+					.querySelector( '.event-logger-modal-back-button' )
+					.click()
+			);
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( mockGraphOpts.selectedRequest ).toBeNull();
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
+			expect( param( 'request' ) ).toBeNull();
+			unmount();
+		} );
+
+		it( 'titles a linked page the loaded rows lack when its linked request opens', async () => {
+			mockRealNavigation = true;
+			linkTo( 'page_hash=d00dfeed6614&request=weka6614rid' );
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			answerCommand( DEEP_REQUEST, {
+				result: { url_hash: '0ddba11c6615', partition: 5 },
+				args: [ 'weka6614rid' ],
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( {
+				field: 'page',
+				hash: 'd00dfeed6614',
+				url: 'Unknown URL',
+			} );
+			expect( sentTo( LOOKUP ) ).toEqual( [ [ '--page=d00dfeed6614' ] ] );
+
+			answerCommand( LOOKUP, {
+				result: { stats: { url: 'https://hoiho-6610.example/weka/' } },
+				args: [ '--page=d00dfeed6614' ],
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( {
+				field: 'page',
+				hash: 'd00dfeed6614',
+				url: 'https://hoiho-6610.example/weka/',
+			} );
+			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6614' );
+			unmount();
+		} );
+
+		// @longform The reply's address names what it answers; its echoed
+		// args are the server's spelling of the question, and a resolver
+		// keyed on them drops a reply the server spelled another way.
+		it( 'takes a linked page from the reply its subject names, whatever it echoes', async () => {
+			mockRealNavigation = true;
+			linkTo( 'page_hash=d00dfeed6613' );
+			mockView = pageView();
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			answerCommand( DEEP_URL, {
+				result: { stats: { url: 'https://hoiho-6610.example/kea/' } },
+				subject: '--url=d00dfeed6613',
+			} );
+			await flushEffects();
+			expect( mockGraphOpts.selectedSubject ).toBeNull();
+
+			answerCommand( DEEP_URL, {
+				result: { stats: { url: 'https://hoiho-6610.example/kea/' } },
+				subject: '--page=d00dfeed6613',
+			} );
+			await flushEffects();
+
+			expect( mockGraphOpts.selectedSubject ).toEqual( {
+				field: 'page',
+				hash: 'd00dfeed6613',
+				url: 'https://hoiho-6610.example/kea/',
+			} );
 			unmount();
 		} );
 	} );
@@ -4040,7 +4422,7 @@ describe( 'PerformanceDashboard', () => {
 
 			await clickRow( rerender, 1 );
 
-			expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
+			expect( mockNavState.selectSubject ).toHaveBeenCalledWith(
 				expect.objectContaining( { hash: KIWI } )
 			);
 			expect( mockNavState.selectRequest ).toHaveBeenLastCalledWith(
@@ -4055,7 +4437,7 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 
 			await clickRow( rerender, 1 );
-			expect( mockNavState.selectedUrl.hash ).toBe( KIWI );
+			expect( mockNavState.selectedSubject.hash ).toBe( KIWI );
 			expect(
 				container.querySelector( '[data-testid="modal"]' )
 			).toBeNull();
@@ -4128,7 +4510,10 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__urlTableProps.busy ).toBeNull();
 
 			await clickRow( rerender, 1 );
-			expect( globalThis.__urlTableProps.busy ).toBe( KIWI );
+			expect( globalThis.__urlTableProps.busy ).toMatchObject( {
+				field: 'url',
+				hash: KIWI,
+			} );
 
 			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
 			await act( async () => rerender( dashboard() ) );
@@ -4152,7 +4537,10 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			expect( globalThis.__urlTableProps.busy ).toBe( KIWI );
+			expect( globalThis.__urlTableProps.busy ).toMatchObject( {
+				field: 'url',
+				hash: KIWI,
+			} );
 			expect(
 				new URLSearchParams( window.location.search ).get( 'url' )
 			).toBe( KIWI );
@@ -4208,7 +4596,7 @@ describe( 'PerformanceDashboard', () => {
 
 			await clickRow( rerender, 2 );
 
-			expect( mockNavState.selectedUrl.hash ).toBe( KIWI );
+			expect( mockNavState.selectedSubject.hash ).toBe( KIWI );
 			expect( mockNavState.selectRequest ).not.toHaveBeenCalledWith(
 				'kiwi5108one'
 			);

@@ -524,14 +524,16 @@ export const filterTokens = ( filters ) =>
 	filters.map( ( filter ) => `--filter=${ filter }` );
 
 /**
- * The chips a one-URL question keeps: every one but a chip on `url`, which
- * names the URLs a table was narrowed to rather than a narrowing of one URL.
+ * The chips a question about one URL or one page keeps: every one but a chip
+ * on the field it keys on, which names the URLs or pages a table was narrowed
+ * to rather than a narrowing of the one asked about.
  *
  * @param {string[]} chips Each chip as `field=value` or `field!=value`.
- * @return {string[]} The chips, less any on `url`.
+ * @param {string}   field The field the question keys on, `url` or `page`.
+ * @return {string[]} The chips, less any on `field`.
  */
-export const withoutUrlChips = ( chips ) =>
-	chips.filter( ( chip ) => 'url' !== chipParts( chip ).field );
+export const withoutChips = ( chips, field ) =>
+	chips.filter( ( chip ) => field !== chipParts( chip ).field );
 
 /**
  * One row's series name: its dimensions' values, ` · `-joined.

@@ -35,9 +35,10 @@ use Newspack_Nodes\Core;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Nine shapers for six descriptor types — `span:` has two and `category:`
- * three, one per board a click can land on: a request's own, a URL's
- * aggregate, the site-wide leaderboard — plus the parser that decides which.
+ * Nine shapers for seven descriptor types — `url:` and `page:` share one,
+ * `span:` has two and `category:` three, one per board a click can land on:
+ * a request's own, a URL's or a page's aggregate, the site-wide leaderboard
+ * — plus the parser that decides which.
  * Every method is static and the class holds no state.
  *
  * A shaper returns null when the record does not hold what was asked about: a
@@ -66,7 +67,7 @@ class Ask_Assembler {
 	public const TOP_SPANS = 6;
 
 	/** The descriptor vocabulary. Deliberately small: it is a contract. */
-	private const TYPES = [ 'overview', 'url', 'request', 'span', 'entry', 'category' ];
+	private const TYPES = [ 'overview', 'url', 'page', 'request', 'span', 'entry', 'category' ];
 
 	/**
 	 * Environment fields a brief may carry. Everything else is dropped rather
@@ -78,13 +79,13 @@ class Ask_Assembler {
 	/**
 	 * One request: what it did, how long it took, what the detector found.
 	 *
-	 * @param array<array-key,mixed> $record      A stored request record.
-	 * @param Rule|null              $rule        The rule governing its URL.
-	 * @param string                 $url_context The `url:` descriptor the request was picked under, or ''; it becomes a second `fetch` pointer, so an agent can widen from this request to its URL.
-	 * @param string                 $server      Server the surface it was picked from is scoped to; rides that pointer so the widening stays in scope.
+	 * @param array<array-key,mixed> $record  A stored request record.
+	 * @param Rule|null              $rule    The rule governing its URL.
+	 * @param array<string,string>   $subject The `dump_url` arg naming the subject the request was picked under, its field to its hash, or none; it becomes a second `fetch` pointer, so an agent can widen from this request to that subject.
+	 * @param string                 $server  Server the surface it was picked from is scoped to; rides that pointer so the widening stays in scope.
 	 * @return array<string,mixed>
 	 */
-	public static function for_request( array $record, ?Rule $rule, string $url_context = '', string $server = '' ): array {
+	public static function for_request( array $record, ?Rule $rule, array $subject = [], string $server = '' ): array {
 		// Resolved once: a flameless record is folded from its entries.
 		$record    = [ 'flame_data' => Findings::flame_of( $record ) ] + $record;
 		// Keys survive the filter: each is the position an `entry:` ask names.
@@ -94,7 +95,6 @@ class Ask_Assembler {
 		);
 		$kept      = \array_slice( $entries, 0, self::MAX_ENTRIES, true );
 		$truncated = \count( $entries ) > self::MAX_ENTRIES;
-		$url       = self::parse_descriptor( $url_context );
 
 		return [
 			'subject'           => 'request',
@@ -113,7 +113,7 @@ class Ask_Assembler {
 			'findings'          => Findings::for_request( $record, $rule ),
 			'fetch'             => [
 				...self::fetch( 'dump_request', [ 'rid' => Core::as_string( $record['rid'] ?? '' ) ] ),
-				...( 'url' === ( $url['type'] ?? '' ) ? self::fetch( 'dump_url', [ 'hash' => $url['id'], 'server' => $server ] ) : [] ),
+				...( [] === $subject ? [] : self::fetch( 'dump_url', $subject + [ 'server' => $server ] ) ),
 			],
 			'caveat'            => Findings::caveat(),
 		];
@@ -146,26 +146,6 @@ class Ask_Assembler {
 			}
 		}
 		return $env;
-	}
-
-	/**
-	 * Split `type:id`. A request is named by its rid alone, which holds no
-	 * colon; every other id is taken whole, colons included, because a span
-	 * or listener name carries them. Null on anything outside the vocabulary,
-	 * so a hand-typed or stale descriptor is refused rather than half-honoured.
-	 *
-	 * @param string $descriptor `type:id`, as a `data-ask` attribute carries it.
-	 * @return array{type:string,id:string}|null
-	 */
-	public static function parse_descriptor( string $descriptor ): ?array {
-		[ $type, $id ] = \array_pad( \explode( ':', $descriptor, 2 ), 2, '' );
-		if ( '' === $id || ! \in_array( $type, self::TYPES, true ) || ( 'request' === $type && \str_contains( $id, ':' ) ) ) {
-			return null;
-		}
-		return [
-			'type' => $type,
-			'id'   => $id,
-		];
 	}
 
 	/**
@@ -542,10 +522,11 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * One URL: its stats and its worst recent requests — plus, when nothing
-	 * governs it, the cold-start finding that says which instrumentation to
-	 * switch on. A dimensional breakdown is for `query` to answer; a brief
-	 * carries no unbounded series.
+	 * One URL or one page: its stats and its worst recent requests — plus,
+	 * when nothing governs it, the cold-start finding that says which
+	 * instrumentation to switch on. A page's brief is a URL's of every shape
+	 * of it, named and hashed as its page. A dimensional breakdown is for
+	 * `query` to answer; a brief carries no unbounded series.
 	 *
 	 * The requests are the newest `dump_url` lists, and `$requests_capped`
 	 * says when they are the newest only.
@@ -559,15 +540,16 @@ class Ask_Assembler {
 	 * The worst requests rank by duration, and a null one — no sample taken,
 	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.
 	 *
+	 * @param string                            $field    `url` or `page`: what `$stats` is of, the brief's subject and its `dump_url` arg.
 	 * @param array<array-key,mixed>            $stats    A `dump_url` stats block.
-	 * @param array<int,array<array-key,mixed>> $requests Recent requests for that URL.
+	 * @param array<int,array<array-key,mixed>> $requests Recent requests for that URL or page.
 	 * @param bool                              $requests_capped Whether they are fewer than the stats count.
 	 * @param Rule|null                         $rule     The governing rule, or null.
 	 * @param string                            $server   Server the numbers are of; '' is site-wide.
 	 * @param Url_Filters                       $filters  The url filters in force.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, bool $requests_capped, ?Rule $rule, string $server, array $filters ): array {
+	public static function for_url( string $field, array $stats, array $requests, bool $requests_capped, ?Rule $rule, string $server, array $filters ): array {
 		$filter = $filters['filter'];
 		$bucket = $filters['bucket'];
 		// A measured duration is positive, so -1 ranks every null last.
@@ -576,7 +558,7 @@ class Ask_Assembler {
 		$url  = Core::as_string( $stats['url'] ?? '' );
 
 		return [
-			'subject'            => 'url',
+			'subject'            => $field,
 			'url'                => Log_Manager::redact_url( $url ),
 			'hash'               => $hash,
 			// What these numbers are OF; the pointer below carries it too.
@@ -602,7 +584,7 @@ class Ask_Assembler {
 			'fetch'              => self::fetch(
 				'dump_url',
 				[
-					'hash'   => $hash,
+					$field   => $hash,
 					'server' => $server,
 					'filter' => $filter,
 					'bucket' => $bucket,
@@ -967,5 +949,25 @@ class Ask_Assembler {
 	 */
 	public static function measured_figure( mixed $value ): ?float {
 		return null === $value ? null : Core::num_float( $value );
+	}
+
+	/**
+	 * Split `type:id`. A request is named by its rid alone, which holds no
+	 * colon; every other id is taken whole, colons included, because a span
+	 * or listener name carries them. Null on anything outside the vocabulary,
+	 * so a hand-typed or stale descriptor is refused rather than half-honoured.
+	 *
+	 * @param string $descriptor `type:id`, as a `data-ask` attribute carries it.
+	 * @return array{type:string,id:string}|null
+	 */
+	public static function parse_descriptor( string $descriptor ): ?array {
+		[ $type, $id ] = \array_pad( \explode( ':', $descriptor, 2 ), 2, '' );
+		if ( '' === $id || ! \in_array( $type, self::TYPES, true ) || ( 'request' === $type && \str_contains( $id, ':' ) ) ) {
+			return null;
+		}
+		return [
+			'type' => $type,
+			'id'   => $id,
+		];
 	}
 }

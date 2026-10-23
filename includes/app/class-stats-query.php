@@ -193,7 +193,8 @@ final class Stats_Query {
 	/**
 	 * A row's server, read plainly, for a table whose key or an index leads
 	 * with `server_id` and then `bucket`, so a server filter seeks inside the
-	 * window.
+	 * window. `arm()` reads `SERVER_JOIN` in its place under a filter naming
+	 * a URL field, whose url-led index seeks fewer rows than the server's.
 	 */
 	private const SEEKING_SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
 
@@ -1019,7 +1020,8 @@ final class Stats_Query {
 	 * each input as `m_<name>`, over the bucket ranges, the filters and the
 	 * search. Grouped by id, a `BY_ID` field is its id alone, and joins its
 	 * table only for a filter on it or, for a URL, a search; a URL never
-	 * joins `servers`. Each join is made once, however many fields need it.
+	 * joins `servers`. A filter naming a URL field joins the server through
+	 * `SERVER_JOIN`. Each join is made once, however many fields need it.
 	 *
 	 * @param Spec         $spec      The checked spec.
 	 * @param string       $table     The table answering it.
@@ -1072,10 +1074,11 @@ final class Stats_Query {
 			$binds[]   = $spec['match'];
 			$joined[]  = 'url';
 		}
-		$joins = [];
+		$joins   = [];
+		$one_url = [] !== \array_intersect_key( $spec['filter'], self::URL_FIELDS );
 		foreach ( Core::arr( $def['joins'] ) as $name => $join ) {
 			if ( \in_array( $name, [ ...$joined, ...$inputs ], true ) ) {
-				$joins[] = Core::as_string( $join );
+				$joins[] = $one_url && self::SEEKING_SERVER_JOIN === $join ? self::SERVER_JOIN : Core::as_string( $join );
 			}
 		}
 		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM %1\$s.{$table} AS t "
