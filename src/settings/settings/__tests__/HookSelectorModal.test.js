@@ -586,7 +586,8 @@ describe( 'HookSelectorModal', () => {
 			const mod = require( '../HookSelectorModal' );
 			expect( mod.isNoisy( 'gettext_with_context' ) ).toBe( true );
 			expect( mod.isNoisy( 'pre_option_home' ) ).toBe( false );
-			expect( mod.OWNER_TIME_HOOKS.has( 'kea_7746_boot' ) ).toBe( true );
+			expect( mod.PLUGIN_TIME_HOOKS ).toContain( 'kea_7746_boot' );
+			expect( mod.PLUGIN_TIME_HOOKS ).not.toContain( 'gettext_probe' );
 		} );
 	} );
 } );

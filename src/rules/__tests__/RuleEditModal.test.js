@@ -12,6 +12,10 @@
 
 jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 	__esModule: true,
+	PLUGIN_TIME_HOOKS: Array.from(
+		{ length: 17 },
+		( _, i ) => `kea_7746_life_${ i }`
+	),
 	default: ( { isOpen, onSelect, onClose, className } ) => {
 		globalThis.__hookSelectorClassName = className;
 		return isOpen
@@ -374,6 +378,75 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
 	} );
 
+	describe( 'Measure plugin time', () => {
+		const LIFE = Array.from(
+			{ length: 17 },
+			( _, i ) => `kea_7746_life_${ i }`
+		);
+
+		function measureButton() {
+			return Array.from( document.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.trim() === 'Measure plugin time'
+			);
+		}
+
+		test( 'sets hooks, events and all three switches in the pending state', () => {
+			mount( {
+				...LOG_RULE,
+				hooks: [ 'kea_7746_init' ],
+				significant_events: [ 'kea_7746_init' ],
+				log_queries: false,
+				log_http: false,
+				log_plugin_loads: false,
+			} );
+			click( measureButton() );
+			for ( const name of [ 'queries', 'http', 'plugin-loads' ] ) {
+				expect(
+					inDialog( `input[name="rule-log-${ name }"]` ).checked
+				).toBe( true );
+			}
+			expect( onSave ).not.toHaveBeenCalled();
+			click( saveButton() );
+			const saved = onSave.mock.calls[ 0 ][ 0 ];
+			expect( saved.hooks ).toEqual( [ 'kea_7746_init', ...LIFE ] );
+			expect( saved.significant_events ).toEqual( [
+				'kea_7746_init',
+				...LIFE,
+				'sql',
+				'http',
+			] );
+			expect( saved.log_queries ).toBe( true );
+			expect( saved.log_http ).toBe( true );
+			expect( saved.log_plugin_loads ).toBe( true );
+		} );
+
+		test( 'adds each name once when the rule already holds some', () => {
+			mount( {
+				...LOG_RULE,
+				hooks: [ LIFE[ 3 ] ],
+				significant_events: [ 'sql', LIFE[ 3 ] ],
+			} );
+			click( measureButton() );
+			click( measureButton() );
+			click( saveButton() );
+			const saved = onSave.mock.calls[ 0 ][ 0 ];
+			expect(
+				saved.hooks.filter( ( h ) => h === LIFE[ 3 ] )
+			).toHaveLength( 1 );
+			expect( saved.hooks ).toHaveLength( 17 );
+			expect(
+				saved.significant_events.filter( ( e ) => 'sql' === e )
+			).toHaveLength( 1 );
+			expect( saved.significant_events ).toHaveLength( 19 );
+		} );
+
+		test( 'the significant events box shows the added tags', () => {
+			mount( { ...LOG_RULE, significant_events: [] } );
+			click( measureButton() );
+			expect( document.body.textContent ).toContain( 'kea_7746_life_16' );
+		} );
+	} );
+
 	// The close's rows and the debugging switches, each a rule's to set.
 	const ROW_SWITCHES = [
 		[ 'log_memory', 'rule-log-memory' ],
@@ -683,8 +756,8 @@ describe( 'RuleEditModal — Enter saves through the form', () => {
 		const others = [ ...form.querySelectorAll( 'button' ) ].filter(
 			( b ) => b !== saveButton()
 		);
-		// Select Hooks, Select Events, the tag's remove, Clear all, Delete, Cancel.
-		expect( others ).toHaveLength( 6 );
+		// Select Hooks, Select Events, the tag's remove, Clear all, Measure, Delete, Cancel.
+		expect( others ).toHaveLength( 7 );
 		others.forEach( ( b ) => expect( b.type ).toBe( 'button' ) );
 	} );
 
