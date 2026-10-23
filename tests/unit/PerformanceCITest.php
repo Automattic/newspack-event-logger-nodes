@@ -2252,7 +2252,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 24, $reply['slots'], '7,200 seconds is 24 buckets' );
 		$this->assertSame( Bucket::key( $latest ), $reply['slots'][0], 'newest first' );
 		$this->assertSame( Bucket::key( $latest - 23 ), $reply['slots'][23] );
-		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'owners', 'available' ], \array_keys( $reply ) );
 		$this->assertTrue( $reply['available'] );
 	}
 
@@ -3516,7 +3516,7 @@ class PerformanceCITest extends TestCase {
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
 
-		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles', 'aggregate_owners' ], \array_keys( $reply ) );
 		$this->assertSame(
 			[
 				[ 'rid' => 'rid-takahe-new', 'timestamp' => $latest * 300 - 46, 'duration_ms' => null, 'finished_at' => $latest * 300 + 19.5, 'status_code' => 504, 'peak_mb' => 12.75, 'method' => 'GET', 'error_status' => 'T' ],
@@ -3644,6 +3644,69 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 73.833333333333, \round( $profiles['avg_ms'], 12 ) );
 		$this->assertSame( [ 'time' => 45.25, 'count' => 3, 'samples' => 2, 'entries' => [ 'SELECT pateke' => [ 20.125, 1, 2 ] ] ], $profiles['categories']['sql'] );
 		$this->assertSame( 6.25, $profiles['categories']['init hook @10']['time'] );
+	}
+
+	/** Seeds three requests' owner time: kea 60 ms, core 30 ms, 9 ms unmeasured. */
+	private function seed_owner_board( string $url ): void {
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => 'core', 'ms' => 30.0, 'calls' => 9, 'requests' => 3 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => 'kea-7746', 'ms' => 60.0, 'calls' => 4, 'requests' => 3 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => '(unmeasured)', 'ms' => 9.0, 'calls' => 0, 'requests' => 3 ] );
+		$this->seed_owner_site_timings(
+			[
+				[ 'owner' => 'core', 'ms' => 30.0, 'calls' => 9, 'requests' => 3 ],
+				[ 'owner' => 'kea-7746', 'ms' => 60.0, 'calls' => 4, 'requests' => 3 ],
+				[ 'owner' => '(unmeasured)', 'ms' => 9.0, 'calls' => 0, 'requests' => 3 ],
+			]
+		);
+	}
+
+	public function test_overview_answers_each_owners_time_per_request(): void {
+		$url = 'https://seed.example/rimu-5/';
+		$this->seed_owner_board( $url );
+		$this->seed_owner_site_timing( [ 'owner' => 'kea-7746', 'worker' => 1, 'ms' => 7000.0, 'calls' => 70, 'requests' => 70 ] );
+		$this->seed_owner_site_timing( [ 'owner' => 'kea-7746', 'bucket' => self::latest() - Bucket::window(), 'ms' => 5000.0, 'calls' => 50, 'requests' => 50 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+
+		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'owners', 'available' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['owners'], 'ms_per_request' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['owners'], 'share' ), 1e-9 );
+		$this->assertSame( [ 4, 9, 0 ], \array_column( $reply['owners'], 'calls' ) );
+	}
+
+	public function test_overview_owners_find_unmeasured_past_a_full_page_of_owners(): void {
+		$rows = [ [ 'owner' => '(unmeasured)', 'ms' => 0.25, 'calls' => 0, 'requests' => 5 ] ];
+		for ( $i = 0; $i <= Stats_Query::MAX_LIMIT; $i++ ) {
+			$rows[] = [ 'owner' => \sprintf( 'plugin-%04d', $i ), 'ms' => 50.5 + $i, 'calls' => 1, 'requests' => 1 ];
+		}
+		$this->seed_owner_site_timings( $rows );
+
+		$owners = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['owners'];
+
+		$this->assertCount( Stats_Query::MAX_LIMIT + 2, $owners );
+		$this->assertEqualsWithDelta( ( 50.5 + Stats_Query::MAX_LIMIT ) / 5, $owners[0]['ms_per_request'], 1e-9 );
+		$this->assertSame( '(unmeasured)', $owners[ Stats_Query::MAX_LIMIT + 1 ]['owner'] );
+	}
+
+	public function test_overview_owners_are_empty_over_no_measured_request(): void {
+		$this->seed_owner_site_timing( [ 'owner' => 'kea-7746', 'ms' => 60.0, 'calls' => 4, 'requests' => 3 ] );
+
+		$this->assertSame( [], VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['owners'] );
+	}
+
+	public function test_dump_url_answers_the_same_owners_for_its_url(): void {
+		$url = 'https://seed.example/rimu-5/';
+		$this->seed_owner_board( $url );
+		$this->seed_owner_timing( [ 'url' => 'https://seed.example/elsewhere-5/', 'owner' => 'kea-7746', 'ms' => 9000.0, 'calls' => 90, 'requests' => 90 ] );
+		$this->seed_request( [ 'url' => $url, 'ms' => 40.5 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
+
+		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles', 'aggregate_owners' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['aggregate_owners'], 'ms_per_request' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['aggregate_owners'], 'share' ), 1e-9 );
 	}
 
 	public function test_dump_url_profile_is_null_over_no_profiled_request(): void {
@@ -4070,6 +4133,7 @@ class PerformanceCITest extends TestCase {
 				'aggregate_flame'    => null,
 				'flame_cut'          => false,
 				'aggregate_profiles' => null,
+				'aggregate_owners'   => [],
 			],
 			$reply
 		);

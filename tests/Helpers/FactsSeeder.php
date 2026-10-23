@@ -148,6 +148,20 @@ trait FactsSeeder {
 	}
 
 	/**
+	 * Many `owner_timings_site` rows in one write.
+	 *
+	 * @param list<array<string,mixed>> $rows      Each row's columns by name, plus `owner`.
+	 * @param int                       $partition The partition file they land in.
+	 */
+	protected function seed_owner_site_timings( array $rows, int $partition = 0 ): void {
+		$seed = [];
+		foreach ( $rows as $over ) {
+			$seed[] = [ 'add', 'owner_timings_site', $over + self::owner_defaults( Core::as_string( $over['server'] ?? self::$seed_server ) ) + [ 'worker' => 0 ] ];
+		}
+		$this->seed_rows( $partition, $seed );
+	}
+
+	/**
 	 * The query plan SQLite chooses for a statement, one line per step.
 	 *
 	 * @param Row_Reader        $db    The connection that would run it.

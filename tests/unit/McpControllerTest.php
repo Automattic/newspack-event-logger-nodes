@@ -593,7 +593,7 @@ class McpControllerTest extends TestCase {
 			\trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ),
 			true
 		);
-		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $decoded ) );
+		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'owners', 'available' ], \array_keys( $decoded ) );
 	}
 
 	/**
