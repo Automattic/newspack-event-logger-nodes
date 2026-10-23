@@ -25,7 +25,6 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
-use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
@@ -1693,95 +1692,6 @@ class Findings {
 	}
 
 	/**
-	 * A record's flame tree, under whichever key it arrived by.
-	 *
-	 * A LOADED record carries it at `flame_data` — `Performance_CI` merges the
-	 * flames partition in under that name — while only a FOLDED record ever
-	 * carries `flame`, which `Request_Builder_Node` writes as part of the fold.
-	 * Reading one key alone makes every ordinary request look wholly unmeasured.
-	 * A record carrying neither is folded from its entries, so its spans still
-	 * reach the findings and the briefs; a `flame_data` already resolved, even
-	 * to no tree, is not folded again.
-	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 * @return array<array-key,mixed> The flame tree root, or [] when the record holds no span.
-	 */
-	public static function flame_of( array $record ): array {
-		if ( \is_array( $record['flame_data'] ?? null ) ) {
-			return $record['flame_data'];
-		}
-		if ( [] !== Core::arr( $record['flame'] ?? null ) ) {
-			return Core::arr( $record['flame'] );
-		}
-		$tree = self::entry_fold( $record );
-		return [] === Core::arr( $tree['children'] ?? null ) ? [] : $tree;
-	}
-
-	/**
-	 * A record's entries folded into a tree, transiently, and stored nowhere.
-	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 * @return array<string,mixed> The tree `Flame_Fold::tree()` builds, `folded` set.
-	 */
-	private static function entry_fold( array $record ): array {
-		// Built, read and dropped: no in-flight pool to hold a budget against.
-		$state = Flame_Fold::start( null, \PHP_INT_MAX );
-		foreach ( Core::arr( $record['entries'] ?? null ) as $entry ) {
-			if ( \is_array( $entry ) ) {
-				Flame_Fold::add( $state, $entry );
-			}
-		}
-		return Flame_Fold::tree( $state );
-	}
-
-	/**
-	 * Each owner's self time in one request's flame tree, largest first.
-	 *
-	 * A frame whose name carries no owner takes its nearest owned ancestor's,
-	 * else `Owner::UNOWNED`; an inherited frame adds time and no calls. The
-	 * duration less the top-level spans is `Owner::UNMEASURED`, always present, so the
-	 * owners' times add up to the request's duration.
-	 *
-	 * @param array<array-key,mixed> $flame       The flame tree root, as `flame_of()` returns it.
-	 * @param float                  $duration_ms The request's duration, the divisor of each share.
-	 * @return list<array{owner:string,ms:float,share:float,calls:int}>
-	 */
-	public static function owners( array $flame, float $duration_ms ): array {
-		$entries = self::flatten( $flame );
-		$covered = 0.0;
-		$sums    = [];
-		$owners  = [];
-		foreach ( $entries as $at => $entry ) {
-			$own     = Owner::of_label( $entry['name'] );
-			$owner   = '' !== $own ? $own : ( $owners[ $entry['parent'] ?? -1 ] ?? Owner::UNOWNED );
-			$covered += null === $entry['parent'] ? $entry['value'] : 0.0;
-			$sum     = $sums[ $owner ] ?? [ 'owner' => $owner, 'ms' => 0.0, 'calls' => 0 ];
-			$owners[ $at ]  = $owner;
-			$sums[ $owner ] = [
-				'owner' => $owner,
-				'ms'    => $sum['ms'] + \max( 0.0, $entry['self_ms'] ),
-				'calls' => $sum['calls'] + ( '' !== $own ? $entry['count'] : 0 ),
-			];
-		}
-		$sums[ Owner::UNMEASURED ] = [
-			'owner' => Owner::UNMEASURED,
-			'ms'    => \max( 0.0, $duration_ms - $covered ),
-			'calls' => 0,
-		];
-		$rows = [];
-		foreach ( $sums as $sum ) {
-			$rows[] = [
-				'owner' => $sum['owner'],
-				'ms'    => $sum['ms'],
-				'share' => $duration_ms > 0.0 ? $sum['ms'] / $duration_ms : 0.0,
-				'calls' => $sum['calls'],
-			];
-		}
-		\usort( $rows, static fn ( array $a, array $b ): int => [ $b['ms'], $a['owner'] ] <=> [ $a['ms'], $b['owner'] ] );
-		return $rows;
-	}
-
-	/**
 	 * Flatten a flame tree into a list of `{name, value, self_ms, max, depth,
 	 * count, nested_ms, max_own, parent}`, root excluded — the root IS the request, so it can never be the
 	 * span holding most of the request. `parent` is the index of the entry this
@@ -1973,6 +1883,48 @@ class Findings {
 	}
 
 	/**
+	 * A record's flame tree, under whichever key it arrived by.
+	 *
+	 * A LOADED record carries it at `flame_data` — `Performance_CI` merges the
+	 * flames partition in under that name — while only a FOLDED record ever
+	 * carries `flame`, which `Request_Builder_Node` writes as part of the fold.
+	 * Reading one key alone makes every ordinary request look wholly unmeasured.
+	 * A record carrying neither is folded from its entries, so its spans still
+	 * reach the findings and the briefs; a `flame_data` already resolved, even
+	 * to no tree, is not folded again.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 * @return array<array-key,mixed> The flame tree root, or [] when the record holds no span.
+	 */
+	public static function flame_of( array $record ): array {
+		if ( \is_array( $record['flame_data'] ?? null ) ) {
+			return $record['flame_data'];
+		}
+		if ( [] !== Core::arr( $record['flame'] ?? null ) ) {
+			return Core::arr( $record['flame'] );
+		}
+		$tree = self::entry_fold( $record );
+		return [] === Core::arr( $tree['children'] ?? null ) ? [] : $tree;
+	}
+
+	/**
+	 * A record's entries folded into a tree, transiently, and stored nowhere.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 * @return array<string,mixed> The tree `Flame_Fold::tree()` builds, `folded` set.
+	 */
+	private static function entry_fold( array $record ): array {
+		// Built, read and dropped: no in-flight pool to hold a budget against.
+		$state = Flame_Fold::start( null, \PHP_INT_MAX );
+		foreach ( Core::arr( $record['entries'] ?? null ) as $entry ) {
+			if ( \is_array( $entry ) ) {
+				Flame_Fold::add( $state, $entry );
+			}
+		}
+		return Flame_Fold::tree( $state );
+	}
+
+	/**
 	 * Findings for one URL, from its aggregate stats alone. This is the cold
 	 * start: the common first ask is about a slow URL with no flame graph, no
 	 * spans and no entries — only a total. The useful answer is not an
@@ -2092,6 +2044,34 @@ class Findings {
 			return [ '(unresolved)' ];
 		}
 		return \array_values( $rule->hooks );
+	}
+
+	/**
+	 * Each owner's time on one request, dearest first, as the request builder
+	 * measured it on the span stack (`Request_Builder_Node::owners_of()`),
+	 * never off a flame value (decision 12). `share` divides by the duration.
+	 * None on a record carrying no owners, or whose duration nobody measured
+	 * (decision 24), as `for_request()` gates its findings.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 * @return list<array{owner:string,ms:float,share:float,calls:int}>
+	 */
+	public static function owners( array $record ): array {
+		$duration = Core::num_float( $record['duration_ms'] ?? null );
+		if ( ! Stats_Builder_Node::timing_counts( $duration, $record['error_status'] ?? '-' ) ) {
+			return [];
+		}
+		$rows = [];
+		foreach ( Request_Builder_Node::owners_of( $record ) as [ $owner, $ms, $calls ] ) {
+			$rows[] = [
+				'owner' => $owner,
+				'ms'    => $ms,
+				'share' => $ms / $duration,
+				'calls' => $calls,
+			];
+		}
+		\usort( $rows, static fn ( array $a, array $b ): int => [ $b['ms'], $a['owner'] ] <=> [ $a['ms'], $b['owner'] ] );
+		return $rows;
 	}
 
 	/**

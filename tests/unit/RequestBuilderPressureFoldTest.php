@@ -324,6 +324,24 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		$this->assertLessThan( \count( $entries ) - 1, $position );
 	}
 
+	/** A request that folds keeps measuring its owners on the span stack. */
+	public function test_a_folded_request_keeps_measuring_its_owners(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'r-kea', 'process (start)', [ 'm' => '1 on host GET /r-kea' ] );
+		$this->fill( $rb, $n++, 'r-kea', 'request', [ 'm' => 'GET http://x/r-kea' ] );
+		for ( $i = 0; $i < self::MAX_PER_REQUEST; $i++ ) {
+			$this->fill( $rb, $n++, 'r-kea', 'sql (start)', [ 'l' => '[core] kea_7746_q' ] );
+			$this->fill( $rb, $n++, 'r-kea', 'sql (complete)', [ 'duration_ms' => 1.5 ] );
+		}
+		$this->fill( $rb, $n, 'r-kea', 'process (complete)', [ 'duration_ms' => 100.0, 'status_code' => 200 ] );
+
+		$record = $sink->captured[0][ Message::VALUE ];
+		$this->assertTrue( $record['folded'] );
+		$this->assertEquals( [ 'core' => [ 36.0, 24 ], '(unmeasured)' => [ 64.0, 0 ] ], $record['owners'] );
+	}
+
 	public function test_one_runaway_request_folds_on_its_own_cap(): void {
 		// The per-request cap folds the request, so its counts and totals
 		// cover every line, not only those before the cap.

@@ -183,7 +183,8 @@ return [
 
 	// Hook-name patterns the rule editor flags as too noisy to log, in
 	// `hook_categories.json`'s pattern form. A pattern that does not compile
-	// throws when the list is published as `window.newspackNodesNoisyHooks`.
+	// is skipped and logged when the list is published as
+	// `window.newspackNodesNoisyHooks`.
 	// 'noisy_log_events' => [
 	//	'^gettext',
 	//	'^ngettext',

@@ -109,7 +109,7 @@ class Settings_Schema {
 	 * Hook-name patterns the rule editor warns are too noisy to log, in
 	 * `hook_categories.json`'s pattern form. Exposed to JS as
 	 * `window.newspackNodesNoisyHooks` by `Config::noisy_log_events()`, which
-	 * throws on a pattern that does not compile.
+	 * skips a pattern that does not compile and logs it.
 	 *
 	 * @var list<string>
 	 */
