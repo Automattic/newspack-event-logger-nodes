@@ -293,6 +293,56 @@ class JobRouterTest extends TestCase {
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
+	/**
+	 * The drop line keys its throttle on the reason alone: the handler comes
+	 * from the job body, so two bad handlers in one window log one line,
+	 * naming the first in the line's tail.
+	 */
+	public function test_invalid_handler_names_share_one_throttled_line(): void {
+		$lines = $this->stderr_during(
+			function (): void {
+				$this->jr->fill( $this->msg( 'firehose:consumer', $this->firehose_entry( 'job', '1kilo-4471', [] ) ) );
+				$this->jr->fill( $this->msg( 'firehose:consumer', $this->firehose_entry( 'job', '2lima-5582', [] ) ) );
+			}
+		);
+		$this->assertCount( 1, $lines );
+		$this->assertStringContainsString( 'WARNING: invalid handler name - ', $lines[0] );
+		$this->assertStringEndsWith( ' handler: 1kilo-4471', trim( $lines[0] ) );
+	}
+
+	/** Non-array parameters under two handlers in one window log one line. */
+	public function test_non_array_parameters_share_one_throttled_line(): void {
+		$entry = static fn ( string $handler ): array => [
+			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => Core::$now - 9.75,
+			'm'   => [ 'type' => 'job', 'handler' => $handler, 'parameters' => 'not an array' ],
+		];
+		$lines = $this->stderr_during(
+			function () use ( $entry ): void {
+				$this->jr->fill( $this->msg( 'firehose:consumer', $entry( 'mike-6693' ) ) );
+				$this->jr->fill( $this->msg( 'firehose:consumer', $entry( 'november-7704' ) ) );
+			}
+		);
+		$this->assertCount( 1, $lines );
+		$this->assertStringContainsString( 'WARNING: non-array parameters - ', $lines[0] );
+		$this->assertStringEndsWith( ' handler: mike-6693', trim( $lines[0] ) );
+	}
+
+	/**
+	 * Every stderr line `$body` writes.
+	 *
+	 * @return list<string>
+	 */
+	private function stderr_during( \Closure $body ): array {
+		$lines = [];
+		Core::set_stderr_handler(
+			static function ( string $text ) use ( &$lines ): void {
+				$lines[] = $text;
+			}
+		);
+		$body();
+		return $lines;
+	}
+
 	public function test_non_struct_message_dropped(): void {
 		$m                  = Message::new_message();
 		$m[ Message::TYPE ] = Message::TM_BYTESTREAM;
