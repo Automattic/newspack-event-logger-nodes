@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.154.1] - 2026-10-23
+
 ### Fixed
 - **A settings reset restarts the workers its field names.** The reset list and a save equal to the file default both delete the option row, and the restart listened only for a row added or updated, so either one left the workers running the old value. The settings page now listens for a deleted row too.
 - **The dashboards' stacked charts meet again.** The bundled substrate chart drew a band with a zero run in pieces whose edges parted from the band beneath, opening dark wedges and slivers across the stack; it draws each band whole (newspack-nodes 2.125.1).
