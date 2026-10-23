@@ -49,6 +49,7 @@ class AppCoreTest extends TestCase {
 	protected function tearDown(): void {
 		Core::$query_outcome        = null;
 		Core::$query_monitor_loaded = null;
+		Core::$query_monitor_html   = null;
 		$GLOBALS['_wp_options']             = [];
 		$GLOBALS['_wp_test_options']        = [];
 		$GLOBALS['_wp_test_current_filter'] = '';
@@ -1313,7 +1314,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wraps_ahead_of_a_short_circuit_and_passes_the_vote_through(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
@@ -1344,7 +1345,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wraps_a_listener_below_the_hook_start_floor(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$hook            = new \WP_Hook();
@@ -1361,7 +1362,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wraps_a_stranger_at_the_last_priority_and_spares_only_its_own(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$hook            = new \WP_Hook();
@@ -1409,7 +1410,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wrap_spares_the_binders_own_hook_listeners(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'pre_http_request' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'pre_http_request' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
@@ -1450,7 +1451,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wraps_nothing_without_a_log_manager(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		Log_Manager::reset();
@@ -1469,7 +1470,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_wraps_a_listener_registered_after_binding(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
@@ -2210,7 +2211,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_wrap_callbacks_does_not_rewrap_existing_wrapper(): void {
 		// Second hook_start on the same hook must recognise the wrapper it created
-		// (spl_object_id in wrapper_ids) and skip re-wrapping it.
+		// (spl_object_id in `wrapped`) and skip re-wrapping it.
 		$core = $this->significant_core();
 
 		$original = function ( $v ) { return $v; };
@@ -2226,6 +2227,302 @@ class AppCoreTest extends TestCase {
 
 		$this->assertInstanceOf( \Closure::class, $first );
 		$this->assertSame( $first, $second, 'existing wrapper must not be re-wrapped' );
+	}
+
+	// ── Query Monitor sees the callbacks, not the wrappers ──────────────
+
+	/** The `shutdown` priority the restore binds at, one ahead of QM's 9. */
+	private const RESTORE_PRIORITY = 8;
+
+	/**
+	 * Stand in for Query Monitor's HTML dispatcher: `should_dispatch()` is the
+	 * one predicate `QM_Dispatcher_Html::dispatch()` gates its collection on.
+	 */
+	private function query_monitor_html( bool $dispatching ): object {
+		$dispatcher = new class() {
+			public bool $dispatching = false;
+			public function should_dispatch(): bool {
+				return $this->dispatching;
+			}
+		};
+		$dispatcher->dispatching = $dispatching;
+		Core::$query_monitor_html = static fn (): object => $dispatcher;
+		return $dispatcher;
+	}
+
+	/** A Core binding the_content as significant while Query Monitor is loaded. */
+	private function query_monitor_core(): Core {
+		Core::$query_monitor_loaded = static fn (): bool => true;
+		return $this->significant_core();
+	}
+
+	/** Each priority on `shutdown` holding this Core's restore, with its count. */
+	private function restores( Core $core ): array {
+		$found = [];
+		foreach ( $GLOBALS['_wp_test_filters']['shutdown'] ?? [] as $priority => $callbacks ) {
+			$mine = \count( \array_filter( $callbacks, static fn ( $cb ): bool => [ $core, 'restore_callbacks' ] === $cb ) );
+			if ( $mine > 0 ) {
+				$found[ $priority ] = $mine;
+			}
+		}
+		return $found;
+	}
+
+	/** Two callbacks on the_content, each with an accepted_args of its own. */
+	private function two_callback_hook(): \WP_Hook {
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [ 'kea_title' => [ 'function' => static fn ( $v, $id, $ctx ) => $v . '+t', 'accepted_args' => 3 ] ],
+			40 => [ 'kea_body' => [ 'function' => 'trim', 'accepted_args' => 2 ] ],
+		];
+		return $hook;
+	}
+
+	public function test_query_monitor_dispatching_gets_back_every_original_callback(): void {
+		$core = $this->query_monitor_core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$before                   = $wp_filter['the_content']->callbacks;
+		$core->hook_start( 'x' );
+		$this->assertSame( 99, $wp_filter['the_content']->callbacks[40]['kea_body']['accepted_args'], 'wrapped first' );
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $before, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_the_restore_binds_once_at_construction_one_ahead_of_query_monitor(): void {
+		$core = $this->query_monitor_core();
+
+		$this->assertSame( [ self::RESTORE_PRIORITY => 1 ], $this->restores( $core ) );
+	}
+
+	public function test_a_rebind_binds_the_restore_once_again(): void {
+		$core = $this->query_monitor_core();
+
+		$core->rebind_for_current_scope();
+
+		$this->assertSame( [ self::RESTORE_PRIORITY => 1 ], $this->restores( $core ) );
+	}
+
+	public function test_a_wrap_made_before_query_monitor_registers_its_dispatcher_is_restored(): void {
+		$core = $this->query_monitor_core();
+		Core::$query_monitor_html = static fn (): bool => false;
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$before                   = $wp_filter['the_content']->callbacks;
+		$core->hook_start( 'x' );
+		$this->query_monitor_html( true );
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $before, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_a_dispatcher_turning_on_before_shutdown_gets_the_restore(): void {
+		$core       = $this->query_monitor_core();
+		$dispatcher = $this->query_monitor_html( false );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$before                   = $wp_filter['the_content']->callbacks;
+		$core->hook_start( 'x' );
+		$dispatcher->dispatching = true;
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $before, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_a_dispatcher_turning_off_before_shutdown_keeps_the_wrappers(): void {
+		$core       = $this->query_monitor_core();
+		$dispatcher = $this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		$wrapped                 = $wp_filter['the_content']->callbacks;
+		$dispatcher->dispatching = false;
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $wrapped, $wp_filter['the_content']->callbacks );
+		$this->assertSame( 99, $wp_filter['the_content']->callbacks[10]['kea_title']['accepted_args'] );
+	}
+
+	public function test_a_significant_hook_firing_after_the_restore_stays_unwrapped(): void {
+		$core = $this->query_monitor_core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$before                   = $wp_filter['the_content']->callbacks;
+		$core->hook_start( 'x' );
+		\do_action( 'shutdown' );
+
+		$core->hook_start( 'x' );
+
+		$this->assertSame( $before, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_pre_http_request_stays_unwrapped_after_the_restore(): void {
+		Core::$query_monitor_loaded = static fn (): bool => true;
+		$this->govern_with_significant( significant_events: [ 'http' ], log_http: true );
+		$core = new Core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = new \WP_Hook();
+		$wp_filter['pre_http_request']->callbacks = [ 20 => [ 'kea_cache' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		$before = $wp_filter['pre_http_request']->callbacks;
+		$core->http_wrap( false );
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[20]['kea_cache']['accepted_args'], 'wrapped first' );
+		\do_action( 'shutdown' );
+
+		$core->http_wrap( false );
+
+		$this->assertSame( $before, $wp_filter['pre_http_request']->callbacks );
+	}
+
+	public function test_the_query_filter_stays_unwrapped_after_the_restore(): void {
+		Core::$query_monitor_loaded = static fn (): bool => true;
+		$this->govern_with_significant( significant_events: [ 'sql' ], log_queries: true );
+		$core = new Core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['query'] = new \WP_Hook();
+		$wp_filter['query']->callbacks = [ 30 => [ 'kea_rewrite' => [ 'function' => 'trim', 'accepted_args' => 2 ] ] ];
+		$before = $wp_filter['query']->callbacks;
+		$core->query_start( 'SELECT 1' );
+		$this->assertSame( 99, $wp_filter['query']->callbacks[30]['kea_rewrite']['accepted_args'], 'wrapped first' );
+		\do_action( 'shutdown' );
+
+		$core->query_start( 'SELECT 1' );
+
+		$this->assertSame( $before, $wp_filter['query']->callbacks );
+	}
+
+	public function test_the_restore_resurrects_no_callback_removed_after_its_wrap(): void {
+		$core = $this->query_monitor_core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		unset( $wp_filter['the_content']->callbacks[10]['kea_title'] );
+
+		\do_action( 'shutdown' );
+
+		$this->assertArrayNotHasKey( 'kea_title', $wp_filter['the_content']->callbacks[10] );
+		$this->assertSame( 2, $wp_filter['the_content']->callbacks[40]['kea_body']['accepted_args'] );
+	}
+
+	public function test_the_restore_recreates_no_hook_emptied_after_its_wrap(): void {
+		$core = $this->query_monitor_core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		unset( $wp_filter['the_content'] );
+
+		\do_action( 'shutdown' );
+
+		$this->assertArrayNotHasKey( 'the_content', $wp_filter );
+	}
+
+	public function test_a_dispatcher_without_a_callable_should_dispatch_keeps_the_wrappers(): void {
+		$core = $this->query_monitor_core();
+		Core::$query_monitor_html = static fn (): object => new \stdClass();
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		$wrapped = $wp_filter['the_content']->callbacks;
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $wrapped, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_no_dispatcher_at_shutdown_keeps_the_wrappers(): void {
+		$core = $this->query_monitor_core();
+		Core::$query_monitor_html = static fn (): bool => false;
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		$wrapped = $wp_filter['the_content']->callbacks;
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $wrapped, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_a_restore_with_nothing_wrapped_never_asks_for_the_dispatcher(): void {
+		$core                     = $this->query_monitor_core();
+		$asked                    = 0;
+		Core::$query_monitor_html = static function () use ( &$asked ): bool {
+			++$asked;
+			return false;
+		};
+
+		$core->restore_callbacks();
+
+		$this->assertSame( 0, $asked );
+	}
+
+	public function test_no_query_monitor_binds_no_restore(): void {
+		Core::$query_monitor_loaded = static fn (): bool => false;
+		$core = $this->significant_core();
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+
+		$core->hook_start( 'x' );
+
+		$this->assertSame( [], $this->restores( $core ) );
+		$this->assertSame( 99, $wp_filter['the_content']->callbacks[40]['kea_body']['accepted_args'] );
+	}
+
+	/**
+	 * Wrappers outlive the scope that made them, so a rebind onto a request
+	 * no rule governs still restores them. Runs what `shutdown` holds at the
+	 * restore's priority, which the harness keeps current across a rebind.
+	 */
+	public function test_a_rebind_onto_an_ungoverned_scope_still_restores_earlier_wraps(): void {
+		$core = $this->query_monitor_core();
+		$this->query_monitor_html( true );
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$before                   = $wp_filter['the_content']->callbacks;
+		$core->hook_start( 'x' );
+		$this->set_governing_rule( null );
+		$core->rebind_for_current_scope();
+
+		foreach ( $GLOBALS['_wp_test_filters']['shutdown'][ self::RESTORE_PRIORITY ] ?? [] as $listener ) {
+			$listener();
+		}
+
+		$this->assertSame( $before, $wp_filter['the_content']->callbacks );
+	}
+
+	public function test_query_monitor_loaded_without_its_dispatcher_registry_keeps_the_wrappers(): void {
+		$this->assertFalse( \class_exists( 'QM_Dispatchers', false ), 'the unit bootstrap declares no QM_Dispatchers' );
+		$core = $this->query_monitor_core();
+		global $wp_filter;
+		$wp_filter['the_content'] = $this->two_callback_hook();
+		$core->hook_start( 'x' );
+		$wrapped = $wp_filter['the_content']->callbacks;
+
+		\do_action( 'shutdown' );
+
+		$this->assertSame( $wrapped, $wp_filter['the_content']->callbacks );
+	}
+
+	/**
+	 * Govern the request with a log rule on `/` naming `init`, carrying the
+	 * significant events and transport flags given.
+	 *
+	 * @param list<string> $significant_events Significant events.
+	 */
+	private function govern_with_significant( array $significant_events, bool $log_http = false, bool $log_queries = false ): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: $significant_events, log_http: $log_http, log_queries: $log_queries )
+		);
 	}
 
 	public function test_wrap_callbacks_skips_array_by_reference_callback_under_governing_rule(): void {
