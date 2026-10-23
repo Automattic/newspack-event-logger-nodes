@@ -90,7 +90,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The thirteen row tables, each column in row order, each table a
+	 * The sixteen row tables, each column in row order, each table a
 	 * `NAMED_BY` column names `retained_by` that column, and that column
 	 * leading an index wherever its table's key or another index does not.
 	 * Each stats table keeps `Bucket::window()` and `Bucket::RETAIN_SLACK`

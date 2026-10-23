@@ -325,6 +325,7 @@ abstract class TestCase extends RuntimeTestCase {
 				'timestamp'      => self::tick(),
 				'entries'        => [],
 				'profiles'       => [],
+				'owners'         => [ '(unmeasured)' => [ 100.0, 0 ] ],
 			],
 			$overrides
 		);

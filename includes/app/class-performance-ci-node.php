@@ -2508,7 +2508,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$rule               = self::rule_for_record( $result );
 				$result['findings'] = Findings::for_request( $result, $rule );
 				$result['caveat']   = Findings::caveat();
-				$result['owners']   = Findings::owners( Findings::flame_of( $result ), Core::num_float( $result['duration_ms'] ?? 0 ) );
+				$result['owners']   = Findings::owners( $result );
 				return $result;
 					},
 				],

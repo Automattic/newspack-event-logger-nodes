@@ -1231,31 +1231,18 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( [ [ 1, 0, 0 ] ], $this->facts( 'SELECT count, timed, errors FROM requests_hourly' ), 'an abort is not an error' );
 	}
 
-	/** Fill the flame of `$request` carrying `$children` as its tree. */
-	private function fill_owned_flame( Stats_Builder_Node $sb, array $request, array $children ): void {
-		$message                                       = self::flame_at( $request, $this->record_request( $request ) );
-		$message[ \Newspack_Nodes\Message::VALUE ]['children'] = $children;
-		$sb->fill( $message );
+	/** @return array<string,array{0:float,1:int}> Owners as the request builder settles them on a 41.5 ms request. */
+	private static function settled_owners(): array {
+		return [ 'kea-7746' => [ 25.5, 1 ], 'core' => [ 4.5, 3 ], '(unowned)' => [ 6.0, 0 ], '(unmeasured)' => [ 5.5, 0 ] ];
 	}
 
-	/** @return list<array<string,mixed>> A tree whose owners are kea-7746 (25.5 ms) and (unowned) (6 ms). */
-	private static function owned_children(): array {
-		return [
-			[
-				'name'     => 'the_content hook: [kea-7746] Kea->render',
-				'value'    => 30.0,
-				'children' => [ [ 'name' => 'sql: [core] q', 'value' => 4.5, 'children' => [] ] ],
-			],
-			[ 'name' => 'init hook', 'value' => 6.0, 'children' => [] ],
-		];
-	}
-
-	public function test_a_timed_flame_files_one_row_per_owner_per_url_and_site(): void {
+	/** The rows come off the record's measured owners; the flame's raised 725 ms is not read (decision 12). */
+	public function test_a_timed_record_files_one_row_per_owner_per_url_and_site(): void {
 		$sb = $this->armed_stats_builder();
-		$this->fill_owned_flame( $sb, $this->completed_request( [ 'url' => 'https://kokako.example/hihi-31', 'duration_ms' => 41.5 ] ), self::owned_children() );
+		$this->fill_flame( $sb, $this->completed_request( [ 'url' => 'https://kokako.example/hihi-31', 'duration_ms' => 41.5, 'owners' => self::settled_owners() ] ) );
 		$sb->flush();
 
-		$expected = [ [ '(unmeasured)', 5.5, 0, 1 ], [ '(unowned)', 6.0, 0, 1 ], [ 'core', 4.5, 1, 1 ], [ 'kea-7746', 25.5, 1, 1 ] ];
+		$expected = [ [ '(unmeasured)', 5.5, 0, 1 ], [ '(unowned)', 6.0, 0, 1 ], [ 'core', 4.5, 3, 1 ], [ 'kea-7746', 25.5, 1, 1 ] ];
 		$this->assertSame( $expected, $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings t JOIN owners o ON o.id = t.owner_id ORDER BY o.name' ) );
 		$this->assertSame( $expected, $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings_site t JOIN owners o ON o.id = t.owner_id ORDER BY o.name' ) );
 		$this->assertSame( [ [ 'kokako.example', '/hihi-31' ] ], \array_unique( $this->facts( 'SELECT sv.name, u.path FROM owner_timings t JOIN urls u ON u.id = t.url_id JOIN servers sv ON sv.id = t.server_id' ), SORT_REGULAR ) );
@@ -1263,27 +1250,28 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM requests WHERE bucket IN ( SELECT DISTINCT bucket FROM owner_timings )' ) );
 	}
 
-	public function test_a_childless_timed_flame_files_only_the_unmeasured_owner(): void {
+	public function test_a_record_carrying_no_owners_files_no_owner_rows(): void {
+		$request = $this->completed_request( [ 'duration_ms' => 17.25 ] );
+		unset( $request['owners'] );
 		$sb = $this->armed_stats_builder();
-		$this->fill_owned_flame( $sb, $this->completed_request( [ 'duration_ms' => 17.25 ] ), [] );
+		$this->fill_flame( $sb, $request );
 		$sb->flush();
 
-		$this->assertSame( [ [ '(unmeasured)', 17.25, 0, 1 ] ], $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings t JOIN owners o ON o.id = t.owner_id' ) );
+		$this->assertSame( [ [ 0, 0 ] ], $this->facts( 'SELECT ( SELECT count(*) FROM owner_timings ), ( SELECT count(*) FROM owner_timings_site )' ) );
 	}
 
 	public function test_an_untimed_request_files_no_owner_rows(): void {
 		$sb = $this->armed_stats_builder();
-		$this->fill_owned_flame( $sb, $this->completed_request( [ 'error_status' => 'A', 'duration_ms' => 5_000.0 ] ), self::owned_children() );
+		$this->fill_flame( $sb, $this->completed_request( [ 'error_status' => 'A', 'duration_ms' => 5_000.0, 'owners' => self::settled_owners() ] ) );
 		$sb->flush();
 
 		$this->assertSame( [ [ 0, 0, 0 ] ], $this->facts( 'SELECT ( SELECT count(*) FROM owner_timings ), ( SELECT count(*) FROM owner_timings_site ), ( SELECT count(*) FROM owners )' ) );
 	}
 
 	public function test_a_replayed_flame_leaves_each_owner_row_at_one_request(): void {
-		$request = $this->completed_request( [ 'rid' => 'rid-hihi-1', 'duration_ms' => 41.5 ] );
+		$request = $this->completed_request( [ 'rid' => 'rid-hihi-1', 'duration_ms' => 41.5, 'owners' => self::settled_owners() ] );
 		$message = self::flame_at( $request, $this->record_request( $request ) );
-		$message[ \Newspack_Nodes\Message::VALUE ]['children'] = self::owned_children();
-		$first = $this->armed_stats_builder();
+		$first   = $this->armed_stats_builder();
 		$first->fill( $message );
 		$first->flush();
 		$first->remove_node();

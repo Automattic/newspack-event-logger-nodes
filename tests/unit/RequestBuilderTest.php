@@ -1265,6 +1265,270 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 30.0, (float) $profiles['qm']['time'] );
 	}
 
+	// --- Owners -----------------------------------------------------------
+
+	/**
+	 * Drive one request through a builder: its rows numbered from 3, between
+	 * the request line and a `process (complete)` of `$duration_ms`.
+	 *
+	 * @param list<array{0:string,1?:array<string,mixed>}> $rows Each row's keyword and its extra fields.
+	 * @return array<string,mixed> The emitted record.
+	 */
+	private function record_after( array $rows, float $duration_ms ): array {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'r-owner', 'process (start)' );
+		$this->fill( $rb, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
+		foreach ( $rows as $at => $row ) {
+			$this->fill( $rb, $at + 3, 'r-owner', $row[0], $row[1] ?? [] );
+		}
+		$this->fill( $rb, \count( $rows ) + 3, 'r-owner', 'process (complete)', [ 'duration_ms' => $duration_ms, 'status_code' => 200 ] );
+		return $this->captured_request( $capture );
+	}
+
+	/**
+	 * A hook timed inside a listener is the listener's owner's, and so is the
+	 * query it asks for, less what that query's own owner took; the listener's
+	 * time leaves the top-level hook's `(unowned)`, and an inherited span adds
+	 * time and no call.
+	 */
+	public function test_owners_inherit_down_the_stack_and_a_listener_leaves_its_hook(): void {
+		$record = $this->record_after(
+			[
+				[ 'the_content hook (start)' ],
+				[ '[kea-7746] Kea->render @10 (start)' ],
+				[ 'gettext hook (start)' ],
+				[ 'sql (start)', [ 'l' => '[core] kea_7746_get_option' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 4.5 ] ],
+				[ 'gettext hook (complete)', [ 'duration_ms' => 12.0 ] ],
+				[ '[kea-7746] Kea->render @10 (complete)', [ 'duration_ms' => 30.0 ] ],
+				[ 'the_content hook (complete)', [ 'duration_ms' => 33.25 ] ],
+			],
+			50.0
+		);
+
+		$this->assertEquals(
+			[
+				'kea-7746'     => [ 25.5, 1 ],
+				'core'         => [ 4.5, 1 ],
+				'(unowned)'    => [ 3.25, 0 ],
+				'(unmeasured)' => [ 16.75, 0 ],
+			],
+			$record['owners']
+		);
+	}
+
+	/** A plugin's load span is its plugin's, and leaves the request's own time. */
+	public function test_a_plugin_load_span_is_its_plugins(): void {
+		$record = $this->record_after(
+			[
+				[ 'kakapo-2291 plugin (start)' ],
+				[ 'kakapo-2291 plugin (complete)', [ 'duration_ms' => 7.75 ] ],
+			],
+			31.0
+		);
+
+		$this->assertEquals( [ 'kakapo-2291' => [ 7.75, 1 ], '(unmeasured)' => [ 23.25, 0 ] ], $record['owners'] );
+	}
+
+	/**
+	 * A Query Monitor timer credits and debits nothing, even when its label
+	 * names an owner, and the query timed inside it is its enclosing span's
+	 * child: here the request's, so it covers the request's own time.
+	 */
+	public function test_a_query_monitor_timer_credits_nothing_and_is_transparent(): void {
+		$record = $this->record_after(
+			[
+				[ 'qm (start)', [ 'l' => '[weka-31] import' ] ],
+				[ 'sql (start)', [ 'l' => '[core] weka_31_import' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 5.5 ] ],
+				[ 'qm (complete)', [ 'duration_ms' => 30.0 ] ],
+				[ 'init hook (start)' ],
+				[ 'init hook (complete)', [ 'duration_ms' => 20.0 ] ],
+			],
+			150.0
+		);
+
+		$this->assertEquals( [ 'core' => [ 5.5, 1 ], '(unowned)' => [ 20.0, 0 ], '(unmeasured)' => [ 124.5, 0 ] ], $record['owners'] );
+	}
+
+	/**
+	 * A close below the top splices the unclosed inners away, and they credit
+	 * nothing; a close naming no open span is ignored. The owners still add up
+	 * to the request's duration.
+	 */
+	public function test_a_mismatched_close_discards_the_unclosed_inners(): void {
+		$record = $this->record_after(
+			[
+				[ 'the_content hook (start)' ],
+				[ '[kea-7746] Kea->render @10 (start)' ],
+				[ 'gettext hook (start)' ],
+				[ 'sql (start)', [ 'l' => '[core] q' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 2.5 ] ],
+				[ '[kea-7746] Kea->render @10 (complete)', [ 'duration_ms' => 9.0 ] ],
+				[ 'ghost (complete)', [ 'duration_ms' => 99.0 ] ],
+				[ 'the_content hook (complete)', [ 'duration_ms' => 11.0 ] ],
+			],
+			40.0
+		);
+
+		$this->assertEquals(
+			[
+				'kea-7746'     => [ 6.5, 1 ],
+				'core'         => [ 2.5, 1 ],
+				'(unowned)'    => [ 2.0, 0 ],
+				'(unmeasured)' => [ 29.0, 0 ],
+			],
+			$record['owners']
+		);
+	}
+
+	/**
+	 * A child that outlasts its parent is measured as it ran: the parent's
+	 * owner clamps at zero, and the request's own time is the duration less
+	 * the parent's measured 10 ms, not the 14 ms a flame raises the parent to.
+	 */
+	public function test_a_child_outlasting_its_parent_is_measured_not_raised(): void {
+		$record = $this->record_after(
+			[
+				[ 'init hook (start)' ],
+				[ 'sql (start)', [ 'l' => '[core] q' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 14.0 ] ],
+				[ 'init hook (complete)', [ 'duration_ms' => 10.0 ] ],
+			],
+			40.0
+		);
+
+		$this->assertEquals( [ 'core' => [ 14.0, 1 ], '(unowned)' => [ 0.0, 0 ], '(unmeasured)' => [ 30.0, 0 ] ], $record['owners'] );
+	}
+
+	/** A request that times no span is wholly its own: `(unmeasured)` is always present. */
+	public function test_a_request_timing_no_span_is_all_unmeasured(): void {
+		$this->assertEquals( [ '(unmeasured)' => [ 61.5, 0 ] ], $this->record_after( [], 61.5 )['owners'] );
+	}
+
+	/**
+	 * Owner time survives a checkpoint: what closed before it and what closes
+	 * after it settle on one record.
+	 */
+	public function test_owners_survive_a_checkpoint(): void {
+		$from = new Request_Builder_Node();
+		$this->fill( $from, 1, 'r-owner', 'process (start)' );
+		$this->fill( $from, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
+		$this->fill( $from, 3, 'r-owner', 'init hook (start)' );
+		$this->fill( $from, 4, 'r-owner', '[kea-7746] Init->go @10 (start)' );
+		$this->fill( $from, 5, 'r-owner', '[kea-7746] Init->go @10 (complete)', [ 'duration_ms' => 6.5 ] );
+		$saved = \json_decode( (string) \wp_json_encode( $from->save_state() ), true );
+
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->restore_state( $saved );
+		$this->fill( $rb, 6, 'r-owner', 'init hook (complete)', [ 'duration_ms' => 8.25 ] );
+		$this->fill( $rb, 7, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
+
+		$this->assertEquals(
+			[ 'kea-7746' => [ 6.5, 1 ], '(unowned)' => [ 1.75, 0 ], '(unmeasured)' => [ 11.75, 0 ] ],
+			$this->captured_request( $capture )['owners']
+		);
+	}
+
+	/** An envelope checkpointed without `owners` starts its owners empty. */
+	public function test_an_envelope_restored_without_owners_starts_them_empty(): void {
+		$from = new Request_Builder_Node();
+		$this->fill( $from, 1, 'r-owner', 'process (start)' );
+		$this->fill( $from, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
+		$this->fill( $from, 3, 'r-owner', 'init hook (start)' );
+		$this->fill( $from, 4, 'r-owner', '[kea-7746] Init->go @10 (start)' );
+		$this->fill( $from, 5, 'r-owner', '[kea-7746] Init->go @10 (complete)', [ 'duration_ms' => 6.5 ] );
+		$saved = \json_decode( (string) \wp_json_encode( $from->save_state() ), true );
+		foreach ( $saved['request_cache']['buckets'] as &$bucket ) {
+			foreach ( $bucket as &$envelope ) {
+				unset( $envelope['owners'] );
+			}
+		}
+		unset( $bucket, $envelope );
+
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->restore_state( $saved );
+		$this->fill( $rb, 6, 'r-owner', 'init hook (complete)', [ 'duration_ms' => 8.25 ] );
+		$this->fill( $rb, 7, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
+
+		$this->assertEquals( [ '(unowned)' => [ 1.75, 0 ], '(unmeasured)' => [ 11.75, 0 ] ], $this->captured_request( $capture )['owners'] );
+	}
+
+	/**
+	 * A frame restored with only its state and label takes its owner by the
+	 * push rule, its own or its parent's, and an empty inner.
+	 */
+	public function test_a_two_slot_frame_restored_takes_its_owner_by_the_push_rule(): void {
+		$from = new Request_Builder_Node();
+		$this->fill( $from, 1, 'r-owner', 'process (start)' );
+		$this->fill( $from, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
+		$this->fill( $from, 3, 'r-owner', 'the_content hook (start)' );
+		$this->fill( $from, 4, 'r-owner', '[kea-7746] Kea->render @10 (start)' );
+		$this->fill( $from, 5, 'r-owner', 'gettext hook (start)' );
+		$saved = \json_decode( (string) \wp_json_encode( $from->save_state() ), true );
+		foreach ( $saved['request_cache']['buckets'] as &$bucket ) {
+			foreach ( $bucket as &$envelope ) {
+				$envelope['stack'] = \array_map( static fn ( array $frame ): array => \array_slice( $frame, 0, 2 ), $envelope['stack'] );
+			}
+		}
+		unset( $bucket, $envelope );
+
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->restore_state( $saved );
+		$this->fill( $rb, 6, 'r-owner', 'gettext hook (complete)', [ 'duration_ms' => 2.0 ] );
+		$this->fill( $rb, 7, 'r-owner', '[kea-7746] Kea->render @10 (complete)', [ 'duration_ms' => 6.0 ] );
+		$this->fill( $rb, 8, 'r-owner', 'the_content hook (complete)', [ 'duration_ms' => 9.0 ] );
+		$this->fill( $rb, 9, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
+
+		$this->assertEquals( [ 'kea-7746' => [ 6.0, 1 ], '(unowned)' => [ 3.0, 0 ], '(unmeasured)' => [ 11.0, 0 ] ], $this->captured_request( $capture )['owners'] );
+	}
+
+	/**
+	 * An owned span that never closes credits nothing, and what its closed
+	 * children took is handed to the span whose close spliced it away, so the
+	 * owners add up exactly to the duration.
+	 */
+	public function test_an_unclosed_owned_inner_hands_its_closed_children_to_the_close(): void {
+		$record = $this->record_after(
+			[
+				[ 'the_content hook (start)' ],
+				[ '[kea-7746] Kea->render @10 (start)' ],
+				[ 'sql (start)', [ 'l' => '[core] q' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 3.0 ] ],
+				[ 'the_content hook (complete)', [ 'duration_ms' => 10.0 ] ],
+			],
+			25.0
+		);
+
+		$this->assertEquals( [ 'core' => [ 3.0, 1 ], '(unowned)' => [ 7.0, 0 ], '(unmeasured)' => [ 15.0, 0 ] ], $record['owners'] );
+		$this->assertEqualsWithDelta( 25.0, \array_sum( \array_column( $record['owners'], 0 ) ), 1e-9 );
+	}
+
+	/**
+	 * A span still open when the request completes credits nothing, and what
+	 * its closed children took is covered time, not the request's own.
+	 */
+	public function test_a_span_open_at_completion_hands_its_closed_children_to_the_request(): void {
+		$record = $this->record_after(
+			[
+				[ 'shutdown hook (start)' ],
+				[ 'sql (start)', [ 'l' => '[core] q' ] ],
+				[ 'sql (complete)', [ 'duration_ms' => 4.25 ] ],
+			],
+			30.0
+		);
+
+		$this->assertEquals( [ 'core' => [ 4.25, 1 ], '(unmeasured)' => [ 25.75, 0 ] ], $record['owners'] );
+	}
+
 	/**
 	 * The object cache's row and the request context stay log rows: the
 	 * record lifts the context onto no field of its own.

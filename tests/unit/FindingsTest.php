@@ -406,126 +406,75 @@ class FindingsTest extends TestCase {
 		);
 	}
 
-	/** The flame the owner tests share: a listener over a hook over a query, and a bare top-level hook. */
-	private function owned_flame(): array {
-		return [
-			'name'     => 'request',
-			'value'    => 41.5,
-			'children' => [
-				[
-					'name'     => 'the_content hook: [kea-7746] Kea->render',
-					'value'    => 30.0,
-					'children' => [
-						[
-							'name'     => 'gettext hook',
-							'value'    => 12.0,
-							'children' => [ [ 'name' => 'sql: [core] q', 'value' => 4.5, 'children' => [] ] ],
-						],
-					],
-				],
-				[ 'name' => 'init hook', 'value' => 6.0, 'children' => [] ],
-			],
-		];
+	/** A timed record carrying `$owners` as the request builder settles them. */
+	private static function owned_record( array $owners, float $duration_ms = 41.5, string $error_status = '-' ): array {
+		return [ 'duration_ms' => $duration_ms, 'error_status' => $error_status, 'owners' => $owners ];
 	}
 
-	public function test_owners_sum_self_time_and_inherit_down_the_tree(): void {
+	public function test_owners_are_the_records_rows_dearest_first_each_with_its_share(): void {
+		$record = self::owned_record(
+			[
+				'core'         => [ 4.5, 3 ],
+				'(unmeasured)' => [ 5.5, 0 ],
+				'kea-7746'     => [ 25.5, 1 ],
+				'(unowned)'    => [ 6.0, 0 ],
+			]
+		);
+
 		$this->assertSame(
 			[
 				[ 'owner' => 'kea-7746', 'ms' => 25.5, 'share' => 25.5 / 41.5, 'calls' => 1 ],
 				[ 'owner' => '(unowned)', 'ms' => 6.0, 'share' => 6.0 / 41.5, 'calls' => 0 ],
 				[ 'owner' => '(unmeasured)', 'ms' => 5.5, 'share' => 5.5 / 41.5, 'calls' => 0 ],
-				[ 'owner' => 'core', 'ms' => 4.5, 'share' => 4.5 / 41.5, 'calls' => 1 ],
+				[ 'owner' => 'core', 'ms' => 4.5, 'share' => 4.5 / 41.5, 'calls' => 3 ],
 			],
-			Findings::owners( $this->owned_flame(), 41.5 )
+			Findings::owners( $record )
 		);
 	}
 
-	public function test_owners_of_a_childless_flame_is_all_unmeasured(): void {
+	/** A stored record round-trips JSON, which turns a whole float into an int. */
+	public function test_owners_read_a_json_round_tripped_record_as_floats(): void {
+		$record = \json_decode( (string) \wp_json_encode( self::owned_record( [ 'kea-7746' => [ 30.0, 2 ], '(unmeasured)' => [ 11.5, 0 ] ] ) ), true );
+
 		$this->assertSame(
-			[ [ 'owner' => '(unmeasured)', 'ms' => 17.25, 'share' => 1.0, 'calls' => 0 ] ],
-			Findings::owners( [ 'name' => 'root', 'value' => 17.25, 'children' => [] ], 17.25 )
+			[
+				[ 'owner' => 'kea-7746', 'ms' => 30.0, 'share' => 30.0 / 41.5, 'calls' => 2 ],
+				[ 'owner' => '(unmeasured)', 'ms' => 11.5, 'share' => 11.5 / 41.5, 'calls' => 0 ],
+			],
+			Findings::owners( $record )
 		);
 	}
 
-	public function test_owners_share_is_zero_for_a_zero_duration(): void {
-		$flame = [ 'name' => 'root', 'value' => 0.0, 'children' => [] ];
-		$this->assertSame( [ [ 'owner' => '(unmeasured)', 'ms' => 0.0, 'share' => 0.0, 'calls' => 0 ] ], Findings::owners( $flame, 0.0 ) );
+	public function test_owners_of_a_record_carrying_none_are_empty(): void {
+		$record = self::owned_record( [] );
+		unset( $record['owners'] );
+
+		$this->assertSame( [], Findings::owners( $record ) );
 	}
 
-	public function test_owners_never_count_negative_self_time(): void {
-		$flame = [
-			'name'     => 'request',
-			'value'    => 20.0,
-			'children' => [
-				[ 'name' => 'init hook', 'value' => 8.0, 'children' => [ [ 'name' => 'x hook: [bee-3] B->go', 'value' => 9.0, 'children' => [] ] ] ],
-			],
+	/** A duration nobody measured is not a timing sample (decision 24). */
+	#[DataProvider( 'untimed_records' )]
+	public function test_owners_of_an_untimed_record_are_empty( float $duration_ms, string $error_status ): void {
+		$this->assertSame( [], Findings::owners( self::owned_record( [ 'kea-7746' => [ 9.0, 1 ] ], $duration_ms, $error_status ) ) );
+	}
+
+	/** @return array<string,array{float,string}> */
+	public static function untimed_records(): array {
+		return [
+			'timed out' => [ 41.5, 'T' ],
+			'aborted'   => [ 41.5, 'A' ],
+			'no time'   => [ 0.0, '-' ],
 		];
-
-		$this->assertSame(
-			[
-				[ 'owner' => '(unmeasured)', 'ms' => 12.0, 'share' => 12.0 / 20.0, 'calls' => 0 ],
-				[ 'owner' => 'bee-3', 'ms' => 9.0, 'share' => 9.0 / 20.0, 'calls' => 1 ],
-				[ 'owner' => '(unowned)', 'ms' => 0.0, 'share' => 0.0, 'calls' => 0 ],
-			],
-			Findings::owners( $flame, 20.0 )
-		);
-	}
-
-	public function test_owners_unmeasured_is_the_duration_less_the_top_level_spans(): void {
-		$flame = [ 'name' => 'root', 'value' => 10.0, 'children' => [ [ 'name' => 'init hook', 'value' => 6.0, 'children' => [] ] ] ];
-
-		$this->assertSame(
-			[
-				[ 'owner' => '(unmeasured)', 'ms' => 19.0, 'share' => 19.0 / 25.0, 'calls' => 0 ],
-				[ 'owner' => '(unowned)', 'ms' => 6.0, 'share' => 6.0 / 25.0, 'calls' => 0 ],
-			],
-			Findings::owners( $flame, 25.0 )
-		);
-	}
-
-	public function test_owners_of_an_empty_flame_is_the_whole_duration_unmeasured(): void {
-		$this->assertSame( [ [ 'owner' => '(unmeasured)', 'ms' => 25.0, 'share' => 1.0, 'calls' => 0 ] ], Findings::owners( [], 25.0 ) );
 	}
 
 	public function test_owners_keep_a_numeric_slug_a_string(): void {
-		$flame = [ 'name' => 'root', 'value' => 9.0, 'children' => [ [ 'name' => 'a hook: [2024] Y->go', 'value' => 3.5, 'children' => [] ] ] ];
-
-		$this->assertSame( [ '(unmeasured)', '2024' ], \array_column( Findings::owners( $flame, 9.0 ), 'owner' ) );
-		$this->assertSame( '2024', Findings::owners( $flame, 3.0 )[0]['owner'] );
+		$this->assertSame( [ '2024', '(unmeasured)' ], \array_column( Findings::owners( self::owned_record( [ '2024' => [ 30.5, 1 ], '(unmeasured)' => [ 11.0, 0 ] ] ) ), 'owner' ) );
 	}
 
 	public function test_owners_break_a_tie_by_owner_name(): void {
-		$flame = [
-			'name'     => 'request',
-			'value'    => 10.0,
-			'children' => [
-				[ 'name' => 'a hook: [zed-1] Z->go', 'value' => 5.0, 'children' => [] ],
-				[ 'name' => 'b hook: [ant-2] A->go', 'value' => 5.0, 'children' => [] ],
-			],
-		];
+		$record = self::owned_record( [ 'zed-1' => [ 5.0, 1 ], 'ant-2' => [ 5.0, 1 ], '(unmeasured)' => [ 0.25, 0 ] ] );
 
-		$this->assertSame( [ 'ant-2', 'zed-1', '(unmeasured)' ], \array_column( Findings::owners( $flame, 10.0 ), 'owner' ) );
-	}
-
-	public function test_owners_of_a_folded_flame_match_the_unfolded_tree(): void {
-		$unfolded = [
-			'name'     => 'request',
-			'value'    => 30.0,
-			'children' => [
-				[ 'name' => 'a hook: [kea-7746] K->go', 'value' => 4.0, 'children' => [] ],
-				[ 'name' => 'a hook: [kea-7746] K->go', 'value' => 6.0, 'children' => [] ],
-				[ 'name' => 'a hook: [kea-7746] K->go', 'value' => 2.5, 'children' => [] ],
-			],
-		];
-		$folded   = [
-			'name'     => 'request',
-			'value'    => 30.0,
-			'folded'   => true,
-			'children' => [ [ 'name' => 'a hook: [kea-7746] K->go', 'value' => 12.5, 'count' => 3, 'max' => 6.0, 'children' => [] ] ],
-		];
-
-		$this->assertSame( Findings::owners( $unfolded, 30.0 ), Findings::owners( $folded, 30.0 ) );
-		$this->assertSame( 3, Findings::owners( $folded, 30.0 )[1]['calls'] );
+		$this->assertSame( [ 'ant-2', 'zed-1', '(unmeasured)' ], \array_column( Findings::owners( $record ), 'owner' ) );
 	}
 
 	public function test_a_dominant_span_is_named_with_its_share(): void {

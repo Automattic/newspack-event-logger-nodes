@@ -3,6 +3,8 @@
  * mounts from its payload's owner rows.
  */
 
+import fs from 'fs';
+import path from 'path';
 import * as React from 'react';
 import OwnerTable from '../OwnerTable';
 import { renderComponent } from '../../test-helpers/renderHook';
@@ -103,5 +105,35 @@ describe( 'OwnerTable', () => {
 			expect( th.getAttribute( 'scope' ) ).toBe( 'col' )
 		);
 		unmount();
+	} );
+} );
+
+describe( 'PSEUDO_OWNERS', () => {
+	const read = ( ...parts ) =>
+		fs.readFileSync( path.join( __dirname, ...parts ), 'utf8' );
+	const phpConst = ( name ) => {
+		const match = read(
+			'..',
+			'..',
+			'..',
+			'includes',
+			'class-owner.php'
+		).match( new RegExp( `const ${ name } = '([^']*)';` ) );
+		expect( match ).toBeTruthy();
+		return match[ 1 ];
+	};
+
+	it( 'carries the names Owner minds for unclaimed and unmeasured time', () => {
+		const match = read( '..', 'OwnerTable.js' ).match(
+			/const PSEUDO_OWNERS = \[([^\]]*)\];/
+		);
+		expect( match ).toBeTruthy();
+		const mirrored = match[ 1 ]
+			.split( ',' )
+			.map( ( part ) => part.trim().replace( /^'|'$/g, '' ) )
+			.filter( Boolean );
+		expect( mirrored.sort() ).toEqual(
+			[ phpConst( 'UNOWNED' ), phpConst( 'UNMEASURED' ) ].sort()
+		);
 	} );
 } );
