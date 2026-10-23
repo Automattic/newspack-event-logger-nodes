@@ -188,7 +188,7 @@ describe( 'BucketField', () => {
 		expect(
 			Array.from(
 				field.container.querySelectorAll( 'button' ),
-				( button ) => button.getAttribute( 'aria-label' )
+				( button ) => button.title
 			)
 		).toEqual( [ 'Remove 9:55–10:15 AM', 'Remove 11:30–11:35 AM' ] );
 		field.unmount();
@@ -482,7 +482,7 @@ describe( 'BucketField', () => {
 			'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30'
 		);
 		const remove = field.container.querySelector(
-			'button[aria-label="Remove 9:55–10:15 AM"]'
+			'button[title="Remove 9:55–10:15 AM"]'
 		);
 		act( () => remove.click() );
 

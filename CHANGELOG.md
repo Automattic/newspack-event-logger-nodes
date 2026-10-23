@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Hover text is the browser's native title everywhere, as the topology console's is.** A rule-editor checkbox carries its description as the title of the checkbox and its label, where an info button beside each of the ten switches drew WordPress's tooltip, which ran the window's width on one line; the input still names the description through `aria-describedby`. A tag token's remove button is titled with its label instead of drawing WordPress's tooltip.
+
 ## [0.153.0] - 2026-10-22
 
 ### Changed

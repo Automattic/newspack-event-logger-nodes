@@ -579,9 +579,7 @@ describe( 'UrlDetailView', () => {
 			12
 		);
 		act( () =>
-			field
-				.querySelector( 'button[aria-label="Remove 6:30–6:35 AM"]' )
-				.click()
+			field.querySelector( 'button[title="Remove 6:30–6:35 AM"]' ).click()
 		);
 		expect(
 			onBucketChange.mock.calls.map( ( [ value ] ) => value )
@@ -849,7 +847,7 @@ describe( 'UrlDetailView', () => {
 		selectOption( thenBy, 'country' );
 		act( () => {
 			container
-				.querySelector( 'button[aria-label="Remove Method = PUT"]' )
+				.querySelector( 'button[title="Remove Method = PUT"]' )
 				.click();
 		} );
 		expect( edits ).toEqual( [

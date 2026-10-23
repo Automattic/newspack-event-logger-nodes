@@ -53,7 +53,7 @@ describe( 'TagToken', () => {
 		unmount();
 	} );
 
-	it( 'removes through a close-icon button carrying the remove label', () => {
+	it( 'removes through a close-icon button titled with the remove label', () => {
 		const onRemove = jest.fn();
 		const { container, unmount } = mountToken( { onRemove } );
 		const remove = container.querySelector( 'button' );
@@ -64,7 +64,8 @@ describe( 'TagToken', () => {
 			] )
 		);
 		expect( remove.querySelector( 'svg' ) ).not.toBeNull();
-		expect( remove.getAttribute( 'aria-label' ) ).toBe( 'Drop kakapo' );
+		// The native title names the button and shows on hover.
+		expect( remove.title ).toBe( 'Drop kakapo' );
 		act( () => remove.click() );
 		expect( onRemove ).toHaveBeenCalledTimes( 1 );
 		unmount();

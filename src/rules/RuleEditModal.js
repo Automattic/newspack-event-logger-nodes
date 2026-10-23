@@ -26,18 +26,17 @@
  * which is the only thing telling `upsert` which entry this edit replaces.
  */
 
-import { useState } from '@wordpress/element';
+import { useId, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	BaseControl,
-	Button,
 	useBaseControlProps,
 	Modal,
 	TextControl,
 	SelectControl,
 	CheckboxControl,
+	VisuallyHidden,
 } from '@wordpress/components';
-import { info } from '@wordpress/icons';
 
 import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
 import HookSelectorModal, {
@@ -79,8 +78,9 @@ function toNumber( value, parse ) {
 }
 
 /**
- * A logging checkbox whose description sits in an info button's tooltip,
- * which hover, keyboard focus and a screen reader all reach.
+ * A logging checkbox whose description is the native title of the checkbox
+ * and its label. The input names the same text through `aria-describedby`,
+ * so a screen reader reads it on focus.
  *
  * @param {Object}                     props          Component props.
  * @param {string}                     props.name     The input's name.
@@ -88,23 +88,20 @@ function toNumber( value, parse ) {
  * @param {string}                     props.help     What the switch does and costs.
  * @param {boolean}                    props.checked  Whether it is on.
  * @param {(checked: boolean) => void} props.onChange Change handler.
- * @return {import('react').ReactElement} The checkbox and its info button.
+ * @return {import('react').ReactElement} The checkbox and its description.
  */
 function RuleSwitch( { name, label, help, checked, onChange } ) {
+	const helpId = useId();
 	return (
-		<div className="rule-edit-switch">
+		<div className="rule-edit-switch" title={ help }>
 			<CheckboxControl
 				name={ name }
 				label={ label }
 				checked={ checked }
 				onChange={ onChange }
+				aria-describedby={ helpId }
 			/>
-			<Button
-				className="rule-edit-switch-info"
-				icon={ info }
-				label={ help }
-				size="small"
-			/>
+			<VisuallyHidden id={ helpId }>{ help }</VisuallyHidden>
 		</div>
 	);
 }
