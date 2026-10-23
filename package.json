@@ -67,6 +67,7 @@
 	},
 	"lint-staged": {
 		"*.{js,jsx}": [
+			"prettier --write",
 			"eslint",
 			"node scripts/reorder-node-methods.js --check",
 			"node scripts/lint-comments.mjs",
@@ -77,13 +78,12 @@
 		"includes/**/*.php": [
 			"php scripts/reorder-node-methods.php --check"
 		],
-		"src/**/*.{js,jsx}": [
-			"node scripts/reorder-node-methods.js --check"
-		],
 		"*.scss": [
+			"prettier --write",
 			"stylelint --customSyntax postcss-scss",
 			"sh -c 'node scripts/lint-styles.mjs'"
 		],
+		"src/**/*.json": "prettier --write",
 		"*.php": [
 			"./vendor/bin/phpcs",
 			"php scripts/reorder-node-methods.php --check",
