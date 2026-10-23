@@ -829,9 +829,9 @@ describe( 'OverviewSection', () => {
 		} );
 		expect( container.textContent ).toContain( 'Time by owner' );
 		expect( container.textContent ).toContain( 'mu:egret-cache' );
-		expect( container.textContent ).toContain( 'ms per request' );
+		expect( container.textContent ).toContain( 'per request' );
 		expect( container.textContent ).toContain( '17.5ms' );
-		expect( container.textContent ).toContain( 'Calls per request' );
+		expect( container.textContent ).toContain( 'Count' );
 		expect( container.textContent ).toContain( '4.8' );
 		unmount();
 	} );

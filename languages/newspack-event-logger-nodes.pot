@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-23T05:52:27+00:00\n"
+"POT-Creation-Date: 2026-10-23T05:59:57+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -356,6 +356,7 @@ msgstr ""
 #: src/overview/components/BucketField.js:288
 #: src/overview/components/LogEntriesTable.js:1558
 #: src/overview/components/UrlDetailView.js:132
+#: src/overview/OwnerTable.js:77
 #: src/overview/RequestProfile.js:348
 msgid "Time"
 msgstr ""
@@ -1048,41 +1049,35 @@ msgstr ""
 msgid "Loading dashboard…"
 msgstr ""
 
-#: src/overview/OwnerTable.js:75
+#: src/overview/OwnerTable.js:76
 msgid "Owner"
 msgstr ""
 
+#: src/overview/OwnerTable.js:78
+#: src/overview/RequestProfile.js:352
+msgid "% of Total"
+msgstr ""
+
 #: src/overview/OwnerTable.js:79
-msgid "ms per request"
+#: src/overview/RequestProfile.js:359
+msgid "Count"
 msgstr ""
 
-#: src/overview/OwnerTable.js:80
-msgid "ms"
-msgstr ""
-
-#: src/overview/OwnerTable.js:82
-msgid "Share"
-msgstr ""
-
-#: src/overview/OwnerTable.js:86
-msgid "Calls per request"
-msgstr ""
-
-#: src/overview/OwnerTable.js:87
-msgid "Calls"
-msgstr ""
-
-#: src/overview/OwnerTable.js:94
+#: src/overview/OwnerTable.js:85
 msgid "Time by owner"
 msgstr ""
 
-#: src/overview/OwnerTable.js:168
+#: src/overview/OwnerTable.js:159
 #: src/overview/RequestProfile.js:476
 msgid "Total Profiled"
 msgstr ""
 
-#: src/overview/OwnerTable.js:197
+#: src/overview/OwnerTable.js:188
 msgid "Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner."
+msgstr ""
+
+#: src/overview/OwnerTable.js:193
+msgid "Times and counts are per request."
 msgstr ""
 
 #: src/overview/PerformanceDashboard.js:118
@@ -1175,14 +1170,6 @@ msgstr ""
 
 #: src/overview/RequestProfile.js:344
 msgid "Category"
-msgstr ""
-
-#: src/overview/RequestProfile.js:352
-msgid "% of Total"
-msgstr ""
-
-#: src/overview/RequestProfile.js:359
-msgid "Count"
 msgstr ""
 
 #. translators: %d: number of additional categories that can be shown.

@@ -45,8 +45,29 @@ describe( 'OwnerTable', () => {
 				// The sorted column carries its caret; the label is the rest.
 				th.textContent.replace( /[▲▼]/g, '' )
 			)
-		).toEqual( [ 'Owner', 'ms', 'Share', 'Calls' ] );
+		).toEqual( [ 'Owner', 'Time', '% of Total', 'Count' ] );
 		unmount();
+	} );
+
+	it( 'says its numbers are per request in an average, as the breakdown says of its own', () => {
+		const averaged = mount( {
+			owners: [
+				{
+					owner: 'kea-7601',
+					ms_per_request: 4.5,
+					share: 1,
+					calls_per_request: 2,
+				},
+			],
+			perRequest: true,
+		} );
+		expect( averaged.container.textContent ).toContain(
+			'Times and counts are per request.'
+		);
+		averaged.unmount();
+		const single = mount( { owners: ROWS } );
+		expect( single.container.textContent ).not.toContain( 'per request' );
+		single.unmount();
 	} );
 
 	it( 'heads the ms and calls columns per request for an average', () => {
@@ -69,12 +90,7 @@ describe( 'OwnerTable', () => {
 				// The sorted column carries its caret; the label is the rest.
 				th.textContent.replace( /[▲▼]/g, '' )
 			)
-		).toEqual( [
-			'Owner',
-			'ms per request',
-			'Share',
-			'Calls per request',
-		] );
+		).toEqual( [ 'Owner', 'Time', '% of Total', 'Count' ] );
 		unmount();
 	} );
 
@@ -166,7 +182,7 @@ describe( 'OwnerTable totals and sorting', () => {
 			'plugin:heron-gallery',
 			'theme:kea',
 		] );
-		click( header( container, 'Calls' ) );
+		click( header( container, 'Count' ) );
 		expect( owners( container ) ).toEqual( [
 			'plugin:heron-gallery',
 			'(unowned)',

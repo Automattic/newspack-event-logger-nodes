@@ -1253,10 +1253,10 @@ describe( 'UrlDetailView', () => {
 		} );
 		expect( container.textContent ).toContain( 'Time by owner' );
 		expect( container.textContent ).toContain( 'theme:rail' );
-		expect( container.textContent ).toContain( 'ms per request' );
+		expect( container.textContent ).toContain( 'per request' );
 		expect( container.textContent ).toContain( '33.5ms' );
 		expect( container.textContent ).toContain( '61.0%' );
-		expect( container.textContent ).toContain( 'Calls per request' );
+		expect( container.textContent ).toContain( 'Count' );
 		expect( container.textContent ).toContain( '2.3' );
 		unmount();
 	} );
