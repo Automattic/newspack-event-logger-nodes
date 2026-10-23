@@ -263,6 +263,47 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$joined = \implode( "\n", $inline_payloads );
 			$this->assertStringContainsString( 'window.eventLoggerDashboards', $joined );
 			$this->assertStringContainsString( 'window.newspackNodesRecommendedHooks', $joined );
+			$this->assertStringContainsString( 'window.newspackNodesOwnerTimeEvents = ["plugins_loaded"', $joined );
+			$this->assertStringContainsString( 'window.newspackNodesNoisyHooks = ["^gettext"', $joined );
+		}
+
+		public function test_overview_page_carries_the_owner_time_and_noisy_lists(): void {
+			$_GET = [ 'page' => 'event-logger-overview' ];
+			$this->dispatch( 'nodes_page_event-logger-overview' );
+
+			$printed = $this->printed_for( 'newspack-nodes-overview' );
+			$this->assertStringContainsString( 'window.newspackNodesOwnerTimeEvents = ["plugins_loaded"', $printed );
+			$this->assertStringContainsString( 'window.newspackNodesNoisyHooks = ["^gettext"', $printed );
+		}
+
+		#[DataProvider( 'trees_without_pickers' )]
+		public function test_trees_without_pickers_carry_neither_list( string $page, string $tree ): void {
+			$_GET = [ 'page' => $page ];
+			$this->dispatch( "nodes_page_{$page}" );
+
+			$printed = $this->printed_for( "newspack-nodes-{$tree}" );
+			$this->assertStringContainsString( 'window.eventLoggerDashboards', $printed );
+			$this->assertStringNotContainsString( 'newspackNodesOwnerTimeEvents', $printed );
+			$this->assertStringNotContainsString( 'newspackNodesNoisyHooks', $printed );
+		}
+
+		/** @return array<string,array{string,string}> Dashboard page and tree pairs. */
+		public static function trees_without_pickers(): array {
+			return [
+				'error log' => [ 'event-logger-errors', 'error-log' ],
+				'gyroscope' => [ 'event-logger-gyroscope', 'gyroscope' ],
+				'requests'  => [ 'event-logger-requests', 'requests' ],
+			];
+		}
+
+		private function printed_for( string $handle ): string {
+			$payloads = [];
+			foreach ( $GLOBALS['_inline_scripts'] as $rec ) {
+				if ( ( $rec[0] ?? '' ) === $handle ) {
+					$payloads[] = (string) ( $rec[1] ?? '' );
+				}
+			}
+			return \implode( "\n", $payloads );
 		}
 	}
 }

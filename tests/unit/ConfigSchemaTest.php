@@ -101,7 +101,7 @@ class ConfigSchemaTest extends TestCase {
 	public function test_the_option_less_keys_are_declared_but_never_rendered(): void {
 		$schema = Settings_Schema::get();
 
-		foreach ( [ 'custom_colors', 'hook_start_priority', 'recommended_log_events' ] as $key ) {
+		foreach ( [ 'custom_colors', 'hook_start_priority', 'recommended_log_events', 'owner_time_events', 'noisy_log_events' ] as $key ) {
 			$field = $schema->field_for_short( $key );
 			$this->assertNotNull( $field, "{$key} must be declared" );
 			$this->assertFalse( $field->ui, "{$key} must never render in the settings page" );
@@ -121,6 +121,28 @@ class ConfigSchemaTest extends TestCase {
 		$this->assertContains( 'plugins_loaded', Config::value( 'recommended_log_events' ) );
 		$rules = Config::value( 'rules' );
 		$this->assertSame( [ 'pattern' => '/', 'action' => 'log' ], \end( $rules ) );
+	}
+
+	/** An override of the noisy list is published as written. */
+	public function test_noisy_log_events_publishes_a_valid_override(): void {
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'noisy_log_events' => [ '^zork_', 'quux$' ] ] );
+
+		$this->assertSame( [ '^zork_', 'quux$' ], Config::noisy_log_events() );
+	}
+
+	/** A noisy pattern that does not compile is skipped and logged by key. */
+	public function test_noisy_log_events_skips_and_logs_a_pattern_that_does_not_compile(): void {
+		$lines = [];
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$lines ): void {
+			$lines[] = $text;
+		} );
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'noisy_log_events' => [ '^kea(', '^ruru_' ] ] );
+
+		$this->assertSame( [ '^ruru_' ], Config::noisy_log_events() );
+		$this->assertStringContainsString( 'noisy_log_events: ^kea( is not a valid pattern', \implode( "\n", $lines ) );
 	}
 
 	/** A config file entry still overrides the schema default, key by key. */

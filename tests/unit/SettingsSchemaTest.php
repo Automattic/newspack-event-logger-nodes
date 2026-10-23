@@ -39,6 +39,8 @@ class SettingsSchemaTest extends TestCase {
 		'rules',
 		'custom_colors',
 		'recommended_log_events',
+		'owner_time_events',
+		'noisy_log_events',
 	];
 
 	/** The prefixed settings-form option names. */
@@ -71,6 +73,24 @@ class SettingsSchemaTest extends TestCase {
 		$names = Settings_Schema::get()->setting_option_names();
 		$this->assertNotContains( 'newspack_event_logger_nodes_custom_colors', $names );
 		$this->assertNotContains( 'newspack_event_logger_nodes_hook_start_priority', $names );
+	}
+
+	/** The two owner-time lists ship the documented defaults. */
+	public function test_owner_time_and_noisy_defaults_are_the_documented_lists(): void {
+		$defaults = Settings_Schema::get()->defaults();
+
+		$this->assertSame(
+			[
+				'plugins_loaded', 'after_setup_theme', 'init', 'wp_loaded', 'parse_request', 'wp',
+				'template_redirect', 'template_include', 'wp_enqueue_scripts', 'wp_head', 'the_content',
+				'wp_footer', 'shutdown', 'rest_api_init', 'admin_init', 'admin_menu', 'admin_enqueue_scripts',
+			],
+			$defaults['owner_time_events']
+		);
+		$this->assertSame(
+			[ '^gettext', '^ngettext', '^pre_wp_cache_get$', '^pre_option$', '^alloptions$', '^pre_wp_load_alloptions$' ],
+			$defaults['noisy_log_events']
+		);
 	}
 
 	public function test_rules_overlays_but_is_not_a_settings_field(): void {
