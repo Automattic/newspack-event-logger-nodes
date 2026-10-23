@@ -150,7 +150,7 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'requests are kept 25 buckets', $arg( 'performance_urls', 'bucket' ) );
 		$this->assertStringContainsString( 'more than 13 buckets are refused', $arg( 'performance_urls', 'bucket' ) );
 		$this->assertStringContainsString( '`stats` covers the last 13 five-minute buckets', $tools['dump_url']['description'] );
-		$this->assertStringContainsString( 'its category profile over the 25 buckets timings are kept', $tools['dump_url']['description'] );
+		$this->assertStringContainsString( 'or with none over the 25 buckets timings are kept', $tools['dump_url']['description'] );
 		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'dump_url', 'bucket' ) );
 		$this->assertStringContainsString( 'no request row in the 25 buckets the rows keep', $arg( 'dump_url', 'bucket' ) );
 		$this->assertStringContainsString( 'one row per completed request, 25 buckets of them', $tools['performance_query']['description'] );
