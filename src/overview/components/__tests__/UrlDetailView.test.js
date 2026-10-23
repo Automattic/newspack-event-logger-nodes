@@ -1098,6 +1098,35 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'shows the Time Breakdown before Time by owner, as every view does', () => {
+		const { container, unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_profiles: {
+					categories: { 'kea-7401': { time: 12, count: 3 } },
+					count: 40,
+					total_time: 12,
+				},
+				aggregate_owners: [
+					{
+						owner: 'kea-7401',
+						ms_per_request: 12,
+						share: 1,
+						calls_per_request: 0.75,
+					},
+				],
+			},
+		} );
+		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
+			( heading ) => heading.textContent
+		);
+		expect( headings.indexOf( 'Time Breakdown' ) ).toBeGreaterThan( -1 );
+		expect( headings.indexOf( 'Time by owner' ) ).toBeGreaterThan(
+			headings.indexOf( 'Time Breakdown' )
+		);
+		unmount();
+	} );
+
 	it( 'captions no breakdown over 0 requests above a listed request', () => {
 		// A PHP empty array arrives as `[]`, which is truthy.
 		const { container, unmount } = mount( {
