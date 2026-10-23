@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.154.0] - 2026-10-23
+
 ### Fixed
 - **The URL modal's Time Breakdown and Time By Owner follow the selected window.** `dump_url`'s `aggregate_profiles` and `aggregate_owners` read every bucket the stats keep whatever `--bucket` selected, so under a selection holding one request they averaged nine. They now read the selected buckets, as the stats and the request list do, and every bucket kept only with no selection; a window holding one request reads its owners exactly, and its breakdown within the hundred dearest categories a request stores (decision 38).
 
