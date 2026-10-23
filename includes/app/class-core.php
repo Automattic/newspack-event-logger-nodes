@@ -210,7 +210,8 @@ class Core {
 
 	/**
 	 * Query Monitor seam: whether QM is collecting, so `query_end()` leaves
-	 * `$wpdb->queries` for its query panel. Replaces the
+	 * `$wpdb->queries` for its query panel and every scope binds
+	 * `restore_callbacks()`. Replaces the
 	 * `class_exists( 'QueryMonitor', false )` test, which no test can undo
 	 * once it declares the class. Tests reassign it.
 	 * Signature: `function (): bool`.
@@ -218,6 +219,16 @@ class Core {
 	 * @var \Closure|null
 	 */
 	public static ?\Closure $query_monitor_loaded = null;
+
+	/**
+	 * Query Monitor dispatcher seam: QM's HTML dispatcher, or false. Replaces
+	 * `\QM_Dispatchers::get( 'html' )`, which no test can declare and then
+	 * undo. Tests reassign it with a double carrying `should_dispatch()`.
+	 * Signature: `function (): object|false`.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $query_monitor_html = null;
 
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
 	private const HOOK_DISPATCHERS = [
@@ -232,6 +243,13 @@ class Core {
 	 * everything at or above it as ours and leaves it alone.
 	 */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
+
+	/**
+	 * `shutdown` priority `QM_Dispatcher_Html` dispatches at, collecting every
+	 * panel first (Query Monitor's dispatchers/Html.php). The restore runs
+	 * one ahead of it.
+	 */
+	private const QM_HTML_DISPATCH_PRIORITY = 9;
 
 	/** Seconds a configuration complaint stays quiet once `report()` says it. */
 	private const REPORT_WINDOW_S = 3600;
@@ -254,8 +272,13 @@ class Core {
 	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
 	private int $start_priority;
 
-	/** @var array<int,true> spl_object_id of wrappers we created (prevents double-wrap). */
-	private array $wrapper_ids = [];
+	/**
+	 * Each wrapper we installed, by its spl_object_id, with the hook, priority,
+	 * key and entry it replaced. Its id also stops a double-wrap.
+	 *
+	 * @var array<int,array{0: \Closure, 1: string, 2: int, 3: array-key, 4: array{function: callable, accepted_args: int|string}}>
+	 */
+	private array $wrapped = [];
 
 	/** @var array<array-key,true> Hook keys of callbacks skipped for a by-reference parameter. */
 	private array $by_ref = [];
@@ -476,7 +499,7 @@ class Core {
 	 * opened and never closed — `wpdb::query()` returning ahead of
 	 * `_do_query()`, or an exception — has no close in the new one. Callback
 	 * wrappers already installed by wrap_callbacks() stay in $wp_filter and
-	 * keep timing, and wrapper_ids keeps remembering them, so the new scope
+	 * keep timing, and `wrapped` keeps remembering them, so the new scope
 	 * can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
@@ -519,6 +542,10 @@ class Core {
 	 * listeners, so a rule without it pays for neither.
 	 */
 	private function bind_current_scope(): void {
+		// Query Monitor reads $wp_filter; any scope's wrappers go back for it.
+		if ( self::query_monitor_loaded() ) {
+			$this->listen( [ [ 'shutdown', [ $this, 'restore_callbacks' ], self::QM_HTML_DISPATCH_PRIORITY - 1, 0 ] ] );
+		}
 		$rule = Log_Manager::instance()->governing_rule();
 		if ( null === $rule || ! $rule->is_log() ) {
 			return;
@@ -534,10 +561,7 @@ class Core {
 		if ( $rule->log_php_errors ) {
 			$this->php_errors->install();
 		}
-		foreach ( $listeners as [ $hook, $callback, $priority, $args ] ) {
-			\add_filter( $hook, $callback, $priority, $args );
-			$this->listeners[] = [ $hook, $callback, $priority ];
-		}
+		$this->listen( $listeners );
 
 		// Instrument real hooks; custom events (not do_action) are excluded.
 		$this->trace_hooks   = $rule->trace_hooks;
@@ -632,6 +656,18 @@ class Core {
 	}
 
 	/**
+	 * Bind each listener, and remember it for `rebind_for_current_scope()`.
+	 *
+	 * @param list<array{0: string, 1: callable, 2: int, 3: int}> $listeners Hook, callback, priority, accepted args.
+	 */
+	private function listen( array $listeners ): void {
+		foreach ( $listeners as [ $hook, $callback, $priority, $args ] ) {
+			\add_filter( $hook, $callback, $priority, $args );
+			$this->listeners[] = [ $hook, $callback, $priority ];
+		}
+	}
+
+	/**
 	 * Open a span around one outbound HTTP request. Registered on
 	 * `pre_http_request` at PHP_INT_MAX, so every short-circuiting filter has
 	 * already run and `$preempt` carries their verdict.
@@ -690,7 +726,7 @@ class Core {
 	 * @return mixed
 	 */
 	public function http_wrap( $preempt = false ) {
-		if ( null !== Log_Manager::started_instance() ) {
+		if ( isset( $this->significant[ self::HTTP_HOOK ] ) && null !== Log_Manager::started_instance() ) {
 			$this->wrap_callbacks( self::HTTP_HOOK, PHP_INT_MIN, PHP_INT_MAX );
 		}
 		return $preempt;
@@ -766,6 +802,9 @@ class Core {
 	 * it. Inflating the count on the wrapper preserves the original's contract;
 	 * the original never sees an argument it didn't ask for.
 	 *
+	 * Each replaced entry is kept in `wrapped`, so `restore_callbacks()` can
+	 * hand Query Monitor the callbacks rather than the wrappers.
+	 *
 	 * @param string   $hook_name Hook to wrap.
 	 * @param int|null $min       Lowest priority wrapped, or null for the one above start_priority.
 	 * @param int      $max       Highest priority wrapped.
@@ -791,7 +830,7 @@ class Core {
 				$accepted_args = (int) $cb['accepted_args'];
 
 				// Skip wrappers already made (no double-wrap on recursion).
-				if ( $original instanceof \Closure && isset( $this->wrapper_ids[ \spl_object_id( $original ) ] ) ) {
+				if ( $original instanceof \Closure && isset( $this->wrapped[ \spl_object_id( $original ) ] ) ) {
 					continue;
 				}
 				// Our own trio, when the filter is also a bound hook.
@@ -821,7 +860,7 @@ class Core {
 					return $lm->timed( $label, $original, null, [ 'l' => '' ], $args );
 				};
 
-				$this->wrapper_ids[ \spl_object_id( $wrapper ) ] = true;
+				$this->wrapped[ \spl_object_id( $wrapper ) ] = [ $wrapper, $hook_name, $priority, $key, $cb ];
 				$cb['function']      = $wrapper;
 				$cb['accepted_args'] = 99;
 			}
@@ -1256,6 +1295,50 @@ class Core {
 		// QM_VERSION is defined ahead of QM's CLI, cron and disabled returns.
 		$loaded = self::$query_monitor_loaded ?? static fn (): bool => \class_exists( 'QueryMonitor', false );
 		return true === $loaded();
+	}
+
+	/**
+	 * Put every wrapped entry back as it was, when Query Monitor is about to
+	 * collect, so its Hooks in Use panel names each callback's own file.
+	 *
+	 * `QM_Dispatcher_Html::dispatch()` runs on `shutdown` at 9 and gates on
+	 * `QM_Dispatcher::should_dispatch()`, then `get_outputters()` runs
+	 * `QM_Collectors::process()`, where `QM_Collector_Hooks::process()` reads
+	 * `$wp_filter`. This asks the dispatcher that `QM_Dispatchers::get( 'html' )`
+	 * returns the same `should_dispatch()` one priority earlier, and fails
+	 * closed: with no such dispatcher or method, or a false answer, Query
+	 * Monitor shows nothing and the wrappers stay.
+	 *
+	 * An entry is restored only while its slot still holds our wrapper, so a
+	 * callback removed or replaced since is left as it is. Per-callback timing
+	 * stops here: a significant hook firing later is not wrapped again, or
+	 * Query Monitor would read the new wrappers.
+	 */
+	public function restore_callbacks(): void {
+		if ( [] === $this->wrapped ) {
+			return;
+		}
+		$get    = [ 'QM_Dispatchers', 'get' ];
+		$find   = self::$query_monitor_html ?? static fn () => \is_callable( $get ) ? $get( 'html' ) : false;
+		$should = [ $find(), 'should_dispatch' ];
+		if ( ! \is_callable( $should ) || true !== $should() ) {
+			return;
+		}
+		/** @var \WP_Hook[] $wp_filter PHPStan drops the @global WP_Hook[] from WP docblocks on a bare global. */
+		global $wp_filter;
+		foreach ( $this->wrapped as [ $wrapper, $hook_name, $priority, $key, $entry ] ) {
+			if ( ! isset( $wp_filter[ $hook_name ] ) ) {
+				continue;
+			}
+			/** @var array<int,array<array-key,array{function: callable,accepted_args: int|string}>> $callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref slot, not a copy. */
+			$callbacks = &$wp_filter[ $hook_name ]->callbacks;
+			if ( $wrapper === ( $callbacks[ $priority ][ $key ]['function'] ?? null ) ) {
+				$callbacks[ $priority ][ $key ] = $entry;
+			}
+			unset( $callbacks );
+		}
+		$this->wrapped     = [];
+		$this->significant = [];
 	}
 
 	/**
