@@ -1273,3 +1273,65 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 } );
+
+describe( 'UrlDetailView breakdown and owners', () => {
+	const urlDetail = ( owners ) => ( {
+		...baseUrlDetail,
+		stats: { avg_ms: 41 },
+		aggregate_profiles: {
+			categories: { 'init hook': { time: 7.5, count: 2 } },
+			count: 73,
+			total_time: 10.25,
+		},
+		aggregate_owners: owners,
+	} );
+	const OWNERS = [
+		{
+			owner: 'kea-7312',
+			ms_per_request: 9.5,
+			share: 0.2317,
+			calls_per_request: 4,
+		},
+	];
+
+	it( 'share one section, the owner table straight after the breakdown', () => {
+		const { container, unmount } = mount( {
+			urlDetail: urlDetail( OWNERS ),
+		} );
+		const stack = container.querySelector( '.event-logger-sections' );
+		const section = [ ...stack.children ].find( ( child ) =>
+			child.textContent.includes( 'Time Breakdown' )
+		);
+		expect( section.textContent ).toContain( 'Time By Owner' );
+		unmount();
+	} );
+
+	it( "closes under the owner table with the breakdown's total and caption, once", () => {
+		const { container, unmount } = mount( {
+			urlDetail: urlDetail( OWNERS ),
+		} );
+		expect( container.querySelectorAll( 'tfoot tr' ) ).toHaveLength( 1 );
+		const owners = [ ...container.querySelectorAll( 'table' ) ].find(
+			( t ) => t.textContent.includes( 'kea-7312' )
+		);
+		expect( owners.querySelector( 'tfoot' ).textContent ).toBe(
+			'Total Profiled10.3ms25.0%'
+		);
+		expect( container.textContent ).toContain(
+			'Average breakdown across 73 requests'
+		);
+		expect( container.textContent ).not.toContain(
+			'Self time by the code'
+		);
+		unmount();
+	} );
+
+	it( 'keeps the total and caption on the breakdown when no owner is listed', () => {
+		const { container, unmount } = mount( { urlDetail: urlDetail( [] ) } );
+		expect( container.querySelectorAll( 'tfoot tr' ) ).toHaveLength( 1 );
+		expect( container.textContent ).toContain(
+			'Average breakdown across 73 requests'
+		);
+		unmount();
+	} );
+} );

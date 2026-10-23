@@ -35,8 +35,8 @@ import {
 import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { ProfileWithCaption, profileOrder } from '../RequestProfile';
-import OwnerTable from '../OwnerTable';
+import { profileOrder } from '../RequestProfile';
+import { ProfileWithOwners } from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
@@ -430,18 +430,11 @@ export default function UrlDetailView( {
 
 			{ urlDetail.flame_cut && <FlameCutNote /> }
 
-			{ urlDetail.aggregate_profiles?.count > 0 && (
-				<ProfileWithCaption
-					profiles={ urlDetail.aggregate_profiles.categories }
-					totalMs={ urlDetail.stats?.avg_ms }
-					totalProfiledTime={
-						urlDetail.aggregate_profiles.total_time
-					}
-					count={ urlDetail.aggregate_profiles.count }
-				/>
-			) }
-
-			<OwnerTable owners={ urlDetail.aggregate_owners } perRequest />
+			<ProfileWithOwners
+				profile={ urlDetail.aggregate_profiles }
+				totalMs={ urlDetail.stats?.avg_ms }
+				owners={ urlDetail.aggregate_owners }
+			/>
 
 			<div className="event-logger-table event-logger-table--requests">
 				<div
