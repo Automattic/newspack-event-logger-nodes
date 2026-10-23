@@ -59,6 +59,7 @@ final class Stats_Query {
 	public const FIELDS = [
 		'requests' => [ 'bucket', 'hour', 'day', 'server', 'url', 'page', 'status', 'status_class', 'method', 'country', 'ua', 'ja4', 'from', 'worker', 'profiled', 'error' ],
 		'timings'  => [ 'bucket', 'hour', 'server', 'url', 'page', 'worker', 'category', 'entry', 'listener' ],
+		'owners'   => [ 'bucket', 'hour', 'server', 'url', 'page', 'worker', 'owner' ],
 	];
 
 	/**
@@ -69,12 +70,14 @@ final class Stats_Query {
 	public const MEASURES = [
 		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'error_rate', 'urls', 'pages', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
 		'timings'  => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ],
+		'owners'   => [ 'ms', 'calls', 'requests' ],
 	];
 
 	/** Fields a source filters by and never groups: a key, not a dimension. */
 	private const KEYS = [
 		'requests' => [ 'rid' ],
 		'timings'  => [],
+		'owners'   => [],
 	];
 
 	/** Most rows one answer holds. */
@@ -96,6 +99,7 @@ final class Stats_Query {
 	private const ADDITIVE = [
 		'requests' => [ 'count', 'timed', 'sum_ms', 'sum_peak_mb', 'errors', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx' ],
 		'timings'  => [ 'ms', 'calls', 'requests' ],
+		'owners'   => [ 'ms', 'calls', 'requests' ],
 	];
 
 	/** Fields holding integers, so a filter's digits bind as one. */
@@ -199,10 +203,13 @@ final class Stats_Query {
 		'entry'    => 'JOIN %1$s.entries AS e ON e.id = +t.entry_id',
 	];
 
+	/** The join an owner field needs. */
+	private const OWNER_JOIN = 'JOIN %1$s.owners AS o ON o.id = +t.owner_id';
+
 	/** A search: the arm's URL among those its path index matches. */
 	private const SEARCH = 'u.id IN ( SELECT rowid FROM %1$s.urls_fts WHERE urls_fts MATCH ? )';
 
-	/** The timings measures, over either timings table's arm inputs. */
+	/** The timings measures, over either timings or either owner table's arm inputs. */
 	private const TIMING_MEASURES = [
 		'ms'        => [ 'TOTAL( m_ms )', [ 'ms' ], 'TOTAL( q_ms )', [ 'ms' ] ],
 		'calls'     => [ 'COALESCE( SUM( m_calls ), 0 )', [ 'calls' ], 'COALESCE( SUM( q_calls ), 0 )', [ 'calls' ] ],
@@ -230,7 +237,7 @@ final class Stats_Query {
 	 * measures whose partials that fold reads.
 	 */
 	private const TABLES = [
-		'requests'        => [
+		'requests'           => [
 			'range'    => [ 't.bucket', 1 ],
 			'fields'   => [
 				'bucket'       => 't.bucket',
@@ -303,7 +310,7 @@ final class Stats_Query {
 				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
 			],
 		],
-		'requests_hourly' => [
+		'requests_hourly'    => [
 			'range'    => [ 't.hour', self::BUCKETS_PER_HOUR ],
 			'fields'   => [
 				'hour'         => 't.hour',
@@ -335,7 +342,7 @@ final class Stats_Query {
 				'error_rate'  => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
 			],
 		],
-		'timings'         => [
+		'timings'            => [
 			'range'    => [ 't.bucket', 1 ],
 			'fields'   => [
 				'bucket'   => 't.bucket',
@@ -355,7 +362,7 @@ final class Stats_Query {
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
-		'timings_site'    => [
+		'timings_site'       => [
 			'range'    => [ 't.bucket', 1 ],
 			'fields'   => [
 				'bucket'   => 't.bucket',
@@ -370,7 +377,42 @@ final class Stats_Query {
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
-		'category_window' => [
+		'owner_timings'      => [
+			'range'    => [ 't.bucket', 1 ],
+			'fields'   => [
+				'bucket' => 't.bucket',
+				'hour'   => 't.bucket / ' . self::BUCKETS_PER_HOUR,
+				'server' => 'sv.name',
+				'url'    => self::URL_FIELDS['url']['hash'],
+				'page'   => self::URL_FIELDS['page']['hash'],
+				'owner'  => 'o.name',
+			],
+			'joins'    => [
+				'server' => self::SERVER_JOIN,
+				'url'    => self::URL_JOIN,
+				'page'   => self::URL_JOIN,
+				'owner'  => self::OWNER_JOIN,
+			],
+			'inputs'   => self::TIMING_INPUTS,
+			'measures' => self::TIMING_MEASURES,
+		],
+		'owner_timings_site' => [
+			'range'    => [ 't.bucket', 1 ],
+			'fields'   => [
+				'bucket' => 't.bucket',
+				'hour'   => 't.bucket / ' . self::BUCKETS_PER_HOUR,
+				'server' => 'sv.name',
+				'worker' => 't.worker',
+				'owner'  => 'o.name',
+			],
+			'joins'    => [
+				'server' => self::SEEKING_SERVER_JOIN,
+				'owner'  => self::OWNER_JOIN,
+			],
+			'inputs'   => self::TIMING_INPUTS,
+			'measures' => self::TIMING_MEASURES,
+		],
+		'category_window'    => [
 			'range'    => [ 't.last_bucket', 1 ],
 			'fields'   => [
 				'category' => 'c.name',
@@ -794,7 +836,7 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings | requests_hourly | requests.
+	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings | owner_timings_site | owner_timings | requests_hourly | requests.
 	 *
 	 * A timings spec over exactly the `Bucket::window()` buckets ending at the
 	 * bucket of its `now`, naming only the window's fields, reads
@@ -813,6 +855,9 @@ final class Stats_Query {
 		$named    = [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ];
 		$measures = '' === ( $spec['top_by'] ?? '' ) ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$by_url   = [] !== \array_intersect( $named, \array_keys( self::URL_FIELDS ) ) || '' !== ( $spec['search'] ?? '' );
+		if ( 'owners' === $spec['source'] ) {
+			return $by_url ? 'owner_timings' : 'owner_timings_site';
+		}
 		if ( 'timings' === $spec['source'] ) {
 			if ( $by_url ) {
 				return 'timings';

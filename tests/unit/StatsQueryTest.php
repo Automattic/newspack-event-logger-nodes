@@ -871,6 +871,56 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ Log_Manager::url_hash( 'https://seed.example/ruru-7712/' ), 'https://seed.example/ruru-7712/', 'ruru-category', 20.0, 8, 4, 5.0, 2.0 ] ], $by_url['rows'] );
 	}
 
+	/** The owners source sums each owner's site time across partitions, workers out. */
+	public function test_owners_sum_site_time_per_owner_leaving_workers_out(): void {
+		foreach ( [ 0, 2 ] as $partition ) {
+			$this->seed_owner_site_timing( [ 'owner' => 'plugin:tui-7', 'ms' => 31.5, 'calls' => 4, 'requests' => 3 ], partition: $partition );
+		}
+		$this->seed_owner_site_timing( [ 'owner' => 'theme:moa-9', 'ms' => 12.25, 'calls' => 2, 'requests' => 1 ] );
+		$this->seed_owner_site_timing( [ 'owner' => 'plugin:tui-7', 'worker' => 1, 'ms' => 9999.0, 'calls' => 99, 'requests' => 99 ] );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'owners', 'group' => [ 'owner' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => $this->last_span(), 'sort' => 'ms', 'order' => 'desc' ] ) );
+
+		$this->assertSame( 'owner_timings_site', $r['table'] );
+		$this->assertSame( [ [ 'plugin:tui-7', 63.0, 8, 6 ], [ 'theme:moa-9', 12.25, 2, 1 ] ], $r['rows'] );
+	}
+
+	/** A URL filter reads the per-URL owner table. */
+	public function test_owners_filtered_by_a_url_read_owner_timings(): void {
+		$url = 'https://seed.example/weka-3318/';
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => 'plugin:kea-5', 'ms' => 21.75, 'calls' => 5, 'requests' => 2 ], partition: 1 );
+		$this->seed_owner_timing( [ 'url' => 'https://seed.example/other/', 'owner' => 'plugin:kea-5', 'ms' => 8888.0 ] );
+		$this->seed_owner_site_timing( [ 'owner' => 'plugin:kea-5', 'ms' => 7777.0 ] );
+		$spec = self::spec( [ 'source' => 'owners', 'group' => [ 'owner' ], 'filter' => [ 'url' => [ Log_Manager::url_hash( $url ) ] ], 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => $this->last_span() ] );
+
+		$r = Stats_Query::run( $spec );
+
+		$this->assertSame( 'owner_timings', $r['table'] );
+		$this->assertSame( [ [ 'plugin:kea-5', 21.75, 5, 2 ] ], $r['rows'] );
+	}
+
+	/** Only a URL or page, grouped, filtered or searched, leaves the site table. */
+	public function test_owners_table_for_follows_the_url_and_page_fields(): void {
+		$base = [ 'source' => 'owners', 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'now' => self::NOW ];
+		$this->assertSame( 'owner_timings_site', Stats_Query::table_for( self::spec( $base + [ 'group' => [ 'owner' ], 'filter' => [ 'worker' => [ 0 ] ] ] ) ) );
+		$this->assertSame( 'owner_timings', Stats_Query::table_for( self::spec( $base + [ 'group' => [ 'owner' ], 'filter' => [ 'url' => [ 'abc' ] ] ] ) ) );
+		$this->assertSame( 'owner_timings', Stats_Query::table_for( self::spec( $base + [ 'group' => [ 'page', 'owner' ] ] ) ) );
+		$this->assertSame( 'owner_timings', Stats_Query::table_for( self::spec( $base + [ 'group' => [ 'owner' ], 'search' => 'weka' ] ) ) );
+	}
+
+	/** The per-URL owner table keeps no worker column, so the pair is refused. */
+	public function test_owners_refuse_a_worker_filter_beside_a_url(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'holds no worker' );
+		Stats_Query::run( self::spec( [ 'source' => 'owners', 'group' => [ 'owner' ], 'filter' => [ 'worker' => [ 0 ], 'url' => [ 'abc' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
+	}
+
+	/** A field a table lacks is refused naming it. */
+	public function test_owners_refuse_a_category_field(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		Stats_Query::run( self::spec( [ 'source' => 'owners', 'group' => [ 'category' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
+	}
+
 	public function test_a_url_name_sort_orders_by_the_displayed_url(): void {
 		$urls = [ 'https://kea.example/weka/', 'https://kea.example/aaa-tui/', 'http://egret.example/moa' ];
 		foreach ( $urls as $i => $url ) {
