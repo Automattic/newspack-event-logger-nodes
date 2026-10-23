@@ -106,11 +106,32 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** The URL window's columns an expiry recomputes rather than subtracts. */
 	private const URL_EXTREMES = [ 'min_ms', 'max_ms', 'max_peak_mb' ];
 
+	/** Bound variables one statement may hold on SQLite before 3.32. */
+	private const SQLITE_MAX_BINDS = 999;
+
+	/** URLs one recompute read names: the limit less its bucket range's two. */
+	private const URLS_PER_READ = self::SQLITE_MAX_BINDS - 2;
+
+	/** Ops one rebuild batch holds at most: a fifth of BUFFERED_OPS_LIMIT. */
+	private const REBUILD_OPS = self::BUFFERED_OPS_LIMIT / 5;
+
 	/**
-	 * URLs one recompute read names, its bucket the one bind more: under
-	 * SQLite's lowest bound-variable limit, 999.
+	 * URLs one rebuild batch covers: a URL holds a window row per worker
+	 * flag, and each row takes at most a spend and a set.
 	 */
-	private const URLS_PER_READ = 998;
+	private const URLS_PER_REBUILD = self::REBUILD_OPS / 4;
+
+	/** The predicate naming the URLs whose ids run between two binds. */
+	private const URL_RANGE = 'url_id BETWEEN ? AND ?';
+
+	/** The next `?` category window rows by key after `( ?, ?, ?, ? )`. */
+	private const CATEGORY_PAGE = 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window WHERE ( server_id, category_id, entry_id, worker ) > ( ?, ?, ?, ? ) ORDER BY server_id, category_id, entry_id, worker LIMIT ?';
+
+	/**
+	 * Server `?`'s next `?` `timings_site` groups after `( ?, ?, ?, ? )`, each
+	 * summed over the buckets from `?` through `?`, read through the key.
+	 */
+	private const GROUP_PAGE = 'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE server_id = ? AND bucket BETWEEN ? AND ? AND ( category_id, entry_id, listener, worker ) > ( ?, ?, ?, ? ) GROUP BY category_id, entry_id, listener, worker ORDER BY category_id, entry_id, listener, worker LIMIT ?';
 
 	/**
 	 * Requests the buffer holds before the record reaching the count writes
@@ -759,33 +780,29 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Move the windows to end at the current bucket: subtract each bucket
-	 * that left them, or rebuild them from `timings_site` and `requests` when
-	 * the file holds no watermark or `timings_site` may no longer hold the
-	 * gap. A watermark at or past the windows' start, a span grown since they
-	 * were kept, expires nothing until the start passes it. One ROWS batch,
-	 * whose `window_expiry` rows carry the new watermark; a refusal raises and
-	 * the watermark stays.
+	 * that left them in one ROWS batch, or rebuild them from `timings_site`
+	 * and `requests`, `window_rebuild()`, when the file holds no watermark or
+	 * `timings_site` may no longer hold the gap. A watermark at or past the
+	 * windows' start, a span grown since they were kept, expires nothing
+	 * until the start passes it. The last batch's `window_expiry` rows carry
+	 * the new watermark; a refusal raises and the watermark stays.
 	 *
 	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
 	private function expire_window(): void {
 		$now     = Bucket::id( (int) Core::$now );
 		$through = $now - Bucket::window();
-		$reader  = null;
 		if ( null === $this->window_through ) {
-			$reader               = $this->own_reader();
-			$this->window_through = self::watermark( $reader );
+			$this->window_through = self::watermark( $this->own_reader() );
 		}
 		if ( null !== $this->window_through && $this->window_through >= $through ) {
 			return;
 		}
-		$reader ??= $this->own_reader();
-		$batch  = null === $this->window_through || $this->window_through < $through - Bucket::RETAIN_SLACK
-			? self::window_rebuild( $reader, $through )
-			: self::window_expiries( $reader, $this->window_through + 1, $through );
-		// Freed first: SQLite keeps a file a write locks open for reuse.
-		$reader = null;
-		$this->client->write_rows( $this->facts_table(), $batch );
+		if ( null === $this->window_through || $this->window_through < $through - Bucket::RETAIN_SLACK ) {
+			$this->window_rebuild( $through );
+		} else {
+			$this->write_read( fn ( Row_Reader $reader ): array => self::window_expiries( $reader, $this->window_through + 1, $through ) );
+		}
 		$this->window_through = $through;
 	}
 
@@ -869,7 +886,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					}
 				}
 			}
-			$sets = [] === $moved ? [] : self::url_window_sets( $reader, \array_map( Core::as_int( ... ), \array_column( $moved, 0 ) ), $bucket );
+			$sets = [];
+			foreach ( \array_chunk( \array_values( \array_unique( \array_map( Core::as_int( ... ), \array_column( $moved, 0 ) ) ) ), self::URLS_PER_READ ) as $chunk ) {
+				$sets += self::url_window_sets( $reader, self::urls_named( \count( $chunk ) ), $chunk, $bucket );
+			}
 			foreach ( $moved as $key => $sums ) {
 				$set              = $sets[ $key ] ?? self::url_window_spent( $sums[0], $sums[1], $sums[ $seen ], $bucket );
 				$ops[ $bucket ][] = $set;
@@ -891,59 +911,141 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Every window row negated, then `timings_site` summed over every bucket
-	 * after `$through`: the window rebuilt exactly, whatever it held and
-	 * whatever retention purged first. Each URL the requests after `$through`
-	 * name is `set` whole from them, and every URL window row last moved at
-	 * or before `$through` is spent, so a revived URL's next request adds
-	 * onto nothing, where a negation could not clear its extremes. The
-	 * `RETAIN_SLACK` buckets ending at `$through` are marked expired, the
-	 * last of them the watermark. Every bucket after `$through` counts, one
-	 * a clock stepped back from included, as the adds counted it.
+	 * Rebuild both windows exactly, whatever they held and whatever retention
+	 * purged first, in ROWS batches of at most REBUILD_OPS ops written in
+	 * turn, each from one read: the category window rows negated, then
+	 * `timings_site` summed over every bucket after `$through` added, then
+	 * the URL window, URLS_PER_REBUILD URLs at a time. The last batch marks
+	 * the `RETAIN_SLACK` buckets ending at `$through` expired, the last of
+	 * them the watermark, so a reader falls back until the windows are
+	 * whole, and a rebuild stopped between batches runs again whole. Every
+	 * bucket after `$through` counts, one a clock stepped back from
+	 * included, as the adds counted it.
+	 *
+	 * @param int $through The bucket the rebuilt windows start after.
+	 */
+	private function window_rebuild( int $through ): void {
+		$this->paged( self::category_spends( ... ), [ -1, -1, -1, -1 ] );
+		$this->paged( static fn ( Row_Reader $reader, array $after ): array => self::category_sums( $reader, $after, $through ), [ 0, -1, -1, -1, -1 ] );
+		$this->paged( static fn ( Row_Reader $reader, array $after ): array => self::url_rebuild( $reader, $after, $through ), [ 0 ] );
+	}
+
+	/**
+	 * Write each batch `$page` builds, from the cursor `$after` on, until it
+	 * answers no next cursor.
+	 *
+	 * @param \Closure(Row_Reader, list<int>): array{0:list<Row_Op>, 1:list<int>|null} $page  A batch and the cursor after it.
+	 * @param list<int>                                                               $after The first cursor.
+	 */
+	private function paged( \Closure $page, array $after ): void {
+		do {
+			$next = null;
+			$this->write_read(
+				static function ( Row_Reader $reader ) use ( $page, $after, &$next ): array {
+					[ $batch, $next ] = $page( $reader, $after );
+					return $batch;
+				}
+			);
+			$after = $next;
+		} while ( null !== $after );
+	}
+
+	/**
+	 * Write the batch `$read` builds from a fresh reader, the reader freed
+	 * first: SQLite keeps a file a write locks open for reuse.
+	 *
+	 * @param \Closure(Row_Reader): list<Row_Op> $read Builds the batch.
+	 */
+	private function write_read( \Closure $read ): void {
+		$batch = $read( $this->own_reader() );
+		$this->client->write_rows( $this->facts_table(), $batch );
+	}
+
+	/**
+	 * The negation of the next REBUILD_OPS category window rows by key
+	 * after `$after`, each keeping its own `last_bucket`, and the last key
+	 * read; none when fewer remain.
+	 *
+	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
+	 * @param list<int>  $after  The last key read: server, category, entry and worker ids.
+	 * @return array{0:list<Row_Op>, 1:list<int>|null}
+	 */
+	private static function category_spends( Row_Reader $reader, array $after ): array {
+		$rows = self::own_rows( $reader, self::CATEGORY_PAGE, [ ...$after, self::REBUILD_OPS ] );
+		$last = \end( $rows );
+		return [
+			\array_map( static fn ( array $row ): array => self::window_op( $row, -1, Core::as_int( $row[8] ) ), $rows ),
+			\count( $rows ) < self::REBUILD_OPS || false === $last ? null : \array_map( Core::as_int( ... ), [ $last[0], $last[1], $last[2], $last[4] ] ),
+		];
+	}
+
+	/**
+	 * The next REBUILD_OPS of one server's `timings_site` groups after
+	 * `$after`, each summed over every bucket after `$through`, as adds,
+	 * and the cursor after them: the last group read, or the next server's
+	 * first once the server is done; none after the last server.
 	 *
 	 * @param Row_Reader $reader  The file's reader, from `own_reader()`.
+	 * @param list<int>  $after   The server id, then the last category, entry, listener and worker ids read.
 	 * @param int        $through The bucket the rebuilt window starts after.
-	 * @return list<Row_Op>
+	 * @return array{0:list<Row_Op>, 1:list<int>|null}
 	 */
-	private static function window_rebuild( Row_Reader $reader, int $through ): array {
+	private static function category_sums( Row_Reader $reader, array $after, int $through ): array {
+		[ $server ] = $after;
+		$rows       = self::own_rows( $reader, self::GROUP_PAGE, [ $server, $through + 1, \PHP_INT_MAX, ...\array_slice( $after, 1 ), self::REBUILD_OPS ] );
+		$last = \end( $rows );
+		if ( \count( $rows ) < self::REBUILD_OPS || false === $last ) {
+			$next = self::own_rows( $reader, 'SELECT id FROM %s.servers WHERE id > ? ORDER BY id LIMIT 1', [ $server ] )[0][0] ?? null;
+			$last = null === $next ? null : [ $next, -1, -1, -1, -1 ];
+		}
+		return [
+			\array_map( static fn ( array $row ): array => self::window_op( $row, 1, Core::as_int( $row[8] ) ), $rows ),
+			null === $last ? null : \array_map( Core::as_int( ... ), \array_slice( $last, 0, 5 ) ),
+		];
+	}
+
+	/**
+	 * The URL window rows of the next URLS_PER_REBUILD URLs by id after
+	 * `$after`, rebuilt, and the last id they reach; none once they reach the
+	 * last URL, when the batch also marks the windows expired through
+	 * `$through`. Each row last moved at or before `$through` is spent, so a
+	 * revived URL's next request adds onto nothing, where a negation could
+	 * not clear its extremes, then each row the requests after `$through`
+	 * name is `set` whole from them.
+	 *
+	 * @param Row_Reader $reader  The file's reader, from `own_reader()`.
+	 * @param list<int>  $after   The last URL id an earlier batch covered.
+	 * @param int        $through The bucket the rebuilt window starts after.
+	 * @return array{0:list<Row_Op>, 1:list<int>|null}
+	 */
+	private static function url_rebuild( Row_Reader $reader, array $after, int $through ): array {
+		$id    = self::own_rows( $reader, 'SELECT id FROM %s.urls WHERE id > ? ORDER BY id LIMIT 1 OFFSET ?', [ $after[0], self::URLS_PER_REBUILD - 1 ] )[0][0] ?? null;
+		$range = [ $after[0] + 1, null === $id ? \PHP_INT_MAX : Core::as_int( $id ) ];
 		$batch = [];
-		foreach ( self::own_rows( $reader, 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
-			$batch[] = self::window_op( $row, -1, Core::as_int( $row[8] ) );
+		foreach ( self::own_rows( $reader, 'SELECT url_id, worker, last_seen, last_bucket FROM %s.urls_window WHERE ' . self::URL_RANGE . ' AND last_bucket <= ?', [ ...$range, $through ] ) as [ $url, $worker, $seen, $bucket ] ) {
+			$batch[] = self::url_window_spent( $url, $worker, $seen, Core::as_int( $bucket ) );
 		}
-		$sums = self::own_rows(
-			$reader,
-			'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY server_id, category_id, entry_id, listener, worker',
-			[ $through + 1, \PHP_INT_MAX ]
-		);
-		foreach ( $sums as $row ) {
-			$batch[] = self::window_op( $row, 1, Core::as_int( $row[8] ) );
-		}
-		foreach ( self::own_rows( $reader, 'SELECT url_id, worker, last_seen, last_bucket FROM %s.urls_window WHERE last_bucket <= ?', [ $through ] ) as [ $url, $worker, $seen, $last ] ) {
-			$batch[] = self::url_window_spent( $url, $worker, $seen, Core::as_int( $last ) );
-		}
-		\array_push( $batch, ...\array_values( self::url_window_sets( $reader, null, $through ) ) );
-		foreach ( \range( $through - Bucket::RETAIN_SLACK + 1, $through ) as $bucket ) {
+		\array_push( $batch, ...\array_values( self::url_window_sets( $reader, self::URL_RANGE, $range, $through ) ) );
+		foreach ( null === $id ? \range( $through - Bucket::RETAIN_SLACK + 1, $through ) : [] as $bucket ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
 		}
-		return $batch;
+		return [ $batch, null === $id ? null : [ $range[1] ] ];
 	}
 
 	/**
 	 * A `set` of each URL window row `requests` names in any bucket after
-	 * `$after`, by `url_id worker`, read whole as a rebuild reads it: for
-	 * `$urls`, or for every URL when it is null.
+	 * `$after`, by `url_id worker`, read whole, for the URLs `$urls` names.
 	 *
-	 * @param Row_Reader     $reader The file's reader, from `own_reader()`.
-	 * @param list<int>|null $urls   The URLs to read, or null for every URL.
-	 * @param int            $after  The bucket the requests are read after.
+	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
+	 * @param string     $urls   The predicate naming the URLs.
+	 * @param list<int>  $binds  Its binds.
+	 * @param int        $after  The bucket the requests are read after.
 	 * @return array<string,Row_Op>
 	 */
-	private static function url_window_sets( Row_Reader $reader, ?array $urls, int $after ): array {
+	private static function url_window_sets( Row_Reader $reader, string $urls, array $binds, int $after ): array {
 		$sets = [];
-		foreach ( null === $urls ? [ [] ] : \array_chunk( \array_values( \array_unique( $urls ) ), self::URLS_PER_READ ) as $chunk ) {
-			foreach ( self::own_rows( $reader, self::url_window_sql( \count( $chunk ) ), [ ...$chunk, $after + 1, \PHP_INT_MAX ] ) as $row ) {
-				$sets[ self::url_key( $row ) ] = [ 'set', 'urls_window', self::url_window_op( \array_slice( $row, 0, -1 ), 1, Core::as_int( \end( $row ) ) )[2] ];
-			}
+		foreach ( self::own_rows( $reader, self::url_window_sql( $urls ), [ ...$binds, $after + 1, \PHP_INT_MAX ] ) as $row ) {
+			$sets[ self::url_key( $row ) ] = [ 'set', 'urls_window', self::url_window_op( \array_slice( $row, 0, -1 ), 1, Core::as_int( \end( $row ) ) )[2] ];
 		}
 		return $sets;
 	}
@@ -973,16 +1075,23 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Per URL and worker flag, the `url_sums()` and newest bucket of the
-	 * requests from `?` through `?`: of `$urls` URLs bound first, through
-	 * `requests_url`, or of every URL when it is 0, through `requests_cover`.
-	 * Both bounds earn the seek; a caller wanting every later bucket binds
-	 * `PHP_INT_MAX`.
+	 * requests from `?` through `?` of the URLs `$urls` names, its binds
+	 * first, through `requests_url`. Both bucket bounds earn the seek; a
+	 * caller wanting every later bucket binds `PHP_INT_MAX`.
 	 *
-	 * @param int $urls URLs the statement binds before the bucket.
+	 * @param string $urls The predicate naming the URLs: `urls_named()`, or URL_RANGE.
 	 */
-	private static function url_window_sql( int $urls ): string {
-		$named = 0 === $urls ? '' : 'url_id IN ( ' . \implode( ', ', \array_fill( 0, $urls, '?' ) ) . ' ) AND ';
-		return 'SELECT ' . self::url_sums() . ", MAX( bucket ) FROM %1\$s.requests WHERE {$named}bucket BETWEEN ? AND ? GROUP BY url_id, worker";
+	private static function url_window_sql( string $urls ): string {
+		return 'SELECT ' . self::url_sums() . ", MAX( bucket ) FROM %1\$s.requests WHERE {$urls} AND bucket BETWEEN ? AND ? GROUP BY url_id, worker";
+	}
+
+	/**
+	 * The predicate naming `$count` URLs by id, one bind each.
+	 *
+	 * @param int $count URLs it names.
+	 */
+	private static function urls_named( int $count ): string {
+		return 'url_id IN ( ' . \implode( ', ', \array_fill( 0, $count, '?' ) ) . ' )';
 	}
 
 	/**
