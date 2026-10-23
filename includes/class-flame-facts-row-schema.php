@@ -60,6 +60,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 		'from_id'     => 'froms',
 		'category_id' => 'categories',
 		'entry_id'    => 'entries',
+		'owner_id'    => 'owners',
 	];
 
 	/** A lookup table: each name the rows repeat, filed once under its id. */
@@ -133,6 +134,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 			'froms'           => self::LOOKUP,
 			'categories'      => self::LOOKUP,
 			'entries'         => self::LOOKUP,
+			'owners'          => self::LOOKUP,
 			'requests'        => [
 				'columns' => [
 					'rid'         => 'TEXT NOT NULL',
@@ -205,6 +207,44 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests' => 'sum',
 				],
 				'indexes' => [ 'timings_site_bucket' => [ 'bucket' ] ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
+			],
+			'owner_timings'  => [
+				'columns' => [
+					'bucket'    => 'INTEGER NOT NULL',
+					'server_id' => 'INTEGER NOT NULL',
+					'url_id'    => 'INTEGER NOT NULL',
+					'owner_id'  => 'INTEGER NOT NULL',
+					'ms'        => 'REAL NOT NULL',
+					'calls'     => 'INTEGER NOT NULL',
+					'requests'  => 'INTEGER NOT NULL',
+				],
+				'key'     => [ 'bucket', 'server_id', 'url_id', 'owner_id' ],
+				'add'     => [
+					'ms'       => 'sum',
+					'calls'    => 'sum',
+					'requests' => 'sum',
+				],
+				'indexes' => [ 'owner_timings_url' => [ 'url_id', 'bucket' ] ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
+			],
+			'owner_timings_site' => [
+				'columns' => [
+					'bucket'    => 'INTEGER NOT NULL',
+					'server_id' => 'INTEGER NOT NULL',
+					'worker'    => 'INTEGER NOT NULL',
+					'owner_id'  => 'INTEGER NOT NULL',
+					'ms'        => 'REAL NOT NULL',
+					'calls'     => 'INTEGER NOT NULL',
+					'requests'  => 'INTEGER NOT NULL',
+				],
+				'key'     => [ 'server_id', 'bucket', 'worker', 'owner_id' ],
+				'add'     => [
+					'ms'       => 'sum',
+					'calls'    => 'sum',
+					'requests' => 'sum',
+				],
+				'indexes' => [ 'owner_timings_site_bucket' => [ 'bucket' ] ],
 				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
 			'category_window' => [
@@ -296,6 +336,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 8;
+		return 9;
 	}
 }

@@ -589,7 +589,7 @@ final class StatsBuilderTest extends TestCase {
 		$payload = $reply[ Message::VALUE ];
 		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertSame( 1, $payload['data']['buffered_requests'] );
-		$this->assertSame( 7, $payload['data']['buffered_rows'], 'its server, URL and agent, its two categories, the empty entry, and its request' );
+		$this->assertSame( 8, $payload['data']['buffered_rows'], 'its server, URL and agent, its two categories, the empty entry, the unmeasured owner, and its request' );
 		$this->assertSame( 0, $payload['data']['records_gone'] );
 	}
 
@@ -1231,6 +1231,71 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( [ [ 1, 0, 0 ] ], $this->facts( 'SELECT count, timed, errors FROM requests_hourly' ), 'an abort is not an error' );
 	}
 
+	/** Fill the flame of `$request` carrying `$children` as its tree. */
+	private function fill_owned_flame( Stats_Builder_Node $sb, array $request, array $children ): void {
+		$message                                       = self::flame_at( $request, $this->record_request( $request ) );
+		$message[ \Newspack_Nodes\Message::VALUE ]['children'] = $children;
+		$sb->fill( $message );
+	}
+
+	/** @return list<array<string,mixed>> A tree whose owners are kea-7746 (25.5 ms) and (unowned) (6 ms). */
+	private static function owned_children(): array {
+		return [
+			[
+				'name'     => 'the_content hook: [kea-7746] Kea->render',
+				'value'    => 30.0,
+				'children' => [ [ 'name' => 'sql: [core] q', 'value' => 4.5, 'children' => [] ] ],
+			],
+			[ 'name' => 'init hook', 'value' => 6.0, 'children' => [] ],
+		];
+	}
+
+	public function test_a_timed_flame_files_one_row_per_owner_per_url_and_site(): void {
+		$sb = $this->armed_stats_builder();
+		$this->fill_owned_flame( $sb, $this->completed_request( [ 'url' => 'https://kokako.example/hihi-31', 'duration_ms' => 41.5 ] ), self::owned_children() );
+		$sb->flush();
+
+		$expected = [ [ '(unmeasured)', 5.5, 0, 1 ], [ '(unowned)', 6.0, 0, 1 ], [ 'core', 4.5, 1, 1 ], [ 'kea-7746', 25.5, 1, 1 ] ];
+		$this->assertSame( $expected, $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings t JOIN owners o ON o.id = t.owner_id ORDER BY o.name' ) );
+		$this->assertSame( $expected, $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings_site t JOIN owners o ON o.id = t.owner_id ORDER BY o.name' ) );
+		$this->assertSame( [ [ 'kokako.example', '/hihi-31' ] ], \array_unique( $this->facts( 'SELECT sv.name, u.path FROM owner_timings t JOIN urls u ON u.id = t.url_id JOIN servers sv ON sv.id = t.server_id' ), SORT_REGULAR ) );
+		$this->assertSame( [ [ 0 ] ], \array_unique( $this->facts( 'SELECT worker FROM owner_timings_site' ), SORT_REGULAR ) );
+		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM requests WHERE bucket IN ( SELECT DISTINCT bucket FROM owner_timings )' ) );
+	}
+
+	public function test_a_childless_timed_flame_files_only_the_unmeasured_owner(): void {
+		$sb = $this->armed_stats_builder();
+		$this->fill_owned_flame( $sb, $this->completed_request( [ 'duration_ms' => 17.25 ] ), [] );
+		$sb->flush();
+
+		$this->assertSame( [ [ '(unmeasured)', 17.25, 0, 1 ] ], $this->facts( 'SELECT o.name, t.ms, t.calls, t.requests FROM owner_timings t JOIN owners o ON o.id = t.owner_id' ) );
+	}
+
+	public function test_an_untimed_request_files_no_owner_rows(): void {
+		$sb = $this->armed_stats_builder();
+		$this->fill_owned_flame( $sb, $this->completed_request( [ 'error_status' => 'A', 'duration_ms' => 5_000.0 ] ), self::owned_children() );
+		$sb->flush();
+
+		$this->assertSame( [ [ 0, 0, 0 ] ], $this->facts( 'SELECT ( SELECT count(*) FROM owner_timings ), ( SELECT count(*) FROM owner_timings_site ), ( SELECT count(*) FROM owners )' ) );
+	}
+
+	public function test_a_replayed_flame_leaves_each_owner_row_at_one_request(): void {
+		$request = $this->completed_request( [ 'rid' => 'rid-hihi-1', 'duration_ms' => 41.5 ] );
+		$message = self::flame_at( $request, $this->record_request( $request ) );
+		$message[ \Newspack_Nodes\Message::VALUE ]['children'] = self::owned_children();
+		$first = $this->armed_stats_builder();
+		$first->fill( $message );
+		$first->flush();
+		$first->remove_node();
+		$successor = $this->armed_stats_builder();
+		$successor->fill( $message );
+		$successor->flush();
+
+		$this->assertSame( [ [ 4, 1, 1 ] ], $this->facts( 'SELECT count(*), min(requests), max(requests) FROM owner_timings' ) );
+		$this->assertSame( [ [ 4, 1, 1 ] ], $this->facts( 'SELECT count(*), min(requests), max(requests) FROM owner_timings_site' ) );
+		$this->assertSame( [ [ 25.5 ] ], $this->facts( "SELECT t.ms FROM owner_timings t JOIN owners o ON o.id = t.owner_id WHERE o.name = 'kea-7746'" ) );
+	}
+
 	/** A timed request whose profile files no timing row is not a profiled request. */
 	public function test_a_timed_request_with_no_timing_rows_is_not_profiled(): void {
 		$sb = $this->armed_stats_builder();
@@ -1257,7 +1322,7 @@ final class StatsBuilderTest extends TestCase {
 		$sb->flush();
 
 		$tables = \array_map( static fn ( array $asked ): array => \array_column( $asked['value']['ROWS'], 1 ), $recorder->asked );
-		$this->assertSame( [ [ 'servers', 'urls', 'agents', 'requests', 'requests' ], [ 'servers', 'urls', 'agents', 'requests' ] ], $tables );
+		$this->assertSame( [ [ 'servers', 'urls', 'agents', 'owners', 'requests', 'requests' ], [ 'servers', 'urls', 'agents', 'owners', 'requests' ] ], $tables );
 		$this->assertSame( [ [ 3, 1, 1 ] ], $this->facts( 'SELECT count(*), count( DISTINCT url_id ), count( DISTINCT ua_id ) FROM requests' ) );
 	}
 
@@ -1286,9 +1351,10 @@ final class StatsBuilderTest extends TestCase {
 		for ( $e = 0; $e < 37; $e++ ) {
 			$entries[ "SELECT kakariki {$e}" ] = [ 0.5, 1 ];
 		}
-		// Its URL, its request, its hour, and a category row and 37 entry rows thrice.
-		$per  = 3 + 3 * 38;
-		$need = (int) \ceil( Stats_Builder_Node::BUFFERED_OPS_LIMIT / $per );
+		// Its URL, request and hour, a category row and 37 entry rows thrice, two owner rows.
+		$per  = 3 + 3 * 38 + 2;
+		// Once per batch: the server, the category, 38 entries and the owner.
+		$need = (int) \ceil( ( Stats_Builder_Node::BUFFERED_OPS_LIMIT - 41 ) / $per );
 		$fill = fn ( int $i ) => $this->fill_flame( $sb, $this->completed_request( [ 'rid' => "rid-kakariki-{$i}", 'url' => "https://kea.example/kakariki-{$i}", 'user_agent' => '', 'profiles' => [ 'sql' => [ 'time' => 18.5, 'count' => 37, 'entries' => $entries ] ] ] ) );
 		for ( $i = 1; $i < $need; $i++ ) {
 			$fill( $i );
