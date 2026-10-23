@@ -92,12 +92,12 @@ An Ask brief summarizes one request, URL or log entry for pasting into an AI ass
 
 **Code:** [`includes/app/class-mcp-controller.php`](../includes/app/class-mcp-controller.php) ([181-193](../includes/app/class-mcp-controller.php#L181-L193)); [`mu-plugins/00-newspack-profiler.php`](../mu-plugins/00-newspack-profiler.php) ([173-180](../mu-plugins/00-newspack-profiler.php#L173-L180)); [`includes/admin/class-admin.php`](../includes/admin/class-admin.php).
 
-The substrate's security model tables its own doors: the auth, spawn, health-runtime and command endpoints, the two event streams, the settings page, the `manage` and `tune` verbs and the WP-CLI verbs. The logger adds three, and each checks what it should:
+The substrate's security model tables its own doors: the auth, spawn, health-runtime and command endpoints, the OAuth registration, token, metadata and approval doors, the two event streams, the settings page, the `manage` and `tune` verbs and the WP-CLI verbs. The logger adds three, and each checks what it should:
 
 | Door | Who opens it | What it checks |
 |---|---|---|
 | The MCP server | A bearer credential naming a live session, 20 calls per ten seconds, each slot freeing nine to ten seconds after its call on memcached, refused with a 503 when no cache can meter them | Strict shape; constant-time key compare; a session an OAuth grant minted for another resource is refused; scope can only subtract from the session's. Two tools write; both need `tune`. Every success result leaves inside a `<site-data>` fence the `initialize` instructions explain, hex-escaped so no payload can close it. |
-| The `admin_post` handler, reset settings (the substrate registers two more, its own reset and flush cache) | `manage` with a nonce | Nonce, then capability. |
+| The `admin_post` handler, reset settings (the substrate registers three more: its own reset, flush cache and the OAuth approval decision) | `manage` with a nonce | Nonce, then capability. |
 | The profiler mu-plugin | Every request | Per-plugin load timings only, once the logger has started. |
 
 [MCP: one route, eleven tools](architecture-guide.md#mcp-one-route-eleven-tools) covers the MCP server; [The profiler drop-in](architecture-guide.md#the-profiler-drop-in) covers the mu-plugin.
