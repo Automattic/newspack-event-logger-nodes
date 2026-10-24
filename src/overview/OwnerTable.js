@@ -12,7 +12,7 @@ import {
 	formatDuration,
 	getStateColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
-import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartColorFor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 import RequestProfile, {
 	averageCaption,
@@ -38,11 +38,7 @@ const ownerColor = ( owner ) => {
 	if ( UNOWNED === owner ) {
 		return getStateColor( owner );
 	}
-	let hash = 0;
-	for ( const char of owner ) {
-		hash = ( hash * 31 + char.codePointAt( 0 ) ) >>> 0;
-	}
-	return chartColor( hash );
+	return chartColorFor( owner );
 };
 
 /**

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The category charts tell listener categories apart.** A category with no color of its own, as every listener is, drew the default grey, so the top bands of Events by Category and Average Time per Event overlaid as one. Such a category now takes the skin's chart color its name hashes to, as an owner does in the Time By Owner table, and keeps it in all three views; when a higher-ranked listener already took that slot, it takes the next free one. A hook, plugin or SQL category keeps its own.
 - **A click anywhere in a page row's chevron square, left of the URL, unfolds the page**, and hovering it lights the whole square.
 
 ## [0.157.0] - 2026-10-23
