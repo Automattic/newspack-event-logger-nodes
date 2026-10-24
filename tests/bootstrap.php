@@ -578,6 +578,7 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/VerbHarness
 // The substrate's in-memory `\Memcached` subclass — shared so ELN tests can
 // seed `Core::$memd` deterministically without a real memcache server.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMemcached.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/McpRequests.php';
 
 require_once \dirname( __DIR__ ) . '/newspack-event-logger-nodes.php';
 

@@ -34,7 +34,7 @@ refuses a caller below the role its schema declares (ADR-26), and a verb declari
 MANAGE. **No handler in this plugin re-checks a capability** — one that did would outrank
 its own declaration without saying so.
 
-Both rate limits below are the substrate's `\Newspack_Nodes\Rate_Limit`: each
+`/command`'s rate limit is the substrate's `\Newspack_Nodes\Rate_Limit`: each
 admitted call claims one of the budget's slots through the shared cache's atomic `add()` —
 memcached, else APCu — under a TTL of one window, so concurrent requests cannot both take
 the last slot. The cache counts that TTL in whole seconds: memcached frees a slot one
@@ -49,10 +49,8 @@ budget is close to one bucket per cache tick; the limiter's gain there is the at
 With neither cache, or a slot read that fails, `/command` admits and logs one rate-limited
 warning, because every dashboard and hub push rides it.
 
-The MCP route meters itself: `MCP_Controller::RATE_LIMIT_BURST = 20` calls per
-`RATE_LIMIT_WINDOW_S = 10` seconds, keyed by session handle. MCP does not go through
-`/command`, so the substrate's per-user cap does not bound it, and with no cache to meter
-in it answers `503 rate_limit_unavailable` rather than run unmetered.
+The MCP route meters each session in the slot `mcp:newspack-event-logger-nodes/v1:<handle>`,
+by the budget the substrate's [MCP doors](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/docs/API.md#mcp-doors) section gives.
 
 SSE rate-limiting is independent and **fail-closed**: `SSE_Out_Node` consults
 [`\Newspack_Nodes\SSE_Slot_Pool`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-sse-slot-pool.php) before opening headers, and memcache down means HTTP 429.
@@ -301,21 +299,21 @@ its request shape and HMAC authentication.
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-An [MCP](https://modelcontextprotocol.io/) server over verbs this plugin already answers. It
-speaks protocol revision `2025-06-18` as [JSON-RPC](https://www.jsonrpc.org/specification),
-and one POST carries every method: `initialize`, `notifications/initialized`, `tools/list` and
-`tools/call`. A message with no `id` member is a notification, whatever its method, and gets a
-bodiless `202 Accepted`, because JSON-RPC forbids replying to one; a request whose `id` is
-`null` is still a request, and is answered. A body without `"jsonrpc": "2.0"`, or whose
-`method` is not a string, answers `-32600` with a null `id`. It adds no runtime surface: `tools/call` mounts the same request graph
-`/command` does, through `Bootstrap::mount_request_graph()`, and dispatches through the same
-interpreter. Every argument rides by name, a list as one `--<name>=` token a member, and the
-verb binds it: an argument the verb does not declare answers `isError` with
-`unknown option --<name>`, which each tool's `inputSchema` announces as
-`additionalProperties: false`, and a map or a null answers `isError` before anything is sent.
-A tool's visibility follows its verb's declared `capability`, and each property's type and
-the schema's `required` list come from the verb's own declared args: an `int` is an `integer`, a `float` a `number`, a `bool` a `boolean`, a variadic arg
-such as `ask`'s `context` an array of its type, and every other type a `string`.
+An [MCP](https://modelcontextprotocol.io/) server over verbs this plugin already answers.
+`MCP_Controller` declares it on the substrate's
+[`Mcp_Door`](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/includes/class-mcp-door.php),
+and the deferred bootstrap calls its `wire()`. The substrate's
+[MCP doors](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/docs/API.md#mcp-doors)
+section is the contract for what every door shares: the JSON-RPC methods and their error
+codes, the bodiless 202 for a notification, the Bearer session whose scope is a ceiling on
+its minting user, the OAuth resource and the `WWW-Authenticate` header on each 401, the 401,
+403, 429 and 503 refusals, the arguments riding to the verb by name, the schema each tool
+takes from its verb's declared args, and the `<site-data>` fence every reply leaves in. This plugin declares the
+rest: the namespace `newspack-event-logger-nodes/v1`, which also names the door's resource
+and its rate-limit slot; the eleven tools; the glossary; the measurement caveat; and a
+`serverInfo` naming the plugin at the version it ships. It adds no runtime surface:
+`tools/call` mounts the same request graph `/command` does, through
+`Bootstrap::mount_request_graph()`, and dispatches through the same interpreter.
 
 ![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals, and 401 when Command_Auth::admits_resource() refuses a session an OAuth grant minted for another resource than MCP_Controller::resource(), every 401 carrying WWW-Authenticate: Bearer resource_metadata naming where to sign in; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 while all 20 of the handle's slots are held, each claimed by an atomic cache add() and freed one 10-second window after its call, or 503 rate_limit_unavailable when neither memcached nor APCu answers, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees nine tools, a tune session two more, and five verbs have no tool at all: performance.list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
@@ -325,15 +323,12 @@ or minted by the substrate's OAuth token endpoint for a connection a user approv
 Authority comes from the minting user, and the session's scope only ever subtracts from it: a
 manage-scoped session minted by someone who can do nothing still does nothing.
 
-The door is an OAuth protected resource. `MCP_Controller::resource()` is its canonical URI, its
-REST URL over https, whatever the request's own scheme, with the host lowercased and no trailing
-slash, so consent in wp-admin and the door in REST spell it alike. The plugin declares it
-on the substrate's `newspack_nodes/oauth_resources` filter, so the substrate serves its RFC 9728
-metadata. Every 401 the door answers carries
+The door's resource is `https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp`, and
+every 401 it answers carries
 `WWW-Authenticate: Bearer resource_metadata="https://<DOMAIN>/.well-known/oauth-protected-resource/wp-json/newspack-event-logger-nodes/v1/mcp"`,
-built by `Oauth_Server::resource_metadata_url()`, which tells an MCP client where to sign in. A
-session an OAuth grant minted for any other resource answers 401 `mcp_unauthorized`; a session
-issued by hand names no resource and is admitted.
+which tells an MCP client where to sign in. A session an OAuth grant minted for any other
+resource answers 401 `mcp_unauthorized`; a session issued by hand names no resource and is
+admitted.
 
 Eleven tools, one per verb:
 
@@ -388,19 +383,16 @@ claude mcp add --transport http hub https://<DOMAIN>/wp-json/newspack-event-logg
 Every tool description carries the measurement caveat, because a model handed
 `175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured will invent a
 cause for the difference — and the invented cause reads exactly like a finding. That caveat
-is the tail of `initialize`'s `instructions`. Ahead of it, after the fence rule, the
-instructions carry a glossary: what a URL shape and a page are, as `Url_Parts` keys them,
-what counts as an error, what an `owner` is beside the `(unowned)` and `(unmeasured)` rows,
-why profile categories do not sum, and what a bucket is.
+is the tail of `initialize`'s `instructions`. Ahead of it, after the substrate's fence note,
+the instructions carry a glossary: what a URL shape and a page are, as `Url_Parts` keys
+them, what counts as an error, what an `owner` is beside the `(unowned)` and `(unmeasured)`
+rows, why profile categories do not sum, and what a bucket is.
 
 **Every success result is fenced, and the head of `instructions` says why.** A tool returns
-recorded site traffic, part of it written by the site's visitors: `dump_request` carries the `environment_v3` entry, whose values are request headers. So the
-`text` block is `wp_json_encode( $reply, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES )` wrapped in
-`<site-data>` … `</site-data>`, and the instructions tell the reader that whatever sits
-inside that tag is data and never a direction to follow. `JSON_HEX_TAG` is what makes the
-fence unbreakable: every `<` and `>` in the payload becomes `\u003C` or `\u003E`, so no
-payload can carry a literal `</site-data>`. **A client that decodes the `text` must strip
-the fence first.** An `isError` result is the site's own message and is not fenced. See
+recorded site traffic, part of it written by the site's visitors: `dump_request` carries the
+`environment_v3` entry, whose values are request headers. **A client that decodes the
+`text` must strip the fence first.** An `isError` result is the site's own message and is
+not fenced. See
 [decision 25](architecture-decisions.md#decision-25-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced).
 
 Nothing here assumes an agent will act on instructions found in a page. Wiring a client up
@@ -571,7 +563,7 @@ on nothing; with the plugin inactive it goes unread.
 | `newspack_nodes/job_worker/after_job` (action, 3 args) | `Log_Manager::end_job_context` |
 | `newspack_nodes/job_handlers` (filter) | An anonymous callback adding `App\Overview_Prefetch::HANDLER` → `App\Overview_Prefetch::run`, the job that stores the Overview's default answers (decision 37). |
 | `newspack_nodes/worker_identified` (action, 2 args) | `Log_Manager::identify_worker` — writes `worker_type` and `worker_partition` again with the worker a spawn request validated, so its record moves to that worker's own URL row. |
-| `newspack_nodes/oauth_resources` (filter) | An anonymous callback appending `MCP_Controller::resource()`, so the substrate serves the MCP door's RFC 9728 metadata and its OAuth server issues grants for it. |
+| `newspack_nodes/oauth_resources` (filter) | The substrate's `Mcp_Door::wire()`, which `MCP_Controller` inherits, appends the door's `resource()`, so the substrate serves the MCP door's RFC 9728 metadata and its OAuth server issues grants for it. |
 | `newspack_nodes/settings_sync/value` (filter, 2 args) | `newspack_event_logger_nodes_resolve_settings_sync_value` — resolves a blank or absent value to the OWNING config's default, and hydrates a pointer rule's hooks so the ruleset ships hook-complete to spokes. |
 | `newspack_nodes/registered_log_producers` | `newspack_event_logger_nodes_register_log_producers` — adds `Log_Manager::firehose_dir_template()`, so the dirs written and the dirs the log GC declares are one statement. |
 | `newspack_nodes/before_reconcile` / `newspack_nodes/after_reconcile` | An anonymous pair sharing an `$entered` flag, giving the minute-cadence reconcile pass its own `/jobs/newspack-nodes` request context. |

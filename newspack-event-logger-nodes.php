@@ -82,13 +82,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant below the 2.127.0 floor. check-substrate-floor.sh holds
+	// @longform Dormant below the 2.129.0 floor. check-substrate-floor.sh holds
 	// it to the substrate PHP this plugin calls; a floor that a topology, a
 	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
 	// why each raise was made. A floor set too low wires the plugin up against
 	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.127.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.129.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -170,18 +170,7 @@ function newspack_event_logger_nodes_boot(): void {
 	\add_action( 'admin_enqueue_scripts', 'newspack_event_logger_nodes_enqueue_dashboards' );
 
 	// The MCP surface; reaching it takes a scoped session credential.
-	\add_action(
-		'rest_api_init',
-		static function (): void {
-			( new \Newspack_Event_Logger_Nodes\App\MCP_Controller() )->register_routes();
-		}
-	);
-	// The door is an OAuth resource, and its 401 names where to sign in.
-	\add_filter(
-		'newspack_nodes/oauth_resources',
-		static fn ( mixed $resources ): array => [ ...\Newspack_Nodes\Core::arr( $resources ), \Newspack_Event_Logger_Nodes\App\MCP_Controller::resource() ]
-	);
-	\add_filter( 'rest_post_dispatch', [ \Newspack_Event_Logger_Nodes\App\MCP_Controller::class, 'point_to_sign_in' ], 10, 3 );
+	( new \Newspack_Event_Logger_Nodes\App\MCP_Controller() )->wire();
 
 	// The drop-in's rows go first, ahead of any span App\Core binds.
 	\Newspack_Event_Logger_Nodes\Log_Manager::instance()->flush_plugin_loads();

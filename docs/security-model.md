@@ -90,7 +90,7 @@ An Ask brief summarizes one request, URL or log entry for pasting into an AI ass
 
 ## The other doors
 
-**Code:** [`includes/app/class-mcp-controller.php`](../includes/app/class-mcp-controller.php) ([181-193](../includes/app/class-mcp-controller.php#L181-L193)); [`mu-plugins/00-newspack-profiler.php`](../mu-plugins/00-newspack-profiler.php) ([173-180](../mu-plugins/00-newspack-profiler.php#L173-L180)); [`includes/admin/class-admin.php`](../includes/admin/class-admin.php).
+**Code:** [`includes/app/class-mcp-controller.php`](../includes/app/class-mcp-controller.php) ([125-138](../includes/app/class-mcp-controller.php#L125-L138)) and the substrate's [`Mcp_Door`](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/includes/class-mcp-door.php), which it extends; [`mu-plugins/00-newspack-profiler.php`](../mu-plugins/00-newspack-profiler.php) ([173-180](../mu-plugins/00-newspack-profiler.php#L173-L180)); [`includes/admin/class-admin.php`](../includes/admin/class-admin.php).
 
 The substrate's security model tables its own doors: the auth, spawn, health-runtime and command endpoints, the OAuth registration, token, metadata and approval doors, the two event streams, the settings page, the `manage` and `tune` verbs and the WP-CLI verbs. The logger adds three, and each checks what it should:
 
