@@ -26,6 +26,11 @@ import {
 	getStateColor,
 	phosphorColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
+import {
+	SKIN_COLORS,
+	chartColor,
+	nameHash,
+} from '@newspack-nodes/shared/hooks/useTimeChart';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import {
@@ -37,6 +42,39 @@ import {
 	useSlotRange,
 } from './chartSlots';
 import { CATEGORY_MEASURES } from './constants';
+
+/** The grey `getStateColor()` gives a name it has no color for. */
+const DEFAULT_COLOR = getStateColor( '' );
+
+/**
+ * One color per category, shared by the three views. A category with its own
+ * `getStateColor()` hue keeps it; each default-grey one takes the chart slot
+ * its name hashes to, else the next free slot (wrapping) when a higher-ranked
+ * name already took that one, and keeps its hashed slot once all are taken.
+ *
+ * @param {string[]} labels The category names in whole-window time rank.
+ * @return {Map<string,string>} Each name's CSS color value.
+ */
+const categoryColors = ( labels ) => {
+	const taken = new Set();
+	return new Map(
+		labels.map( ( label ) => {
+			const own = getStateColor( label );
+			if ( DEFAULT_COLOR !== own ) {
+				return [ label, own ];
+			}
+			const hash = nameHash( label );
+			let step = 0;
+			if ( taken.size < SKIN_COLORS ) {
+				while ( taken.has( ( hash + step ) % SKIN_COLORS ) ) {
+					step++;
+				}
+				taken.add( ( hash + step ) % SKIN_COLORS );
+			}
+			return [ label, chartColor( hash + step ) ];
+		} )
+	);
+};
 
 /**
  * Height of one chart frame, in pixels. Three of them stack in one panel, so
@@ -221,10 +259,14 @@ export default function CategoryTimeChart( {
 		[]
 	);
 
-	// Each category in its own colour, as the Time Breakdown draws it.
+	// The time view's order ranks the colors, so every view wears the same.
+	const colors = useMemo(
+		() => categoryColors( series[ 0 ].map( ( { label } ) => label ) ),
+		[ series ]
+	);
 	const colorAt = useCallback(
-		( label, index ) => phosphorColor( index, getStateColor( label ) ),
-		[]
+		( label, index ) => phosphorColor( index, colors.get( label ) ),
+		[ colors ]
 	);
 
 	const slotClick = useSlotClick( axis, onSlotClick );
