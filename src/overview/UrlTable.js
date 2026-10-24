@@ -508,7 +508,9 @@ const UrlRow = memo(
 									aria-hidden="true"
 									onClick={ toggle }
 								>
-									▾
+									<span className="event-logger-table__caret-glyph">
+										▾
+									</span>
 								</span>
 							) : (
 								<span

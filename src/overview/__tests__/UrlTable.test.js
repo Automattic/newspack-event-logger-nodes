@@ -1460,8 +1460,12 @@ describe( 'pages and their shapes', () => {
 			0
 		);
 		click( caret );
+		click( caret.querySelector( '.event-logger-table__caret-glyph' ) );
 
-		expect( onToggleExpand.mock.calls ).toEqual( [ [ PIWAKAWAKA_KEY ] ] );
+		expect( onToggleExpand.mock.calls ).toEqual( [
+			[ PIWAKAWAKA_KEY ],
+			[ PIWAKAWAKA_KEY ],
+		] );
 		expect( onSelect ).not.toHaveBeenCalled();
 		unmount();
 	} );
