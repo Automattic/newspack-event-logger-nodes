@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.157.0\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.157.1\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-24T00:52:14+00:00\n"
+"POT-Creation-Date: 2026-10-24T06:22:38+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -352,11 +352,11 @@ msgid "Browse a partition"
 msgstr ""
 
 #: src/log-table/logTable.js:35
-#: src/overview/CategoryTimeChart.js:60
+#: src/overview/CategoryTimeChart.js:98
 #: src/overview/components/BucketField.js:288
 #: src/overview/components/LogEntriesTable.js:1558
 #: src/overview/components/UrlDetailView.js:133
-#: src/overview/OwnerTable.js:84
+#: src/overview/OwnerTable.js:80
 #: src/overview/RequestProfile.js:393
 msgid "Time"
 msgstr ""
@@ -459,24 +459,24 @@ msgstr ""
 msgid "Chart"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:59
+#: src/overview/CategoryTimeChart.js:97
 msgid "Time by Category"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:64
+#: src/overview/CategoryTimeChart.js:102
 msgid "Events by Category"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:65
+#: src/overview/CategoryTimeChart.js:103
 #: src/rules/RulesAdmin.js:357
 msgid "Events"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:69
+#: src/overview/CategoryTimeChart.js:107
 msgid "Average Time per Event"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:70
+#: src/overview/CategoryTimeChart.js:108
 msgid "Time per Event"
 msgstr ""
 
@@ -1049,42 +1049,42 @@ msgstr ""
 msgid "Loading dashboard…"
 msgstr ""
 
-#: src/overview/OwnerTable.js:83
+#: src/overview/OwnerTable.js:79
 msgid "Owner"
 msgstr ""
 
-#: src/overview/OwnerTable.js:85
+#: src/overview/OwnerTable.js:81
 #: src/overview/RequestProfile.js:397
 msgid "% of Total"
 msgstr ""
 
-#: src/overview/OwnerTable.js:86
+#: src/overview/OwnerTable.js:82
 #: src/overview/RequestProfile.js:404
 msgid "Count"
 msgstr ""
 
-#: src/overview/OwnerTable.js:92
+#: src/overview/OwnerTable.js:88
 msgid "Time By Owner"
 msgstr ""
 
 #. translators: %d: number of additional owners that can be shown.
-#: src/overview/OwnerTable.js:162
+#: src/overview/OwnerTable.js:158
 #, js-format
 msgid "Show %d more owner"
 msgid_plural "Show %d more owners"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/OwnerTable.js:175
+#: src/overview/OwnerTable.js:171
 #: src/overview/RequestProfile.js:506
 msgid "Total Profiled"
 msgstr ""
 
-#: src/overview/OwnerTable.js:200
+#: src/overview/OwnerTable.js:196
 msgid "Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner."
 msgstr ""
 
-#: src/overview/OwnerTable.js:205
+#: src/overview/OwnerTable.js:201
 msgid "Times and counts are per request."
 msgstr ""
 
@@ -1260,13 +1260,13 @@ msgstr ""
 
 #. translators: %s: the error message.
 #: src/overview/UrlTable.js:356
-#: src/overview/UrlTable.js:596
+#: src/overview/UrlTable.js:598
 #, js-format
 msgid "Could not load URLs: %s"
 msgstr ""
 
 #: src/overview/UrlTable.js:361
-#: src/overview/UrlTable.js:599
+#: src/overview/UrlTable.js:601
 msgid "Loading URLs…"
 msgstr ""
 
@@ -1280,24 +1280,24 @@ msgstr ""
 msgid "No URLs to display"
 msgstr ""
 
-#: src/overview/UrlTable.js:858
+#: src/overview/UrlTable.js:860
 msgid "Search by whole URL word"
 msgstr ""
 
-#: src/overview/UrlTable.js:862
+#: src/overview/UrlTable.js:864
 msgid "Search by whole URL word…"
 msgstr ""
 
-#: src/overview/UrlTable.js:881
+#: src/overview/UrlTable.js:883
 msgid "Showing Workers"
 msgstr ""
 
-#: src/overview/UrlTable.js:882
+#: src/overview/UrlTable.js:884
 msgid "Include Workers"
 msgstr ""
 
 #. translators: 1: how many URLs the page holds past those listed, 2: how many the server lists under one page.
-#: src/overview/UrlTable.js:960
+#: src/overview/UrlTable.js:962
 #, js-format
 msgid "%1$s more URL, past the first %2$s the server lists"
 msgid_plural "%1$s more URLs, past the first %2$s the server lists"
@@ -1305,30 +1305,30 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: 1: first row number on the page, 2: last row number on the page, 3: total number of pages listed.
-#: src/overview/UrlTable.js:998
+#: src/overview/UrlTable.js:1000
 #, js-format
 msgid "%1$s–%2$s of %3$s pages"
 msgstr ""
 
 #. translators: %s: number of pages in the table.
-#: src/overview/UrlTable.js:1012
+#: src/overview/UrlTable.js:1014
 #, js-format
 msgid "%s page"
 msgid_plural "%s pages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/UrlTable.js:1029
+#: src/overview/UrlTable.js:1031
 msgid "Prev"
 msgstr ""
 
 #. translators: 1: current page number, 2: total number of pages.
-#: src/overview/UrlTable.js:1034
+#: src/overview/UrlTable.js:1036
 #, js-format
 msgid "Page %1$d of %2$d"
 msgstr ""
 
-#: src/overview/UrlTable.js:1048
+#: src/overview/UrlTable.js:1050
 msgid "Next"
 msgstr ""
 
