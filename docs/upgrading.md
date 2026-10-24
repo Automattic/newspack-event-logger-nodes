@@ -33,10 +33,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `page`, `server` and `worker` and measuring only what a URL row of the
   `urls` reply carries, or the distinct `urls` and `pages`, answers
   `table` `urls_window` rather than `requests`, unless `requests_hourly`
-  answers it, and only while every partition's window has expired through
-  the bucket before the range and holds no row past its end. Its counts,
-  extremes and distinct counts equal what `requests` answers; its sums
-  agree to floating-point rounding, since they are added in another order.
+  answers it, and only while every partition's window sits within a
+  bucket of the range. Its counts, extremes and distinct counts equal what
+  `requests` answers; its sums agree to floating-point rounding, since
+  they are added in another order.
 
 ## 0.153.0
 

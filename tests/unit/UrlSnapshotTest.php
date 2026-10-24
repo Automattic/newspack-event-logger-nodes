@@ -840,7 +840,7 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_a_logged_publish_spans_the_build_and_each_step(): void {
 		[ $entries, $thrown ] = $this->logged_publish( [] );
 
-		$step    = static fn ( string $span, ?string $l = null ): array => [ [ "{$span} (start)", $l, null ], [ "{$span} (complete)", null, 'ok' ] ];
+		$step    = static fn ( string $span, ?string $l = null, string $m = 'ok' ): array => [ [ "{$span} (start)", $l, null ], [ "{$span} (complete)", null, $m ] ];
 		$indexes = [];
 		foreach ( self::index_names() as $name ) {
 			\array_push( $indexes, ...$step( 'snapshot index', $name ) );
@@ -853,7 +853,7 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertSame(
 			[
 				[ 'snapshot build (start)', null, null ],
-				...$step( 'snapshot group' ),
+				...$step( 'snapshot group', null, 'requests' ),
 				...$step( 'snapshot copy' ),
 				...$step( 'snapshot pages' ),
 				...$indexes,
@@ -863,6 +863,23 @@ final class UrlSnapshotTest extends TestCase {
 			self::snapshot_spans( $entries )
 		);
 		$this->assertTrue( self::snapshot_published() );
+	}
+
+	/**
+	 * The group step closes on the table that answered it, so a job's record
+	 * tells a run read off the URL window from one that fell back.
+	 */
+	public function test_the_group_step_names_the_table_that_answered_it(): void {
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function (): void {
+				$this->seed_request( self::request( '/tieke-7716/', 3, 11, [ 'ms' => 40.5 ] ) );
+				$this->seed_url_window( 0, Bucket::id( self::NOW ) - Bucket::window() );
+				Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
+			}
+		);
+
+		$this->assertSame( [ [ 'snapshot group (start)', null, null ], [ 'snapshot group (complete)', null, 'urls_window' ] ], self::spans_of( $entries, Flame_Tree::SNAPSHOT_GROUP ) );
 	}
 
 	/** Folded into a flame, every index stays its own node under the build. */

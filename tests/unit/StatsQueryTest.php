@@ -110,7 +110,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_lagging_watermark_reads_timings_site(): void {
 		$span = $this->last_span();
 		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 1 ] ] ] );
-		$this->write_facts( 1, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 2 ] ] ] );
+		$this->write_facts( 1, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 3 ] ] ] );
 		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 13.5 ], partition: 1 );
 
 		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $span ] );
@@ -402,12 +402,12 @@ final class StatsQueryTest extends TestCase {
 		}
 	}
 
-	/** While any partition's watermark lags the window's start, the URL window is not read. */
+	/** While any partition's watermark lags the window's start past the slack, the URL window is not read. */
 	public function test_a_lagging_watermark_reads_requests(): void {
 		$this->seed_url_traffic();
 		$through = Bucket::id( self::NOW ) - Bucket::window();
 		$this->seed_url_window( 0, $through );
-		$this->seed_url_window( 2, $through - 1 );
+		$this->seed_url_window( 2, $through - 2 );
 		$this->seed_rows( 0, [ [ 'add', 'urls_window', self::phantom_url_row( 'https://kea-7110.example/moa-7110/', Bucket::id( self::NOW ) ) ] ] );
 		$spec = self::url_spec( [ 'group' => [ 'url' ], 'sort' => 'url_name' ] );
 
@@ -419,49 +419,242 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * A builder a bucket ahead of the reader has added rows past the reader's
-	 * range before it expires the bucket the range starts after: the URL
-	 * window does not answer, and `requests` lists the URL with only the
-	 * requests inside the range.
+	 * Partition `$p`'s URL window as its builder keeps it after expiring
+	 * through `$through`, its requests seeded first.
+	 *
+	 * @param list<array<string,mixed>> $requests The partition's requests.
+	 * @param int                       $p        The partition.
+	 * @param int                       $through  Its watermark.
 	 */
-	public function test_a_url_window_row_past_the_ranges_end_reads_requests(): void {
-		$now = Bucket::id( self::NOW );
-		$url = 'https://kea-7110.example/ruru-7117/';
-		$this->seed_requests(
-			[
-				[ 'server' => self::KEA, 'url' => $url, 'bucket' => $now, 'finished_at' => (float) ( $now * Bucket::SECONDS + 41 ), 'ms' => 413.25, 'peak_mb' => 41.5 ],
-				[ 'server' => self::KEA, 'url' => $url, 'bucket' => $now + 1, 'finished_at' => (float) ( ( $now + 1 ) * Bucket::SECONDS + 42 ), 'ms' => 97.5, 'peak_mb' => 18.25 ],
-			],
-			0
-		);
-		$this->seed_url_window( 0, $now - Bucket::window() );
-		$spec = self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ] );
-
-		$r = Stats_Query::run( $spec );
-
-		$this->assertSame( 'requests', $r['table'] );
-		$this->assertSame( [ [ Url_Parts::hash( $url ), $url, 1, 413.25 ] ], $r['rows'] );
+	private function url_partition( array $requests, int $p, int $through ): void {
+		$this->seed_requests( $requests, $p );
+		$this->seed_url_window( $p, $through );
 	}
 
 	/**
-	 * The same race on the category window: a row a bucket past the range
-	 * sends the leaderboard to `timings_site`, which counts the range alone.
+	 * A requests row of `$url` on kea filed in `$bucket`, finishing `$second`
+	 * into it.
+	 *
+	 * @param string              $url    The URL.
+	 * @param int                 $bucket Its bucket.
+	 * @param int                 $second Seconds into the bucket it finished.
+	 * @param array<string,mixed> $over   Columns to set.
+	 * @return array<string,mixed>
 	 */
-	public function test_a_category_window_row_past_the_ranges_end_reads_timings_site(): void {
-		$now = Bucket::id( self::NOW );
-		$this->seed_rows( 0, [
-			[ 'ignore', 'window_expiry', [ 'bucket' => $now - Bucket::window() ] ],
-			[ 'add', 'category_window', self::window_row( 'hook:kahu_init', 34.75, 2, 2, $now + 1 ) ],
-		] );
-		$this->seed_site_timings( [
-			[ 'category' => 'hook:kahu_init', 'bucket' => $now, 'ms' => 21.5 ],
-			[ 'category' => 'hook:kahu_init', 'bucket' => $now + 1, 'ms' => 13.25 ],
-		] );
+	private static function kea_request( string $url, int $bucket, int $second, array $over = [] ): array {
+		return $over + [
+			'server'      => self::KEA,
+			'url'         => $url,
+			'bucket'      => $bucket,
+			'finished_at' => (float) ( $bucket * Bucket::SECONDS + $second ),
+		];
+	}
 
-		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'now' => self::NOW ] );
+	/**
+	 * Every whole-window listing the URL window answers, read through the
+	 * picker and from `requests` over the same range, as the snapshot group,
+	 * the live listings and the counted totals ask them.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:array<string,mixed>}>
+	 */
+	private static function window_and_requests(): array {
+		$slowest = [ 'sort' => 'avg_ms', 'order' => 'desc', 'limit' => 10 ];
+		$specs   = [
+			'the snapshot group' => self::url_spec( [ 'group' => [ 'url', 'page' ], 'sort' => 'url' ] ),
+			'the counted totals' => self::url_spec( [ 'group' => [], 'measure' => Performance_CI_Node::URL_TOTALS ] ),
+			'by worker flag'     => self::url_spec( [ 'group' => [ 'worker' ], 'measure' => [ 'count', 'urls', 'pages', 'last_seen' ], 'sort' => 'worker' ] ),
+		];
+		foreach ( [ false, true ] as $workers ) {
+			$specs[ 'pages, workers ' . (int) $workers ] = self::url_spec( [ 'group' => [ 'page', 'server' ], 'filter' => Performance_CI_Node::scope( '', $workers ), 'sort' => 'count', 'order' => 'desc', 'also' => $slowest ] );
+			$specs[ 'urls, workers ' . (int) $workers ]  = self::url_spec( [ 'group' => [ 'url' ], 'filter' => Performance_CI_Node::scope( self::KEA, $workers ), 'sort' => 'url_name', 'also' => $slowest ] );
+		}
+		$read = [];
+		foreach ( $specs as $name => $spec ) {
+			$read[ $name ] = [ Stats_Query::run( $spec ), Stats_Query::run( [ 'now' => null ] + $spec ) ];
+		}
+		return $read;
+	}
 
-		$this->assertSame( 'timings_site', $r['table'] );
-		$this->assertSame( [ [ 'hook:kahu_init', 21.5 ] ], $r['rows'] );
+	/**
+	 * Each listing answers from the URL window and equals `requests` over
+	 * the range it asked.
+	 *
+	 * @param array<string,array{0:array<string,mixed>,1:array<string,mixed>}> $read `window_and_requests()`.
+	 */
+	private function assert_window_equals_requests( array $read ): void {
+		foreach ( $read as $name => [ $window, $requests ] ) {
+			$this->assertSame( 'urls_window', $window['table'], $name );
+			$this->assertSame( 'requests', $requests['table'], $name );
+			$this->assertSame( $requests['rows'], $window['rows'], $name );
+			$this->assertSame( $requests['also'] ?? null, $window['also'] ?? null, $name );
+		}
+	}
+
+	/**
+	 * Every partition a bucket behind the reader, as a job queued as a
+	 * bucket opens finds them, answers from the URL window less the bucket
+	 * before the range: a URL whose slowest request, peak and only request
+	 * sit there reads as `requests` over the range reads it.
+	 */
+	public function test_a_url_window_a_bucket_behind_subtracts_the_bucket_before_the_range(): void {
+		$now     = Bucket::id( self::NOW );
+		$through = $now - Bucket::window();
+		$tui     = 'https://kea-7110.example/tui-7142/';
+		$this->url_partition(
+			[
+				self::kea_request( $tui, $through, 11, [ 'ms' => 9000.5, 'peak_mb' => 99.5 ] ),
+				self::kea_request( $tui, $now - 3, 12, [ 'ms' => 413.25, 'peak_mb' => 41.5 ] ),
+				self::kea_request( $tui, $now - 1, 13, [ 'ms' => 12.25, 'peak_mb' => 18.75, 'status' => 404 ] ),
+				self::kea_request( 'https://kea-7110.example/gone-7142/', $through, 14, [ 'ms' => 77.5 ] ),
+			],
+			0,
+			$through - 1
+		);
+		$this->url_partition( [ self::kea_request( $tui, $now, 15, [ 'ms' => 63.75, 'worker' => 1 ] ) ], 2, $through - 1 );
+
+		$read = self::window_and_requests();
+
+		$this->assert_window_equals_requests( $read );
+		$this->assertSame( [ [ Url_Parts::hash( $tui ), $tui, 3, 413.25, 41.5 ] ], Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'max_ms', 'max_peak_mb' ] ] ) )['rows'], 'its slowest request and peak left with the bucket' );
+		$this->assertNotContains( 'https://kea-7110.example/gone-7142/', \array_column( $read['the snapshot group'][0]['rows'], 1 ), 'a URL whose only request sits in the bucket before the range drops out' );
+		$this->assertSame( 1, $read['the counted totals'][0]['rows'][0][ \array_search( 'urls', $read['the counted totals'][0]['columns'], true ) ] );
+	}
+
+	/**
+	 * The bucket before the range holds a URL's only timed request, its
+	 * untimed ones in range: the window, corrected, times nothing, so its
+	 * minimum, maximum and mean read null, as `requests` reads them.
+	 */
+	public function test_an_edge_holding_a_urls_only_timed_request_leaves_it_untimed(): void {
+		$now     = Bucket::id( self::NOW );
+		$through = $now - Bucket::window();
+		$kaki    = 'https://kea-7110.example/kaki-7144/';
+		$this->url_partition(
+			[
+				self::kea_request( $kaki, $through, 7, [ 'ms' => 50.5, 'peak_mb' => 90.25 ] ),
+				self::kea_request( $kaki, $now - 5, 8, [ 'ms' => null, 'peak_mb' => 10.5 ] ),
+			],
+			0,
+			$through - 1
+		);
+		$spec = self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'timed', 'min_ms', 'max_ms', 'avg_ms', 'max_peak_mb' ] ] );
+
+		$window = Stats_Query::run( $spec );
+
+		$this->assertSame( 'urls_window', $window['table'] );
+		$this->assertSame( [ [ Url_Parts::hash( $kaki ), $kaki, 1, 0, null, null, null, 10.5 ] ], $window['rows'] );
+		$this->assertSame( Stats_Query::run( [ 'now' => null ] + $spec )['rows'], $window['rows'] );
+	}
+
+	/**
+	 * A builder whose rows reach a bucket past the reader's range, its
+	 * watermark at the range's start, answers from the URL window less that
+	 * bucket: its newest finish and its only request there leave it.
+	 */
+	public function test_a_url_window_row_a_bucket_past_the_range_subtracts_that_bucket(): void {
+		$now  = Bucket::id( self::NOW );
+		$ruru = 'https://kea-7110.example/ruru-7117/';
+		$this->url_partition(
+			[
+				self::kea_request( $ruru, $now, 41, [ 'ms' => 413.25, 'peak_mb' => 41.5 ] ),
+				self::kea_request( $ruru, $now + 1, 42, [ 'ms' => 9097.5, 'peak_mb' => 81.25 ] ),
+				self::kea_request( 'https://kea-7110.example/next-7117/', $now + 1, 43, [ 'ms' => 21.5 ] ),
+			],
+			0,
+			$now - Bucket::window()
+		);
+
+		$read = self::window_and_requests();
+
+		$this->assert_window_equals_requests( $read );
+		$this->assertSame( [ [ Url_Parts::hash( $ruru ), $ruru, 1, 413.25 ] ], Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'max_ms' ] ] ) )['rows'] );
+	}
+
+	/**
+	 * A partition both a bucket behind and holding a row a bucket past the
+	 * range, beside one in step and one only past it: each is corrected on
+	 * its own, so partitions that disagree still read the window.
+	 */
+	public function test_partitions_a_bucket_off_each_way_are_corrected_on_their_own(): void {
+		$now     = Bucket::id( self::NOW );
+		$through = $now - Bucket::window();
+		$hoiho   = 'https://kea-7110.example/hoiho-7143/';
+		$kokako  = 'https://kea-7110.example/kokako-7143/?q=?';
+		$this->url_partition(
+			[
+				self::kea_request( $hoiho, $through, 11, [ 'ms' => 5.25, 'peak_mb' => 3.5 ] ),
+				self::kea_request( $hoiho, $now - 2, 12, [ 'ms' => 150.75, 'peak_mb' => 30.0 ] ),
+				self::kea_request( $hoiho, $now + 1, 13, [ 'ms' => 7000.25, 'peak_mb' => 77.75 ] ),
+			],
+			0,
+			$through - 1
+		);
+		$this->url_partition( [ self::kea_request( $hoiho, $now - 4, 21, [ 'ms' => 220.5, 'peak_mb' => 12.0 ] ), self::kea_request( $kokako, $now, 22, [ 'ms' => null, 'peak_mb' => 19.75 ] ) ], 1, $through );
+		$this->url_partition( [ self::kea_request( $kokako, $now + 1, 31, [ 'ms' => 88.25, 'peak_mb' => 57.75, 'worker' => 1 ] ), self::kea_request( $hoiho, $now - 7, 32, [ 'ms' => 61.5, 'peak_mb' => 9.25 ] ) ], 3, $through );
+
+		$this->assert_window_equals_requests( self::window_and_requests() );
+	}
+
+	/** The category window corrects each partition's edge bucket the same way. */
+	public function test_a_category_window_a_bucket_off_subtracts_its_edge_bucket(): void {
+		$span  = $this->last_span();
+		$board = [ 'source' => 'timings', 'group' => [ 'server', 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => $span, 'now' => self::NOW, 'sort' => 'ms', 'order' => 'desc' ];
+		$timings = [
+			1 => [ $span[0][0] - 2, [ [ 'hook:pukeko_init', '', $span[0][0] - 1, 34.75 ], [ 'hook:pukeko_init', '', $span[0][0] + 3, 21.5 ], [ 'hook:moho_init', 'moho_cb', $span[0][0] - 1, 3.25 ] ] ],
+			3 => [ $span[0][0] - 1, [ [ 'hook:pukeko_init', '', $span[0][1], 13.25 ], [ 'hook:pukeko_init', '', $span[0][1] + 1, 900.5 ], [ 'hook:kahu_init', '', $span[0][1] + 1, 61.75 ] ] ],
+			0 => [ $span[0][0] - 1, [ [ 'hook:kahu_init', '', $span[0][1] - 1, 17.5 ] ] ],
+		];
+		foreach ( $timings as $p => [ $through, $rows ] ) {
+			$ops = [ [ 'ignore', 'window_expiry', [ 'bucket' => $through ] ] ];
+			foreach ( $rows as [ $category, $entry, $bucket, $ms ] ) {
+				$this->seed_site_timing( [ 'server' => 'kea.example', 'category' => $category, 'entry' => $entry, 'bucket' => $bucket, 'ms' => $ms, 'calls' => 2, 'requests' => 1 ], $p );
+				$ops[] = [ 'add', 'category_window', [ 'server' => 'kea.example', 'entry' => $entry ] + self::window_row( $category, $ms, 2, 1, $bucket ) ];
+			}
+			$this->seed_rows( $p, $ops );
+		}
+
+		$window = Stats_Query::run( $board );
+
+		$this->assertSame( 'category_window', $window['table'] );
+		$this->assertSame( [ [ 'kea.example', 'hook:pukeko_init', '', 34.75, 4, 2 ], [ 'kea.example', 'hook:kahu_init', '', 17.5, 2, 1 ] ], $window['rows'] );
+		$this->assertSame( $window['rows'], Stats_Query::run( [ 'now' => null ] + $board )['rows'] );
+	}
+
+	/**
+	 * A window two buckets behind, or holding a row two buckets past the
+	 * range, is past the one bucket of slack: both windows fall back.
+	 *
+	 * @param int $lag    Buckets the watermark sits behind the range's start, less one.
+	 * @param int $beyond Buckets past the range's end the newest row reaches.
+	 */
+	#[DataProvider( 'past_the_slack' )]
+	public function test_a_window_past_one_bucket_of_slack_falls_back( int $lag, int $beyond ): void {
+		$span = $this->last_span();
+		$url  = 'https://kea-7110.example/hihi-7140/';
+		foreach ( [ 0, 2 ] as $p ) {
+			$this->seed_rows( $p, [
+				[ 'ignore', 'window_expiry', [ 'bucket' => $span[0][0] - 1 - $lag ] ],
+				[ 'add', 'category_window', self::window_row( 'hook:hihi_init', 555.5, 5, 5, $span[0][1] + $beyond ) ],
+				[ 'add', 'urls_window', self::phantom_url_row( $url, $span[0][1] + $beyond ) ],
+			] );
+		}
+		$this->seed_site_timing( [ 'category' => 'hook:hihi_init', 'bucket' => $span[0][1], 'ms' => 19.25 ] );
+		$this->seed_requests( [ [ 'server' => self::KEA, 'url' => $url, 'ms' => 23.75 ] ], 2 );
+
+		$board = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] );
+		$urls  = Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ] ) );
+
+		$this->assertSame( [ 'timings_site', [ [ 'hook:hihi_init', 19.25 ] ] ], [ $board['table'], $board['rows'] ] );
+		$this->assertSame( [ 'requests', [ [ Url_Parts::hash( $url ), $url, 1, 23.75 ] ] ], [ $urls['table'], $urls['rows'] ] );
+	}
+
+	/** @return array<string,array{0:int,1:int}> */
+	public static function past_the_slack(): array {
+		return [
+			'two buckets behind'     => [ 2, 0 ],
+			'a row two buckets past' => [ 0, 2 ],
+			'expired past the start' => [ -1, 0 ],
+		];
 	}
 
 	/**
@@ -490,7 +683,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertTrue( $flushed, 'the flush ran between the check and the read' );
 		$this->assertSame( 'urls_window', $r['table'] );
 		$this->assertSame( [ [ Url_Parts::hash( $url ), $url, 1, 413.25 ] ], $r['rows'] );
-		$this->assertSame( 'requests', Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count' ] ] ) )['table'], 'the next read sees the flush and falls back' );
+		$this->assertSame( [ [ Url_Parts::hash( $url ), $url, 8 ] ], Stats_Query::run( self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count' ] ] ) )['rows'], 'the next read sees the flush' );
 	}
 
 	/** The window check seeks each window's newest `last_bucket` and the newest expiry. */
@@ -498,9 +691,9 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_url_traffic();
 		$check = Core::as_string( ( new \ReflectionClassConstant( Stats_Query::class, 'WINDOW_CHECK' ) )->getValue() );
 		foreach ( [ 'urls_window', 'category_window' ] as $window ) {
-			$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $check, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, 'p0' ), 'p0', $window ), [ Bucket::id( self::NOW ) ] ) );
+			$plan = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): string => self::plan_text( $r, \sprintf( $check, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, 'p0' ), 'p0', $window ), [] ) );
 
-			$this->assertMatchesRegularExpression( "/SEARCH p0\\.{$window} USING COVERING INDEX {$window}_last \\(last_bucket>\\?\\)/", $plan );
+			$this->assertMatchesRegularExpression( "/SEARCH p0\\.{$window} USING COVERING INDEX {$window}_last\n/", $plan . "\n" );
 			$this->assertDoesNotMatchRegularExpression( '/SCAN p0\./', $plan, 'no table of the file is walked' );
 		}
 	}
@@ -565,17 +758,67 @@ final class StatsQueryTest extends TestCase {
 		$this->assertMatchesRegularExpression( "/^SEARCH us USING COVERING INDEX sqlite_autoindex_servers_1 \\(name=\\?\\)\nSEARCH u USING COVERING INDEX urls_server_id \\(server_id=\\?\\)\nSEARCH t USING INDEX sqlite_autoindex_urls_window_1 \\(url_id=\\? AND worker=\\?\\)$/m", $plan );
 	}
 
+	/**
+	 * A corrected read of the URL window scoped to a server or a page keeps
+	 * the plain read's seeks, its URLs and then each URL's window row by key,
+	 * and walks no window row it does not list.
+	 */
+	public function test_a_scoped_edged_url_read_keeps_its_seeks(): void {
+		$this->seed_url_traffic();
+		$scopes = [
+			'a server' => Performance_CI_Node::scope( self::KEA, false ),
+			'a page'   => [ 'page' => [ Log_Manager::url_hash( self::TUI_PAGE ) ] ] + Performance_CI_Node::scope( '', true ),
+		];
+		foreach ( $scopes as $name => $filter ) {
+			$plan = self::plan_of( self::url_spec( [ 'group' => [ 'url' ], 'filter' => $filter ] ), true );
+
+			$this->assertMatchesRegularExpression( '/SEARCH w USING INDEX sqlite_autoindex_urls_window_1 \(url_id=\?/', $plan, $name );
+			$this->assertDoesNotMatchRegularExpression( '/SCAN w\b/', $plan, $name );
+		}
+	}
+
+	/**
+	 * A corrected read of each window seeks its edge buckets by bucket and an
+	 * extreme the edge held by its key, and walks no source table.
+	 */
+	public function test_an_edged_window_read_seeks_its_edge_buckets(): void {
+		$this->seed_url_traffic();
+		$this->seed_site_timing( [ 'category' => 'hook:tui_init', 'ms' => 4.5 ] );
+		$plans = [];
+		foreach ( [ self::url_spec( [ 'group' => [ 'url' ] ] ), [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'now' => self::NOW ] ] as $spec ) {
+			$checked = [ 'edges' => true ] + ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, $spec );
+			$table   = Stats_Query::table_for( $checked );
+			$plans[] = Row_Table_Node::read(
+				Flame_Facts_Row_Schema::class,
+				static function ( Row_Reader $reader ) use ( $checked, $table ): string {
+					[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
+					return self::plan_text( $reader, $sql, $binds );
+				}
+			);
+		}
+		[ $urls, $board ] = $plans;
+
+		$this->assertMatchesRegularExpression( '/SEARCH p0\.requests USING COVERING INDEX requests_cover \(bucket>\? AND bucket<\?\)\n.*\nSEARCH p0\.requests USING COVERING INDEX requests_cover \(bucket>\?\)/', $urls );
+		$this->assertMatchesRegularExpression( '/SEARCH s USING COVERING INDEX requests_url \(url_id=\? AND bucket>\? AND bucket<\?\)/', $urls, 'an extreme the edge held is read again by its key' );
+		$this->assertMatchesRegularExpression( '/SEARCH p0\.timings_site USING INDEX timings_site_bucket \(bucket>\? AND bucket<\?\)/', $board );
+		foreach ( $plans as $plan ) {
+			$this->assertDoesNotMatchRegularExpression( '/SCAN p\d\.(requests|timings_site)/', $plan, 'no source table is walked' );
+		}
+	}
+
 	private static function spec( array $over ): array {
 		return $over + [ 'group' => [], 'filter' => [], 'measure' => [ 'count' ] ];
 	}
 
 	/**
-	 * The query plan SQLite chooses for a spec, one line per step.
+	 * The query plan SQLite chooses for a spec, one line per step, read
+	 * corrected for edge buckets where `$edges` says so.
 	 *
-	 * @param array<string,mixed> $spec A `spec()` result.
+	 * @param array<string,mixed> $spec  A `spec()` result.
+	 * @param bool                $edges Whether the read subtracts edge buckets.
 	 */
-	private static function plan_of( array $spec ): string {
-		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, $spec );
+	private static function plan_of( array $spec, bool $edges = false ): string {
+		$checked = [ 'edges' => $edges ] + ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, $spec );
 		$table   = Stats_Query::table_for( $checked );
 		return Row_Table_Node::read(
 			Flame_Facts_Row_Schema::class,
@@ -612,14 +855,37 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame(
 			[
 				[ 'stats query (start)', 'timings by category,listener', null ],
-				[ 'stats query (complete)', null, '3 rows' ],
+				[ 'stats query (complete)', null, 'timings_site: 3 rows' ],
 				[ 'stats query (start)', 'timings by category,listener offset 2', null ],
-				[ 'stats query (complete)', null, '1 rows' ],
+				[ 'stats query (complete)', null, 'timings_site: 1 rows' ],
 				[ 'stats query (start)', 'timings', null ],
-				[ 'stats query (complete)', null, '1 rows' ],
+				[ 'stats query (complete)', null, 'timings_site: 1 rows' ],
 			],
 			$spans
 		);
+	}
+
+	/**
+	 * A window-eligible read's span names the table that answered it: the
+	 * URL window while it holds the span, `requests` once it lags past it.
+	 */
+	public function test_a_logged_window_read_names_the_table_that_answered_it(): void {
+		$spans = $this->stats_spans(
+			function (): void {
+				$this->seed_url_traffic();
+				$through = Bucket::id( self::NOW ) - Bucket::window();
+				$this->seed_url_window( 0, $through );
+				$this->seed_url_window( 2, $through );
+				$spec = self::url_spec( [ 'group' => [ 'url' ], 'measure' => [ 'count' ] ] );
+				Stats_Query::run( $spec );
+				$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $through + 1 ] ] ] );
+				Stats_Query::run( $spec );
+			}
+		);
+
+		$this->assertSame( [ 'requests by url', 'requests by url' ], [ $spans[0][1], $spans[2][1] ] );
+		$this->assertMatchesRegularExpression( '/^urls_window: [1-9]\d* rows$/', Core::as_string( $spans[1][2] ) );
+		$this->assertMatchesRegularExpression( '/^requests: [1-9]\d* rows$/', Core::as_string( $spans[3][2] ) );
 	}
 
 	/** The two request listings are spans too, each named for what it lists. */
@@ -635,9 +901,9 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame(
 			[
 				[ 'stats query (start)', 'requests newest', null ],
-				[ 'stats query (complete)', null, '2 rows' ],
+				[ 'stats query (complete)', null, 'requests: 2 rows' ],
 				[ 'stats query (start)', 'requests by rid', null ],
-				[ 'stats query (complete)', null, '1 rows' ],
+				[ 'stats query (complete)', null, 'requests: 1 rows' ],
 			],
 			$spans
 		);
@@ -2113,6 +2379,27 @@ final class StatsQueryTest extends TestCase {
 			],
 			$reply
 		);
+	}
+
+	/**
+	 * A `query` the URL window answers a bucket behind echoes the selection
+	 * it was asked and answers what `requests` does over it.
+	 */
+	public function test_a_corrected_window_query_echoes_the_range_it_was_asked(): void {
+		$this->seed_url_traffic();
+		$now     = Bucket::id( self::NOW );
+		$through = $now - Bucket::window();
+		$this->seed_url_window( 0, $through - 1 );
+		$this->seed_url_window( 2, $through - 1 );
+		$range = Bucket::spelling( Bucket::last( Bucket::window(), self::NOW ) );
+
+		$reply = self::query( 'requests', 'server', '--measure=count', '--measure=max_ms' );
+		$asked = Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [], 'measure' => [ 'count', 'max_ms' ], 'buckets' => Bucket::last( Bucket::window(), self::NOW ) ] );
+
+		$this->assertSame( 'urls_window', $reply['table'] );
+		$this->assertSame( $range, $reply['filters']['bucket'] );
+		$this->assertSame( 'requests', $asked['table'] );
+		$this->assertSame( $asked['rows'], $reply['rows'] );
 	}
 
 	public function test_the_query_verb_reads_the_span_by_default(): void {

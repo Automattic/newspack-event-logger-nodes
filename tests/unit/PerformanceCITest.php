@@ -2395,6 +2395,93 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( $before[2], $after[2], 'another server\'s row leaves huia alone' );
 	}
 
+	/**
+	 * A `urls_window` row of `$url` on `$server` no request backs, last moved
+	 * in `$bucket`, so a read that lists it read the window.
+	 *
+	 * @param string $url    The URL.
+	 * @param string $server Its server.
+	 * @param int    $worker The worker flag.
+	 * @param int    $bucket Its last bucket.
+	 * @return list<array{0:string,1:string,2:array<string,mixed>}>
+	 */
+	private static function phantom_window_row( string $url, string $server, int $worker, int $bucket ): array {
+		return [
+			[
+				'add',
+				'urls_window',
+				[
+					'url'         => $url,
+					'server'      => $server,
+					'worker'      => $worker,
+					'count'       => 3,
+					'timed'       => 3,
+					'count_2xx'   => 3,
+					'count_3xx'   => 0,
+					'count_4xx'   => 0,
+					'count_5xx'   => 0,
+					'errors'      => 0,
+					'sum_ms'      => 90.75,
+					'sum_peak_mb' => 30.0,
+					'min_ms'      => 20.25,
+					'max_ms'      => 40.5,
+					'max_peak_mb' => 11.0,
+					'last_seen'   => (float) ( $bucket * Bucket::SECONDS ),
+					'last_bucket' => $bucket,
+				],
+			],
+		];
+	}
+
+	/**
+	 * The overview's server list reads the URL window as its totals do,
+	 * corrected while a partition sits a bucket behind: it lists what
+	 * `requests` lists over the range, a server whose one request sits in
+	 * the bucket before it left out, and a window row no request backs in.
+	 */
+	public function test_the_overview_servers_read_the_url_window(): void {
+		$latest  = self::latest();
+		$through = $latest - Bucket::window();
+		$this->seed_requests(
+			[
+				[ 'server' => 'kea-8150.example', 'url' => 'https://kea-8150.example/tieke-8150/', 'ms' => 140.75, 'bucket' => $latest - 2 ],
+				[ 'server' => 'kea-8150.example', 'url' => 'https://kea-8150.example/tieke-8150/', 'ms' => 59.5, 'bucket' => $latest - 4 ],
+				[ 'server' => 'moa-8150.example', 'url' => 'https://moa-8150.example/hoiho-8150/', 'ms' => 31.25, 'bucket' => $through, 'worker' => 1 ],
+			]
+		);
+		$servers = static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['servers'];
+		$this->seed_url_window( 0, $through - 1 );
+
+		$this->assertSame( [ 'kea-8150.example' ], $servers() );
+		$this->seed_rows( 0, self::phantom_window_row( 'https://weka-8150.example/', 'weka-8150.example', 0, $latest ) );
+		$this->assertSame( [ 'weka-8150.example', 'kea-8150.example' ], $servers() );
+	}
+
+	/**
+	 * A scoped overview handed a server list that lacks its server asks
+	 * whether the server has traffic of the window, and reads the URL window
+	 * to answer: a worker row there no request backs makes the list read
+	 * again and name it.
+	 */
+	public function test_a_scoped_overviews_traffic_check_reads_the_url_window(): void {
+		$latest = self::latest();
+		$this->seed_requests(
+			[
+				[ 'server' => 'kea-8151.example', 'url' => 'https://kea-8151.example/tieke-8151/', 'ms' => 140.75, 'bucket' => $latest - 2 ],
+				[ 'server' => 'kea-8151.example', 'url' => 'https://kea-8151.example/tieke-8151/', 'ms' => 77.25, 'bucket' => $latest - 6 ],
+			]
+		);
+		$this->seed_url_window( 0, $latest - Bucket::window() );
+		$scoped = static fn (): array => Performance_CI_Node::answer_live( 'overview', [ 'server' => 'moa-8151.example' ], self::tick(), [ 'kea-8151.example' ] );
+
+		$this->assertSame( [ 'kea-8151.example' ], $scoped()['servers'] );
+		$this->seed_rows( 0, self::phantom_window_row( 'https://moa-8151.example/hoiho-8151/', 'moa-8151.example', 1, $latest ) );
+		$reply = $scoped();
+
+		$this->assertSame( 0, $reply['totals']['requests'], 'the totals leave its worker row out' );
+		$this->assertSame( [ 'moa-8151.example', 'kea-8151.example' ], $reply['servers'] );
+	}
+
 	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
 		$board = Performance_CI_Node::leaderboard_of( [ 'wpdb' => [ 'sum_time' => 9.0, 'sum_count' => 4.0, 'samples' => 3 ] ], 0, 0.0 );
 

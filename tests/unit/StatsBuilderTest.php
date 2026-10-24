@@ -2702,11 +2702,16 @@ final class StatsBuilderTest extends TestCase {
 	/**
 	 * A rebuild writes one batch per run of URLs and its watermark last, so
 	 * a reader after a batch and before the last reads `requests`, and a
-	 * rebuild stopped between them finishes on the next start.
+	 * rebuild stopped between them finishes on the next start. The stale
+	 * watermark it starts from lags more than `RETAIN_SLACK` buckets, so a
+	 * reader a bucket either side of the builder, which the window's one
+	 * bucket of slack admits, reads `requests` too.
 	 */
 	public function test_a_reader_between_rebuild_batches_reads_requests(): void {
 		$this->window_world();
 		$this->seed_urls_past_one_rebuild_batch();
+		$stale = Bucket::id( self::NOW ) - Bucket::window() - Bucket::RETAIN_SLACK - 1;
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $stale ] ] ] );
 		$last = self::builder_const( 'URLS_PER_REBUILD' );
 		$pdo  = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
 		$pdo->exec( "CREATE TRIGGER second_batch BEFORE INSERT ON urls_window WHEN NEW.url_id > ( SELECT id FROM urls ORDER BY id LIMIT 1 OFFSET {$last} - 1 ) BEGIN SELECT RAISE( ABORT, 'second batch refused' ); END" );
@@ -2728,9 +2733,12 @@ final class StatsBuilderTest extends TestCase {
 		$first   = \array_slice( $this->url_rows( 'SELECT u.path, r.worker, ' . self::URL_WINDOW_OF_REQUESTS . " FROM p0.requests AS r JOIN p0.urls AS u ON u.id = r.url_id WHERE r.bucket > {$through} GROUP BY u.path, r.worker ORDER BY u.path, r.worker" ), 0, 3 );
 		$this->assertCount( 3, $first );
 		$this->assertSame( $first, \array_intersect_key( $this->raw_url_window(), $first ), 'the first batch is written' );
-		$this->assertSame( [ [ null ] ], $this->facts( 'SELECT MAX( bucket ) FROM window_expiry' ), 'no watermark until the last batch' );
+		$this->assertSame( [ [ $stale ] ], $this->facts( 'SELECT MAX( bucket ) FROM window_expiry' ), 'no new watermark until the last batch' );
 		$between = Stats_Query::run( $spec );
 		$this->assertSame( 'requests', $between['table'] );
+		foreach ( [ self::NOW + Bucket::SECONDS, self::NOW - Bucket::SECONDS ] as $reader ) {
+			$this->assertSame( 'requests', Stats_Query::run( [ 'buckets' => Bucket::last( Bucket::window(), $reader ), 'now' => $reader ] + $spec )['table'], "a reader at {$reader}" );
+		}
 
 		$pdo->exec( 'DROP TRIGGER second_batch' );
 		$this->restarted( $sb )->flush();
@@ -2789,7 +2797,8 @@ final class StatsBuilderTest extends TestCase {
 		$this->seed_groups_past_one_rebuild_batch();
 		$sql   = static fn ( string $name ): string => \sprintf( Core::as_string( ( new \ReflectionClassConstant( Stats_Builder_Node::class, $name ) )->getValue() ), 'p0' );
 		$spend = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, $sql( 'CATEGORY_PAGE' ), [ 1, 2, 3, 0, 4000 ] ) );
-		$sums  = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, $sql( 'GROUP_PAGE' ), [ 1, 7, \PHP_INT_MAX, 2, 3, 0, 0, 4000 ] ) );
+		$group = \sprintf( Core::as_string( ( new \ReflectionMethod( Stats_Builder_Node::class, 'group_page' ) )->invoke( null ) ), 'p0' );
+		$sums  = Row_Table_Node::read( Flame_Facts_Row_Schema::class, fn ( Row_Reader $r ): string => self::plan_text( $r, $group, [ 1, 7, \PHP_INT_MAX, 2, 3, 0, 0, 4000 ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH p0\.category_window USING INDEX sqlite_autoindex_category_window_1 \(\(server_id,category_id,entry_id,worker\)>\(\?,\?,\?,\?\)\)/', $spend );
 		$this->assertMatchesRegularExpression( '/SEARCH p0\.timings_site USING INDEX sqlite_autoindex_timings_site_1 \(server_id=\? AND bucket>\? AND bucket<\?\)/', $sums );
