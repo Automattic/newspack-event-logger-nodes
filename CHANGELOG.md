@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.157.0] - 2026-10-23
+
 ### Added
 - **The MCP door names its OAuth resource and points a client to sign-in.** A Claude custom connector takes a URL and runs the MCP authorization flow, and cannot send a pasted `Authorization` header. The door's canonical URI, `MCP_Controller::resource()`, is declared on the substrate's `newspack_nodes/oauth_resources` filter, so newspack-nodes serves its RFC 9728 metadata, and every 401 the door answers carries `WWW-Authenticate: Bearer resource_metadata="<site>/.well-known/oauth-protected-resource/wp-json/newspack-event-logger-nodes/v1/mcp"`, so the client finds where to sign in. A session an OAuth grant minted for another resource is refused with a 401 `mcp_unauthorized`; a session issued by hand names no resource and is admitted as before. The substrate floor rises to 2.127.0, the first release carrying `Command_Auth::admits_resource()`, `Oauth_Server::resource_metadata_url()` and the filter, and the row tables' `min` fold and `set` op, which the Flame_Facts schema at version 11 needs: a substrate lacking `min` refuses the schema at load, and one lacking `set` would refuse every rebuild and every expiry that recomputes a URL's extreme. `check-substrate-floor.sh` reads PHP calls alone and sees neither.
 
