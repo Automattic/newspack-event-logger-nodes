@@ -14,10 +14,10 @@ import { useState, useMemo, useId, Fragment } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import {
-	getStateColor,
 	formatDuration,
 	phosphorColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 import './styles/request-profile.scss';
@@ -156,14 +156,21 @@ const sortProfiles = ( profiles ) => {
 };
 
 /**
- * The categories in the order the Time Breakdown ranks them, so a flame graph
- * beside it gives each category the same CRT green.
+ * The order the Time Breakdown hands out its colours in: the bar's segments
+ * longest first, then the rows with no segment, longest first. Neighbouring
+ * segments take neighbouring chart slots, which the palette keeps apart, and
+ * a flame graph beside the breakdown gives each category the same CRT green.
  *
  * @param {?Object} profiles Category name to `{ time, count, entries }`.
- * @return {Array<string>} Category names, longest first.
+ * @return {Array<string>} Category names.
  */
-export const profileOrder = ( profiles ) =>
-	sortProfiles( profiles ).map( ( p ) => p.state );
+export const profileOrder = ( profiles ) => {
+	const states = sortProfiles( profiles ).map( ( p ) => p.state );
+	return [
+		...states.filter( ( state ) => ! isOverlayCategory( state ) ),
+		...states.filter( isOverlayCategory ),
+	];
+};
 
 /**
  * A row of segments, each as wide as its share, coloured by its caller.
@@ -320,16 +327,16 @@ export default function RequestProfile( {
 
 	const { sorted, dirOf, onSort } = useColumnSort( 'time' );
 
-	// Colours follow the time ranking, so a sorted row keeps its segment's.
+	// Colours follow the bar, so a sorted row keeps its segment's.
 	const colourOf = useMemo(
 		() =>
 			new Map(
-				sortedProfiles.map( ( { state }, index ) => [
+				profileOrder( profiles ).map( ( state, index ) => [
 					state,
-					phosphorColor( index, getStateColor( state ) ),
+					phosphorColor( index, chartColor( index ) ),
 				] )
 			),
-		[ sortedProfiles ]
+		[ profiles ]
 	);
 
 	const tableRows = sorted( sortedProfiles, ( row, field ) =>

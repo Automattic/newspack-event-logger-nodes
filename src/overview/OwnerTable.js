@@ -5,14 +5,11 @@
  * columns read per request.
  */
 
-import { useId } from '@wordpress/element';
+import { useId, useMemo } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import {
-	formatDuration,
-	getStateColor,
-} from '@newspack-nodes/shared/utils/formatUtils';
-import { chartColorFor } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { formatDuration } from '@newspack-nodes/shared/utils/formatUtils';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 import RequestProfile, {
 	averageCaption,
@@ -27,21 +24,6 @@ import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 const UNOWNED = '(unowned)';
 
 /**
- * An owner's colour: `UNOWNED` the grey `getStateColor()` gives a name it does
- * not know, as untyped spans take it, and any other the series colour its name
- * hashes to, so an owner keeps one colour in every view and at every rank.
- *
- * @param {string} owner The owner's name.
- * @return {string} A CSS colour value.
- */
-const ownerColor = ( owner ) => {
-	if ( UNOWNED === owner ) {
-		return getStateColor( owner );
-	}
-	return chartColorFor( owner );
-};
-
-/**
  * @param {Object}                                                                                                                   props              Component props.
  * @param {?Array<{owner: string, ms?: number, ms_per_request?: number, share: number, calls?: number, calls_per_request?: number}>} props.owners       Rows, longest first; `share` is a fraction.
  * @param {boolean}                                                                                                                  [props.perRequest] True when rows carry `ms_per_request` and `calls_per_request` in place of `ms` and `calls`.
@@ -51,6 +33,17 @@ const ownerColor = ( owner ) => {
 export default function OwnerTable( { owners, perRequest = false, summary } ) {
 	const headingId = useId();
 	const { sorted, dirOf, onSort } = useColumnSort( 'ms' );
+	// Neighbouring segments take neighbouring chart slots, which stay apart.
+	const colourOf = useMemo(
+		() =>
+			new Map(
+				( owners ?? [] ).map( ( { owner }, index ) => [
+					owner,
+					chartColor( index ),
+				] )
+			),
+		[ owners ]
+	);
 	const msOf = ( row ) => ( perRequest ? row.ms_per_request : row.ms );
 	const callsOf = ( row ) =>
 		perRequest ? row.calls_per_request : row.calls;
@@ -94,7 +87,7 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 					title: `${ row.owner }: ${ formatDuration(
 						perRequest ? row.ms_per_request : row.ms
 					) } (${ ( row.share * 100 ).toFixed( 1 ) }%)`,
-					fill: ownerColor( row.owner ),
+					fill: colourOf.get( row.owner ),
 				} ) ) }
 			/>
 			<table
@@ -129,7 +122,7 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 									<span
 										className="event-logger-profile-swatch"
 										style={ {
-											background: ownerColor( owner ),
+											background: colourOf.get( owner ),
 										} }
 									/>
 									{ UNOWNED === owner ? (

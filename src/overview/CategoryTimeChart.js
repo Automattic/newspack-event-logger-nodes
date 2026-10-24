@@ -20,17 +20,10 @@
  * Each band reads against the axis instead of against its neighbors.
  */
 
-import { useCallback, useMemo } from '@wordpress/element';
+import { useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import {
-	getStateColor,
-	phosphorColor,
-} from '@newspack-nodes/shared/utils/formatUtils';
-import {
-	SKIN_COLORS,
-	chartColor,
-	nameHash,
-} from '@newspack-nodes/shared/hooks/useTimeChart';
+import { phosphorColor } from '@newspack-nodes/shared/utils/formatUtils';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import {
@@ -43,38 +36,16 @@ import {
 } from './chartSlots';
 import { CATEGORY_MEASURES } from './constants';
 
-/** The grey `getStateColor()` gives a name it has no color for. */
-const DEFAULT_COLOR = getStateColor( '' );
-
 /**
- * One color per category, shared by the three views. A category with its own
- * `getStateColor()` hue keeps it; each default-grey one takes the chart slot
- * its name hashes to, else the next free slot (wrapping) when a higher-ranked
- * name already took that one, and keeps its hashed slot once all are taken.
+ * A series' color from its place in its own view's legend, so neighbours take
+ * neighbouring chart slots, which the palette keeps apart.
  *
- * @param {string[]} labels The category names in whole-window time rank.
- * @return {Map<string,string>} Each name's CSS color value.
+ * @param {string} _label The series label, unused.
+ * @param {number} index  Its place in the view's legend, from 0.
+ * @return {string} A CSS color value.
  */
-const categoryColors = ( labels ) => {
-	const taken = new Set();
-	return new Map(
-		labels.map( ( label ) => {
-			const own = getStateColor( label );
-			if ( DEFAULT_COLOR !== own ) {
-				return [ label, own ];
-			}
-			const hash = nameHash( label );
-			let step = 0;
-			if ( taken.size < SKIN_COLORS ) {
-				while ( taken.has( ( hash + step ) % SKIN_COLORS ) ) {
-					step++;
-				}
-				taken.add( ( hash + step ) % SKIN_COLORS );
-			}
-			return [ label, chartColor( hash + step ) ];
-		} )
-	);
-};
+const rankColor = ( _label, index ) =>
+	phosphorColor( index, chartColor( index ) );
 
 /**
  * Height of one chart frame, in pixels. Three of them stack in one panel, so
@@ -152,13 +123,11 @@ const formatYValue = ( val, mode ) => {
 /**
  * Rank categories by their whole-window total, then sample each across it.
  *
- * The rank fixes legend order and, on CRT, the phosphor green a category
- * draws in; every other skin draws a category in its own color whatever its
- * rank. It runs over the mode's own field — `calls` for "count", `ms`
- * otherwise — so "average" ranks by total time rather than by the mean it
- * plots, and one slow outlier cannot take the top band. That also makes the
- * "count" ranking its own, so on CRT a category may wear a different green
- * there than in the other two views.
+ * The rank fixes legend order and color. It runs over the mode's own field —
+ * `calls` for "count", `ms` otherwise — so "average" ranks by total time
+ * rather than by the mean it plots, and one slow outlier cannot take the top
+ * band. That also gives "count" an order of its own, so a category can wear a
+ * different color there than in the other two views.
  *
  * Every series gets a point in every slot, zero where the bucket holds nothing
  * (null for the average, which is then a gap),
@@ -210,9 +179,9 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * Category time charts — one per view over the same category series.
  *
  * The URL modal re-renders on every scroll event, so the memos decode the
- * reply once per reply rather than once per frame, and hold `series`,
- * `yFormatFor` and `colorAt` still, since `AreaTimeChart` redraws whenever
- * one of them changes.
+ * reply once per reply rather than once per frame, and hold `series` and
+ * `yFormatFor` still, as the module-level `rankColor` holds `colorAt`, since
+ * `AreaTimeChart` redraws whenever one of them changes.
  *
  * @param {Object}                                                    props                 Component props.
  * @param {Object|null}                                               props.data            The `query` answer grouped by `bucket` and `category` over `CATEGORY_MEASURES`, or null before one.
@@ -259,16 +228,6 @@ export default function CategoryTimeChart( {
 		[]
 	);
 
-	// The time view's order ranks the colors, so every view wears the same.
-	const colors = useMemo(
-		() => categoryColors( series[ 0 ].map( ( { label } ) => label ) ),
-		[ series ]
-	);
-	const colorAt = useCallback(
-		( label, index ) => phosphorColor( index, colors.get( label ) ),
-		[ colors ]
-	);
-
 	const slotClick = useSlotClick( axis, onSlotClick );
 	const slotRange = useSlotRange( axis, onSlotRange );
 	const selectedSlots = useSelectedSlots( axis, selectedBuckets );
@@ -285,7 +244,7 @@ export default function CategoryTimeChart( {
 					key={ mode }
 					storageKey={ `${ storageKey }:${ mode }` }
 					series={ series[ index ] }
-					colorAt={ colorAt }
+					colorAt={ rankColor }
 					yFormatFor={ yFormatsFor[ index ] }
 					yLabel={ yLabel }
 					title={ title }

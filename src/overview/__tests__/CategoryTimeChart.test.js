@@ -114,8 +114,7 @@ const cats = ( series, extra ) =>
 		...extra,
 	} );
 import { renderComponent } from '../../test-helpers/renderHook';
-import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
-import { nameHash } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 const d3Mock = d3.__chain;
 
@@ -475,86 +474,9 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'draws each category in its own color, CRT green for its rank', () => {
-		window.eventLoggerCustomColors = {
-			'kea-7051': '#a1b2c3',
-			'kea-7052': '#c3b2a1',
-		};
-		const { unmount } = renderComponent(
-			categoryChart( {
-				data: cats( {
-					[ bucketKeyNow() ]: {
-						'kea-7051': [ 9000, 90 ],
-						'kea-7052': [ 10, 1 ],
-					},
-				} ),
-			} )
-		);
-		const fills = d3Mock.style.mock.calls
-			.filter( ( [ property ] ) => 'fill' === property )
-			.map( ( [ , value ] ) => value );
-		expect( fills ).toContain( 'var(--phosphor-1, #a1b2c3)' );
-		expect( fills ).toContain( 'var(--phosphor-2, #c3b2a1)' );
-		delete window.eventLoggerCustomColors;
-		unmount();
-	} );
-
-	describe( 'a category with no color of its own', () => {
-		const LISTENER = '[kea-plugin] Kea_7713::boot @10';
-		const HOOK = 'init hook';
-
-		// The fills drawn for one render, in order.
-		const fillsOf = ( rows ) => {
-			d3Mock.style.mockClear();
-			const { unmount } = renderComponent(
-				categoryChart( {
-					data: cats( { [ bucketKeyNow() ]: rows } ),
-				} )
-			);
-			const fills = d3Mock.style.mock.calls
-				.filter( ( [ property ] ) => 'fill' === property )
-				.map( ( [ , value ] ) => value );
-			unmount();
-			return fills;
-		};
-
-		// The `--chart-N` slots among the fills.
-		const slotsIn = ( fills ) => [
-			...new Set(
-				fills
-					.map( ( fill ) => /var\(--chart-(\d+),/.exec( fill ) )
-					.filter( Boolean )
-					.map( ( match ) => match[ 1 ] )
-			),
-		];
-
-		it( 'draws the chart color its name hashes to, at any rank', () => {
-			const first = fillsOf( { [ LISTENER ]: [ 9000, 90 ] } );
-			const lower = fillsOf( {
-				'z-big-4417': [ 99999, 999 ],
-				[ LISTENER ]: [ 9000, 90 ],
-			} );
-			expect( first.length ).toBeGreaterThan( 0 );
-			expect( slotsIn( first ) ).toHaveLength( 1 );
-			expect( slotsIn( lower ) ).toContain( slotsIn( first )[ 0 ] );
-		} );
-
-		// Two listener names whose hashes land on one of the eight slots.
-		const twins = () => {
-			const bySlot = {};
-			for ( let n = 0; n < 99; n++ ) {
-				const name = `kea-8821-${ n }`;
-				const slot = nameHash( name ) % 8;
-				if ( bySlot[ slot ] ) {
-					return [ bySlot[ slot ], name ];
-				}
-				bySlot[ slot ] = name;
-			}
-			throw new Error( 'no pair shares a slot' );
-		};
-
-		// Each view's `--chart-N` token by legend label.
-		const tokensByView = ( rows ) => {
+	describe( 'colour', () => {
+		// Each view's legend swatch style by label.
+		const swatchesByView = ( rows ) => {
 			const { container, unmount } = renderComponent(
 				categoryChart( {
 					data: cats( { [ bucketKeyNow() ]: rows } ),
@@ -566,13 +488,11 @@ describe( 'CategoryTimeChart', () => {
 				Object.fromEntries(
 					[ ...legend.querySelectorAll( 'li' ) ].map( ( item ) => [
 						item.textContent,
-						/var\(--chart-(\d+),/.exec(
-							item
-								.querySelector(
-									'.newspack-nodes-chart-legend__swatch'
-								)
-								.getAttribute( 'style' )
-						)?.[ 1 ],
+						item
+							.querySelector(
+								'.newspack-nodes-chart-legend__swatch'
+							)
+							.getAttribute( 'style' ),
 					] )
 				)
 			);
@@ -580,34 +500,61 @@ describe( 'CategoryTimeChart', () => {
 			return views;
 		};
 
-		it( 'keeps its hashed slot when alone', () => {
-			const [ first ] = twins();
-			const [ time ] = tokensByView( { [ first ]: [ 9000, 90 ] } );
-			expect( time[ first ] ).toBe(
-				String( ( nameHash( first ) % 8 ) + 1 )
+		it( 'draws the chart slots in time order, though two categories share a colour of their own', () => {
+			window.eventLoggerCustomColors = {
+				'kea-7051': '#a1b2c3',
+				'kea-7052': '#a1b2c3',
+			};
+			d3Mock.style.mockClear();
+			const { unmount } = renderComponent(
+				categoryChart( {
+					data: cats( {
+						[ bucketKeyNow() ]: {
+							'kea-7051': [ 9000, 90 ],
+							'kea-7052': [ 10, 1 ],
+						},
+					} ),
+				} )
 			);
+			const fills = d3Mock.style.mock.calls
+				.filter( ( [ property ] ) => 'fill' === property )
+				.map( ( [ , value ] ) => value );
+			delete window.eventLoggerCustomColors;
+			unmount();
+			expect( fills ).toContain(
+				`var(--phosphor-1, ${ chartColor( 0 ) })`
+			);
+			expect( fills ).toContain(
+				`var(--phosphor-2, ${ chartColor( 1 ) })`
+			);
+			expect( fills.join() ).not.toContain( '#a1b2c3' );
 		} );
 
-		it( 'takes the next free slot when a higher-ranked one holds its own', () => {
-			const [ first, second ] = twins();
-			const hashed = nameHash( first ) % 8;
-			const views = tokensByView( {
-				[ first ]: [ 9000, 1 ],
-				[ second ]: [ 100, 900 ],
-			} );
+		it( 'runs the slots down each legend in that view’s own order, starting over at the ninth', () => {
+			// Ms falls with the letter; calls put the ninth first, the first second.
+			const rows = Object.fromEntries(
+				'abcdefghi'
+					.split( '' )
+					.map( ( letter, i ) => [
+						`kea-75${ letter }`,
+						[ 900 - i * 100, 'i' === letter ? 1000 : 999 - i ],
+					] )
+			);
+			const views = swatchesByView( rows );
 			expect( views ).toHaveLength( 3 );
-			views.forEach( ( view ) => {
-				expect( view[ first ] ).toBe( String( hashed + 1 ) );
-				expect( view[ second ] ).toBe(
-					String( ( ( hashed + 1 ) % 8 ) + 1 )
-				);
-			} );
-		} );
-
-		it( 'keeps the color a hook category has of its own', () => {
-			const fills = fillsOf( { [ HOOK ]: [ 9000, 90 ] } );
-			expect( slotsIn( fills ) ).toHaveLength( 0 );
-			expect( fills.join() ).toContain( getStateColor( HOOK ) );
+			expect( Object.keys( views[ 1 ] ).slice( 0, 2 ) ).toEqual( [
+				'kea-75i',
+				'kea-75a',
+			] );
+			views.forEach( ( view ) =>
+				Object.values( view ).forEach( ( style, i ) =>
+					expect( style ).toContain(
+						`var(--phosphor-${ ( i % 8 ) + 1 }, ${ chartColor(
+							i
+						) })`
+					)
+				)
+			);
 		} );
 	} );
 
