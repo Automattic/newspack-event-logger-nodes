@@ -8,6 +8,7 @@ import path from 'path';
 import * as React from 'react';
 import OwnerTable from '../OwnerTable';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 const ROWS = [
 	{ owner: 'plugin:heron-gallery', ms: 187.5, share: 0.4237, calls: 41 },
@@ -240,27 +241,36 @@ describe( 'OwnerTable share bar', () => {
 		unmount();
 	} );
 
-	it( 'gives the pseudo-owner a muted neutral', () => {
-		const { container, unmount } = mount( { owners: ROWS } );
-		const [ , unowned ] = segments( container );
-		expect( unowned.style.background ).toBe( 'rgb(158, 158, 158)' );
+	const fill = ( el ) => el.style.getPropertyValue( 'background' );
+
+	it( 'paints the bar the chart slots in its own order, the pseudo-owner too, starting over at the ninth', () => {
+		const owners = Array.from( { length: 10 }, ( _, i ) => ( {
+			owner: 4 === i ? '(unowned)' : `kea-74${ i }`,
+			ms: 100 - i,
+			share: 0.09,
+			calls: 1,
+		} ) );
+		const { container, unmount } = mount( { owners } );
+		expect( segments( container ).map( fill ) ).toEqual(
+			owners.map( ( _, i ) => chartColor( i ) )
+		);
 		unmount();
 	} );
 
-	it( "keeps an owner's colour whatever its rank, and its swatch matches its segment", () => {
-		const first = mount( { owners: ROWS } );
-		const colour = segments( first.container )[ 0 ].style.background;
-		expect(
-			swatchOf( first.container, 'plugin:heron-gallery' ).style.background
-		).toBe( colour );
-		first.unmount();
-
-		const second = mount( { owners: [ ...ROWS ].reverse() } );
-		expect(
-			swatchOf( second.container, 'plugin:heron-gallery' ).style
-				.background
-		).toBe( colour );
-		second.unmount();
+	it( "keeps a row's segment colour on its swatch however the table sorts", () => {
+		const { container, unmount } = mount( { owners: ROWS } );
+		const colour = fill( segments( container )[ 2 ] );
+		expect( colour ).toBe( chartColor( 2 ) );
+		expect( fill( swatchOf( container, 'theme:kea' ) ) ).toBe( colour );
+		act( () =>
+			[ ...container.querySelectorAll( 'thead button' ) ]
+				.find( ( b ) => b.textContent.startsWith( 'Owner' ) )
+				.dispatchEvent(
+					new window.MouseEvent( 'click', { bubbles: true } )
+				)
+		);
+		expect( fill( swatchOf( container, 'theme:kea' ) ) ).toBe( colour );
+		unmount();
 	} );
 } );
 

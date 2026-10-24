@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Neighbouring rows in the Time Breakdown, Time By Owner and category charts no longer share a colour.** A breakdown row took its hook category's colour, so `plugins_loaded` and `init` drew one slate, and an owner took the slot its name hashed to, so `woocommerce` and `jetpack` drew one blue. Every row now takes the chart slots in the order its bar or legend draws it, starting over at the ninth, and the palette keeps neighbouring slots apart. A breakdown row with no bar segment, a listener or a Query Monitor timer, takes the slots after the last segment, and the flame graph's CRT greens follow that order. A colour follows rank, not name, so an owner can wear a different colour from one request to the next, and a category a different colour in Events by Category, which ranks by calls. The flame graph keeps the hook-category colours in every other skin.
+
 ## [0.157.1] - 2026-10-23
 
 ### Changed

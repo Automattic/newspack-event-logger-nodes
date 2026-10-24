@@ -358,8 +358,8 @@ const createTooltip = () => {
 
 /**
  * Color frames by what they ARE — the hook, plugin or custom-event palette the
- * Time Breakdown, the Inflight badges and the log rows already share, so one
- * span is the same color everywhere a reader meets it.
+ * Inflight badges and the log rows already share, so one span is the same
+ * color in all three.
  *
  * Depth shading is the rejected alternative: it draws a validation frame and a
  * database frame at the same depth identically, discarding the one distinction
@@ -376,7 +376,7 @@ export const createColorMapper = () => ( d ) =>
  * lists takes its rank there, so the two agree; one it does not list takes
  * the next free place, on first sight.
  *
- * @param {Array<string>} order The breakdown's categories, longest first.
+ * @param {Array<string>} order The breakdown's categories, in its colour order.
  * @return {(name: string) => number} A frame name's place, from 0.
  */
 export const framePlaces = ( order ) => {
@@ -405,7 +405,7 @@ export const framePlaces = ( order ) => {
  * green, and its label takes the default ink.
  *
  * @param {Element}       container Flame graph container element.
- * @param {Array<string>} order     The breakdown's categories, longest first.
+ * @param {Array<string>} order     The breakdown's categories, in its colour order.
  */
 export const applyFrameColors = ( container, order ) => {
 	const placeOf = framePlaces( order );
@@ -463,7 +463,7 @@ const applyAskDescriptors = ( container ) => {
  * one.
  *
  * @param {HTMLElement}   container The chart container.
- * @param {Array<string>} order     The breakdown's categories, longest first.
+ * @param {Array<string>} order     The breakdown's categories, in its colour order.
  */
 const restamp = ( container, order ) => {
 	applyFrameColors( container, order );
@@ -815,7 +815,7 @@ export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
  *
  * @param {Object}                               props                 Component props.
  * @param {Object}                               props.data            Flame tree root: { name, value, children[] }.
- * @param {Array<string>}                        [props.order]         The Time Breakdown's categories beside it, longest first, which give each frame its place in CRT's greens.
+ * @param {Array<string>}                        [props.order]         The Time Breakdown's categories beside it, in its colour order, which give each frame its place in CRT's greens.
  * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the position of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */

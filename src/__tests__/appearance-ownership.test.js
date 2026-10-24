@@ -173,7 +173,7 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 		],
 	],
 	// An owner's swatch is its series colour, the data the bar paints too.
-	[ 'overview/OwnerTable.js', [ /background:\s*ownerColor\( owner \)/ ] ],
+	[ 'overview/OwnerTable.js', [ /background:\s*colourOf\.get\( owner \)/ ] ],
 	[
 		'overview/components/LogEntriesTable.js',
 		[

@@ -16,6 +16,7 @@ import RequestProfile, {
 	profileOrder,
 } from '../RequestProfile';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 const baseProfiles = {
 	hooks: { count: 5, time: 80 },
@@ -55,30 +56,70 @@ describe( 'RequestProfile', () => {
 		expect( profileOrder( undefined ) ).toEqual( [] );
 	} );
 
-	it( "paints each bar segment and swatch its category's CRT green for its rank", () => {
+	it( 'orders a row with no bar segment after every row with one', () => {
+		expect(
+			profileOrder( {
+				'kea-7064': { time: 9, count: 1 },
+				'[kea] Kea_7065::boot @10': { time: 7, count: 1 },
+				'kea-7066': { time: 3, count: 1 },
+			} )
+		).toEqual( [ 'kea-7064', 'kea-7066', '[kea] Kea_7065::boot @10' ] );
+	} );
+
+	// The fill each drawn bar segment and table swatch carries, in order.
+	const fillsOf = ( profiles ) => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, { profiles, totalMs: 100 } )
+		);
+		const read = ( selector ) =>
+			[ ...container.querySelectorAll( selector ) ].map( ( el ) =>
+				el.style.getPropertyValue( 'background' )
+			);
+		const fills = {
+			bar: read( '.event-logger-profile-bar [role="button"]' ),
+			swatches: read( '.event-logger-profile-swatch' ),
+		};
+		unmount();
+		return fills;
+	};
+	const slot = ( index ) =>
+		`var(--phosphor-${ ( index % 8 ) + 1 }, ${ chartColor( index ) })`;
+
+	it( 'paints the bar the chart slots in its own order, though two categories share a colour of their own', () => {
 		window.eventLoggerCustomColors = {
 			'kea-7053': '#a1b2c3',
-			'kea-7054': '#c3b2a1',
+			'kea-7054': '#a1b2c3',
 		};
-		const { container, unmount } = renderComponent(
-			React.createElement( RequestProfile, {
-				profiles: {
-					'kea-7053': { time: 30, count: 1 },
-					'kea-7054': { time: 20, count: 1 },
-				},
-			} )
-		);
-		const second = 'var(--phosphor-2, #c3b2a1)';
-		const [ , segment ] = container.querySelectorAll(
-			'.event-logger-profile-bar [role="button"]'
-		);
-		expect( segment.style.getPropertyValue( 'background' ) ).toBe( second );
-		const [ , swatch ] = container.querySelectorAll(
-			'.event-logger-profile-swatch'
-		);
-		expect( swatch.style.getPropertyValue( 'background' ) ).toBe( second );
+		const { bar, swatches } = fillsOf( {
+			'kea-7053': { time: 30, count: 1 },
+			'kea-7054': { time: 20, count: 1 },
+		} );
 		delete window.eventLoggerCustomColors;
-		unmount();
+		expect( bar ).toEqual( [ slot( 0 ), slot( 1 ) ] );
+		expect( swatches ).toEqual( bar );
+	} );
+
+	it( 'starts the slots over at the ninth segment', () => {
+		const profiles = Object.fromEntries(
+			Array.from( { length: 10 }, ( _, i ) => [
+				`kea-71${ i }`,
+				{ time: 100 - i, count: 1 },
+			] )
+		);
+		const { bar } = fillsOf( profiles );
+		expect( bar ).toEqual(
+			Array.from( { length: 10 }, ( _, i ) => slot( i ) )
+		);
+	} );
+
+	it( 'gives a row with no bar segment the slot after the last segment', () => {
+		const { bar, swatches } = fillsOf( {
+			'kea-7081': { time: 50, count: 1 },
+			'[kea] Kea_7082::boot @10': { time: 40, count: 1 },
+			'kea-7083': { time: 30, count: 1 },
+		} );
+		expect( bar ).toEqual( [ slot( 0 ), slot( 1 ) ] );
+		expect( swatches ).toEqual( [ slot( 0 ), slot( 2 ), slot( 1 ) ] );
 	} );
 
 	it( 'renders rows sorted by time descending', () => {
