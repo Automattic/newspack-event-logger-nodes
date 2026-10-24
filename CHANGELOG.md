@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A click anywhere in a page row's chevron square, left of the URL, unfolds the page**, and hovering it lights the whole square.
+
 ## [0.157.0] - 2026-10-23
 
 ### Added
