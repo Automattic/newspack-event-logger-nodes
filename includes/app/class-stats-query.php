@@ -51,7 +51,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * @phpstan-type Also array{sort:string, order:string, limit:int}
  * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>}>, folds:array<string,array{0:string,1:list<string>}>, ids?:array<string,array{0:string,1:string}>}
- * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also, now:?int}
+ * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also, now:?int, edges:bool}
  */
 final class Stats_Query {
 
@@ -315,20 +315,27 @@ final class Stats_Query {
 	];
 
 	/**
-	 * Each live window, and the table answering its question while its
-	 * watermark lags the window's start.
+	 * Each live window and its column counting the requests a row sums. The
+	 * table it sums, `Stats_Builder_Node::WINDOW_SOURCES`, answers its
+	 * question while the window does not sit within a bucket of the range.
 	 */
-	private const WINDOW_FALLBACK = [
-		'category_window' => 'timings_site',
-		'urls_window'     => 'requests',
+	private const WINDOWS = [
+		'category_window' => 'requests',
+		'urls_window'     => 'count',
 	];
 
 	/**
-	 * One partition's watermark, `%1$s` its `WATERMARK_QUERY`, and whether
-	 * its window `%2$s.%3$s` holds a row that last moved past the bucket `?`,
-	 * a seek of its `last_bucket`.
+	 * One partition's watermark, `%1$s` its `WATERMARK_QUERY`, and the newest
+	 * bucket a row of its window `%2$s.%3$s` last moved in, a seek of its
+	 * `last_bucket`.
 	 */
-	private const WINDOW_CHECK = 'SELECT ( %1$s ), EXISTS ( SELECT 1 FROM %2$s.%3$s WHERE last_bucket > ? )';
+	private const WINDOW_CHECK = 'SELECT ( %1$s ), ( SELECT MAX( last_bucket ) FROM %2$s.%3$s )';
+
+	/**
+	 * Buckets a partition's live window may lag a range's start or run past
+	 * its end and still answer the range, those buckets subtracted.
+	 */
+	private const WINDOW_SLACK = 1;
 
 	/**
 	 * Each table's SQL over its row `t`, its URL `u` and the lookups naming
@@ -581,20 +588,23 @@ final class Stats_Query {
 	 */
 	public static function run( array $spec ): array {
 		$spec   = self::checked( $spec );
-		$read   = self::table( $spec );
+		$read   = [ self::table( $spec ), $spec ];
 		$rows   = self::read(
 			self::label( $spec ),
-			static function ( Row_Reader $reader, array $aliases ) use ( $spec, &$read ): array {
+			static function ( Row_Reader $reader, array $aliases ) use ( &$read ): array {
 				// The window check and the rows read one snapshot of each file.
 				$reader->rows( 'BEGIN', [] );
 				try {
-					// Sets the table run() reports.
-					$read = self::readable( $reader, $aliases, $spec, $read );
+					// Sets the table run() reports, and how the window reads.
+					$read    = self::readable( $reader, $aliases, $read[1], $read[0] );
 					$rows_of = self::$read_rows ?? self::rows( ... );
-					return $rows_of( $reader, $aliases, $spec, $read );
+					return $rows_of( $reader, $aliases, $read[1], $read[0] );
 				} finally {
 					$reader->rows( 'COMMIT', [] );
 				}
+			},
+			static function () use ( &$read ): string {
+				return $read[0];
 			}
 		);
 		$groups = null;
@@ -611,7 +621,7 @@ final class Stats_Query {
 		}
 		return [
 			'source'    => $spec['source'],
-			'table'     => $read,
+			'table'     => $read[0],
 			'columns'   => self::columns( $spec ),
 			'rows'      => $pages[0],
 			'groups'    => $groups,
@@ -689,11 +699,12 @@ final class Stats_Query {
 	 * sort they come in no order. An empty window stores an empty table.
 	 * The caller runs the statement inside a read transaction begun before
 	 * this call, so the statement reads the files the window check read.
+	 * Third comes the table it reads, as `run()` reports one.
 	 *
 	 * @param Row_Reader          $builder The connection building the file.
 	 * @param string              $table   The table to create, of `a-z` and `_`.
 	 * @param array<string,mixed> $spec    As `run()` takes it, with no `top` and no `also`.
-	 * @return array{0:string, 1:list<scalar|null>}
+	 * @return array{0:string, 1:list<scalar|null>, 2:string}
 	 * @throws \InvalidArgumentException As `run()`, on a `top`, an `also` or
 	 *                                   a sort naming no group field, or on a
 	 *                                   table name outside `a-z` and `_`.
@@ -727,50 +738,13 @@ final class Stats_Query {
 		foreach ( $spec['measure'] as $j => $name ) {
 			$columns[ "v{$j}" ] = $name;
 		}
-		[ $sql, $binds ] = self::statement( $spec, self::readable( $builder, $aliases, $spec, $read ), $aliases, false );
+		[ $read, $spec ] = self::readable( $builder, $aliases, $spec, $read );
+		[ $sql, $binds ] = self::statement( $spec, $read, $aliases, false );
 		$projected       = \array_map( static fn ( string $column, string $name ): string => "{$column} AS \"{$name}\"", \array_keys( $columns ), $columns );
 		// The bare group keys, the sorted one first.
 		$keys    = null === $sorted ? [] : [ $sorted, ...\array_diff( \array_keys( $spec['group'] ), [ $sorted ] ) ];
 		$ordered = [] === $keys ? '' : ' ORDER BY ' . \implode( ', ', \array_map( static fn ( int $i ): string => "f{$i}" . ( 'desc' === $spec['order'] ? ' DESC' : '' ), $keys ) );
-		return [ "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql}{$ordered} )", $binds ];
-	}
-
-	/**
-	 * The table the attached partitions answer `$table`'s question from: a
-	 * live window only while it holds the spec's range, else the table its
-	 * `WINDOW_FALLBACK` names. The caller reads the rows inside the read
-	 * transaction this check ran in, so a flush between them cannot move it.
-	 *
-	 * @param Row_Reader             $reader  The attached files.
-	 * @param non-empty-list<string> $aliases Their aliases.
-	 * @param Spec                   $spec    The checked spec.
-	 * @param string                 $table   The table `table()` chose.
-	 */
-	private static function readable( Row_Reader $reader, array $aliases, array $spec, string $table ): string {
-		return isset( self::WINDOW_FALLBACK[ $table ] ) && ! self::window_holds( $reader, $aliases, $table, $spec['buckets'][0] ) ? self::WINDOW_FALLBACK[ $table ] : $table;
-	}
-
-	/**
-	 * Whether every attached partition's `$window` holds exactly `$range`:
-	 * expired through the bucket before it, its newest `window_expiry`
-	 * bucket, and holding no row that last moved past its end, as a builder
-	 * a bucket ahead holds until it expires that bucket. A partition that
-	 * has expired none does not hold.
-	 *
-	 * @param Row_Reader             $reader  The attached files.
-	 * @param non-empty-list<string> $aliases Their aliases.
-	 * @param string                 $window  A `WINDOW_FALLBACK` table.
-	 * @param array{0:int,1:int}     $range   The spec's one bucket range.
-	 */
-	private static function window_holds( Row_Reader $reader, array $aliases, string $window, array $range ): bool {
-		$marks = $reader->rows(
-			\implode(
-				' UNION ALL ',
-				\array_map( static fn ( string $alias ): string => \sprintf( self::WINDOW_CHECK, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, $alias ), $alias, $window ), $aliases )
-			),
-			\array_fill( 0, \count( $aliases ), $range[1] )
-		);
-		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $range[0] - 1 !== Core::as_int( $mark[0] ) || 0 !== Core::as_int( $mark[1] ) );
+		return [ "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql}{$ordered} )", $binds, $read ];
 	}
 
 	/**
@@ -971,6 +945,65 @@ final class Stats_Query {
 	}
 
 	/**
+	 * The table the attached partitions answer `$table`'s question from, and
+	 * the spec as that table reads it: a live window while
+	 * `window_edges()` finds every partition holds the range within the
+	 * slack, its `edges` set where any partition holds a bucket outside it,
+	 * else the table it sums. The caller reads the rows
+	 * inside the read transaction this check ran in, so a flush between them
+	 * cannot move it.
+	 *
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param Spec                   $spec    The checked spec.
+	 * @param string                 $table   The table `table()` chose.
+	 * @return array{0:string, 1:Spec}
+	 */
+	private static function readable( Row_Reader $reader, array $aliases, array $spec, string $table ): array {
+		if ( ! isset( self::WINDOWS[ $table ] ) ) {
+			return [ $table, $spec ];
+		}
+		$edges = self::window_edges( $reader, $aliases, $table, $spec['buckets'][0] );
+		return null === $edges ? [ Stats_Builder_Node::WINDOW_SOURCES[ $table ], $spec ] : [ $table, [ 'edges' => $edges ] + $spec ];
+	}
+
+	/**
+	 * Whether any attached partition's `$window` holds a bucket outside
+	 * `$range`, which the read subtracts, `edged()`; null where one cannot
+	 * answer it. Each partition is judged alone: one that has expired
+	 * through the bucket before the range holds the range, a bucket earlier
+	 * it holds that bucket too, and a row that last moved a bucket past the
+	 * range's end puts that bucket in it. A partition that has expired none,
+	 * or sits further off than `WINDOW_SLACK` either way, as a rebuilding
+	 * file's watermark, more than `Bucket::RETAIN_SLACK` buckets behind,
+	 * always does, sends the read to the table the window sums.
+	 *
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param string                 $window  A `WINDOWS` table.
+	 * @param array{0:int,1:int}     $range   The spec's one bucket range.
+	 */
+	private static function window_edges( Row_Reader $reader, array $aliases, string $window, array $range ): ?bool {
+		$marks = $reader->rows(
+			\implode(
+				' UNION ALL ',
+				\array_map( static fn ( string $alias ): string => \sprintf( self::WINDOW_CHECK, \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, $alias ), $alias, $window ), $aliases )
+			),
+			[]
+		);
+		$edges = false;
+		foreach ( $marks as [ $watermark, $newest ] ) {
+			$behind = null === $watermark ? -1 : $range[0] - 1 - Core::as_int( $watermark );
+			$past   = null === $newest ? 0 : Core::as_int( $newest ) - $range[1];
+			if ( $behind < 0 || $behind > self::WINDOW_SLACK || $past > self::WINDOW_SLACK ) {
+				return null;
+			}
+			$edges = $edges || 0 < $behind || 0 < $past;
+		}
+		return $edges;
+	}
+
+	/**
 	 * The table a checked spec reads, refusing a spec naming no measure or a
 	 * field that table lacks.
 	 *
@@ -995,12 +1028,12 @@ final class Stats_Query {
 	 *
 	 * A timings spec over exactly the `Bucket::window()` buckets ending at the
 	 * bucket of its `now`, naming only the window's fields, reads
-	 * `category_window`; with `readable()` holding the watermark to its
-	 * start, the builder and the reader then keep one span. Any other reads
-	 * `timings_site` unless a URL or a page is grouped or filtered, or a URL
-	 * searched: then `timings_page` when it names a page and no URL and
-	 * searches none, else `timings`. A requests spec
-	 * reads `requests_hourly` when the rollup keeps
+	 * `category_window`, which `readable()` reads over that range, each
+	 * partition corrected for a bucket of slack, or answers from
+	 * `timings_site`. Any other reads `timings_site` unless a URL or a page
+	 * is grouped or filtered, or a URL searched: then `timings_page` when it
+	 * names a page and no URL and searches none, else `timings`. A requests
+	 * spec reads `requests_hourly` when the rollup keeps
 	 * every field and measure it names, its `top_by` among them, and every
 	 * bucket range covers whole hours; else `urls_window` when it reads the
 	 * same whole window, searches nothing, and names only the fields and
@@ -1184,7 +1217,8 @@ final class Stats_Query {
 				[ $from, $binds ] = self::union( self::arm( $spec, 'requests', self::filtered( $spec['filter'] ), self::LISTED ), $aliases );
 				$listed           = \implode( ', ', \array_map( static fn ( string $column ): string => "m_{$column}", self::LISTED ) );
 				return $reader->rows( "SELECT {$listed} FROM {$from} ORDER BY m_finished_at DESC, m_rid LIMIT ?", [ ...$binds, $spec['limit'] ] );
-			}
+			},
+			static fn (): string => 'requests'
 		);
 		return null === $rows ? null : \array_map( static fn ( array $row ): array => \array_combine( self::LISTED, $row ), $rows );
 	}
@@ -1196,7 +1230,9 @@ final class Stats_Query {
 	 * search. Grouped by id, an `ids()` field is its id alone, and joins its
 	 * table only for a filter on it or, for a URL, a search; a URL never
 	 * joins `servers`. A filter naming a URL field joins the server through
-	 * `SERVER_JOIN`. Each join is made once, however many fields need it.
+	 * `SERVER_JOIN`. Each join is made once, however many fields need it. A
+	 * spec whose `edges` `readable()` set reads a window less its edge
+	 * buckets, `edged()`, whose binds lead.
 	 *
 	 * @param Spec         $spec      The checked spec.
 	 * @param string       $table     The table answering it.
@@ -1259,9 +1295,57 @@ final class Stats_Query {
 				}
 			}
 		}
-		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM %1\$s.{$table} AS t "
+		[ $from, $edged ] = $spec['edges'] && isset( self::WINDOWS[ $table ] ) ? self::edged( $table, $spec['buckets'][0] ) : [ "%1\$s.{$table}", [] ];
+		$sql              = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from} AS t "
 			. \implode( ' ', \array_unique( [ ...$joins, ...$after ] ) ) . ' WHERE ' . \implode( ' AND ', $clauses );
-		return [ $sql, $binds ];
+		return [ $sql, [ ...$edged, ...$binds ] ];
+	}
+
+	/**
+	 * `$window`'s rows less its edge buckets, as one partition's arm reads
+	 * them, `%1$s` its alias: every bucket it keeps outside `$range`, those
+	 * after its watermark and before the range and any after its end, read
+	 * from the table it sums by `Stats_Builder_Node::window_columns()`,
+	 * grouped by its key. A sum subtracts. An extreme the edge held is read
+	 * again over the range, a seek of that key. A row left counting no
+	 * request has no last bucket, so the range leaves it out, and one that
+	 * moved past the range's end ends at it. A partition in step subtracts
+	 * nothing. Binds come in placeholder order.
+	 *
+	 * @param string             $window A `WINDOWS` table.
+	 * @param array{0:int,1:int} $range  The spec's one bucket range.
+	 * @return array{0:string, 1:list<int>}
+	 */
+	private static function edged( string $window, array $range ): array {
+		$declared             = Flame_Facts_Row_Schema::tables()[ $window ];
+		$source               = Stats_Builder_Node::WINDOW_SOURCES[ $window ];
+		$counted              = self::WINDOWS[ $window ];
+		$derived              = \array_combine( \array_keys( $declared['columns'] ), Stats_Builder_Node::window_columns( $window ) );
+		$folds                = $declared['add'] ?? [];
+		$key                  = $declared['key'] ?? throw new \LogicException( \esc_html( "{$window} declares no key" ) );
+		$keyed                = static fn ( string $alias ): string => \implode( ' AND ', \array_map( static fn ( string $column ): string => "{$alias}.{$column} = w.{$column}", $key ) );
+		$select               = [];
+		$binds                = [];
+		foreach ( $derived as $column => $expression ) {
+			$fold = $folds[ $column ] ?? null;
+			if ( 'last_bucket' === $column ) {
+				$select[] = "CASE WHEN w.{$counted} - COALESCE( e.{$counted}, 0 ) > 0 THEN MIN( w.last_bucket, ? ) END AS last_bucket";
+				$binds[]  = $range[1];
+			} elseif ( 'sum' === $fold ) {
+				$select[] = "w.{$column} - COALESCE( e.{$column}, 0 ) AS {$column}";
+			} elseif ( null !== $fold ) {
+				$select[] = "CASE WHEN w.{$column} = e.{$column} THEN ( SELECT {$expression} FROM %1\$s.{$source} AS s WHERE {$keyed( 's' )} AND s.bucket BETWEEN ? AND ? ) ELSE w.{$column} END AS {$column}";
+				\array_push( $binds, ...$range );
+			} else {
+				$select[] = "w.{$column}";
+			}
+		}
+		$edge = 'SELECT ' . \implode( ', ', \array_map( static fn ( string $column, string $expression ): string => "{$expression} AS {$column}", \array_keys( $derived ), $derived ) )
+			. " FROM %1\$s.{$source} WHERE bucket BETWEEN ( " . \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, '%1$s' ) . ' ) + 1 AND ? OR bucket > ? GROUP BY +' . \implode( ', +', $key );
+		return [
+			'( SELECT ' . \implode( ', ', $select ) . " FROM %1\$s.{$window} AS w LEFT JOIN ( {$edge} ) AS e ON {$keyed( 'e' )} WHERE w.last_bucket >= ? )",
+			[ ...$binds, $range[0] - 1, $range[1], $range[0] ],
+		];
 	}
 
 	/**
@@ -1322,14 +1406,16 @@ final class Stats_Query {
 	 * (decision 3); one declaring two is refused.
 	 *
 	 * On a started record the read is a `stats query` span labelled `$label`,
-	 * closing on the rows it read, or `unavailable`.
+	 * closing on the table `$from` names once the read is done and the rows
+	 * it read, or `unavailable`.
 	 *
 	 * @param string                                                          $label What the read is, as `label()` names a spec.
 	 * @param \Closure(Row_Reader, non-empty-list<string>): list<list<mixed>> $read  The read, over the reader and its aliases.
+	 * @param \Closure(): string                                              $from  The table the read answered from.
 	 * @return list<list<mixed>>|null
 	 * @throws \RuntimeException When the active topologies declare two such tables.
 	 */
-	private static function read( string $label, \Closure $read ): ?array {
+	private static function read( string $label, \Closure $read, \Closure $from ): ?array {
 		return Log_Manager::span(
 			Flame_Tree::STATS_QUERY,
 			static function () use ( $read ): ?array {
@@ -1346,7 +1432,7 @@ final class Stats_Query {
 					return null;
 				}
 			},
-			static fn ( ?array $rows ): string => null === $rows ? 'unavailable' : \count( $rows ) . ' rows',
+			static fn ( ?array $rows ): string => null === $rows ? 'unavailable' : $from() . ': ' . \count( $rows ) . ' rows',
 			start: [ 'l' => $label ]
 		);
 	}
@@ -1398,6 +1484,7 @@ final class Stats_Query {
 			'offset'  => Core::as_int( $spec['offset'] ?? 0 ),
 			'search'  => Core::as_string( $spec['search'] ?? '' ),
 			'now'     => isset( $spec['now'] ) ? Core::as_int( $spec['now'] ) : null,
+			'edges'   => false,
 		];
 		$checked['match']                     = '' === $checked['search'] ? '' : self::match( $checked['search'] );
 		[ $checked['top'], $checked['top_by'] ] = self::top( $spec, $source, $group );

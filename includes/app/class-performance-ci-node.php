@@ -1635,7 +1635,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$totals  = self::measures( $answer );
-		if ( null === $servers || ( '' !== $server && ! \in_array( $server, $servers, true ) && ( 0 < Core::num_int( $totals['count'] ) || self::has_traffic( $server, $chart ) ) ) ) {
+		if ( null === $servers || ( '' !== $server && ! \in_array( $server, $servers, true ) && ( 0 < Core::num_int( $totals['count'] ) || self::has_traffic( $server, $chart, $now ) ) ) ) {
 			$servers = \array_column(
 				Stats_Query::run(
 					[
@@ -1646,6 +1646,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						'buckets' => $chart,
 						'sort'    => 'count',
 						'order'   => 'desc',
+						'now'     => $now,
 					]
 				)['rows'],
 				0
@@ -1714,12 +1715,13 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Whether `$server` has any request over `$buckets`, worker traffic
-	 * counted: one scoped count.
+	 * counted: one scoped count, read as the totals read theirs.
 	 *
 	 * @param string                   $server  The scoped server.
 	 * @param list<array{0:int,1:int}> $buckets The buckets.
+	 * @param int                      $now     The reply's clock.
 	 */
-	private static function has_traffic( string $server, array $buckets ): bool {
+	private static function has_traffic( string $server, array $buckets, int $now ): bool {
 		$answer = Stats_Query::run(
 			[
 				'source'  => 'requests',
@@ -1727,6 +1729,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'filter'  => self::scope( $server, true ),
 				'measure' => [ 'count' ],
 				'buckets' => $buckets,
+				'now'     => $now,
 			]
 		);
 		return 0 < Core::num_int( self::measures( $answer )['count'] );

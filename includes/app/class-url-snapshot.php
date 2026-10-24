@@ -298,14 +298,17 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * Run one step's statements in order, as a `$span` span.
+	 * Run one step's statements in order, as a `$span` span closing on the
+	 * tables those reading the stats answered from, as `into_statement()`
+	 * names one third, or `ok` where none does.
 	 *
-	 * @param Row_Reader                                $db         The building connection.
-	 * @param string                                    $span       A `Flame_Tree` snapshot step.
-	 * @param list<array{0:string,1:list<scalar|null>}> $statements Each statement and its binds.
-	 * @param array<string,mixed>                       $start      Extra keys for the `(start)` entry.
+	 * @param Row_Reader                                            $db         The building connection.
+	 * @param string                                                $span       A `Flame_Tree` snapshot step.
+	 * @param list<array{0:string,1:list<scalar|null>,2?:string}>   $statements Each statement, its binds and any table it reads.
+	 * @param array<string,mixed>                                   $start      Extra keys for the `(start)` entry.
 	 */
 	private static function step( Row_Reader $db, string $span, array $statements, array $start = [] ): void {
+		$read = \array_column( $statements, 2 );
 		Log_Manager::span(
 			$span,
 			static function () use ( $db, $statements ): void {
@@ -313,7 +316,8 @@ final class Url_Snapshot {
 					$db->rows( $sql, $binds );
 				}
 			},
-			start: $start
+			static fn (): string => [] === $read ? 'ok' : \implode( ', ', $read ),
+			$start
 		);
 	}
 
@@ -323,11 +327,12 @@ final class Url_Snapshot {
 	 * with their pages into a scratch table in hash order; then the servers
 	 * named by ids in name order, the URLs copied in the scratch table's
 	 * order, so a rowid ranks as the hash, and the scratch table dropped
-	 * ahead of the indexes, which reuse the space it frees.
+	 * ahead of the indexes, which reuse the space it frees. The group names
+	 * the table it reads third.
 	 *
 	 * @param Row_Reader $db  The building connection.
 	 * @param int        $now The job's tick.
-	 * @return array<string,list<array{0:string,1:list<scalar|null>}>>
+	 * @return array<string,list<array{0:string,1:list<scalar|null>,2?:string}>>
 	 */
 	private static function url_steps( Row_Reader $db, int $now ): array {
 		$grouped  = [

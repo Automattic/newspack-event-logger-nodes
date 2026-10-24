@@ -128,10 +128,24 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private const CATEGORY_PAGE = 'SELECT server_id, category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window WHERE ( server_id, category_id, entry_id, worker ) > ( ?, ?, ?, ? ) ORDER BY server_id, category_id, entry_id, worker LIMIT ?';
 
 	/**
-	 * Server `?`'s next `?` `timings_site` groups after `( ?, ?, ?, ? )`, each
-	 * summed over the buckets from `?` through `?`, read through the key.
+	 * Each live window and the table it sums: what its expiry and rebuild
+	 * read, and what a reader corrects its edge buckets from.
+	 *
+	 * @api Stats_Query, which falls back to it and corrects a window by it.
 	 */
-	private const GROUP_PAGE = 'SELECT server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE server_id = ? AND bucket BETWEEN ? AND ? AND ( category_id, entry_id, listener, worker ) > ( ?, ?, ?, ? ) GROUP BY category_id, entry_id, listener, worker ORDER BY category_id, entry_id, listener, worker LIMIT ?';
+	public const WINDOW_SOURCES = [
+		'category_window' => 'timings_site',
+		'urls_window'     => 'requests',
+	];
+
+	/** The tail of `group_page()`, after the columns it reads. */
+	private const GROUP_PAGE = ' FROM %s.' . self::WINDOW_SOURCES['category_window'] . ' WHERE server_id = ? AND bucket BETWEEN ? AND ? AND ( category_id, entry_id, listener, worker ) > ( ?, ?, ?, ? ) GROUP BY category_id, entry_id, listener, worker ORDER BY category_id, entry_id, listener, worker LIMIT ?';
+
+	/**
+	 * Each `category_window` column as a `timings_site` group reads it, in
+	 * the window's column order.
+	 */
+	private const CATEGORY_COLUMNS = [ 'server_id', 'category_id', 'entry_id', 'listener', 'worker', 'TOTAL( ms )', 'SUM( calls )', 'SUM( requests )', 'MAX( bucket )' ];
 
 	/**
 	 * Requests the buffer holds before the record reaching the count writes
@@ -830,7 +844,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private static function window_expiries( Row_Reader $reader, int $first, int $last ): array {
 		$sums = self::own_rows(
 			$reader,
-			'SELECT bucket, server_id, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, server_id, category_id, entry_id, listener, worker',
+			'SELECT bucket, ' . \implode( ', ', \array_slice( self::CATEGORY_COLUMNS, 0, -1 ) ) . ' FROM %s.' . self::WINDOW_SOURCES['category_window'] . ' WHERE bucket BETWEEN ? AND ? GROUP BY bucket, server_id, category_id, entry_id, listener, worker',
 			[ $first, $last ]
 		);
 		$then = \array_fill_keys( \range( $first, $last ), [] );
@@ -907,7 +921,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private static function url_expiry_sql(): string {
 		return 'SELECT g.*, ' . \implode( ', ', \array_map( static fn ( string $column ): string => "w.{$column}", self::URL_EXTREMES ) ) . ' FROM ( SELECT bucket, '
 			. self::url_sums()
-			. ' FROM %1$s.requests WHERE bucket BETWEEN ? AND ? GROUP BY bucket, worker, url_id ) AS g LEFT JOIN %1$s.urls_window AS w ON w.url_id = g.url_id AND w.worker = g.worker';
+			. ' FROM %1$s.' . self::WINDOW_SOURCES['urls_window'] . ' WHERE bucket BETWEEN ? AND ? GROUP BY bucket, worker, url_id ) AS g LEFT JOIN %1$s.urls_window AS w ON w.url_id = g.url_id AND w.worker = g.worker';
 	}
 
 	/**
@@ -992,7 +1006,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private static function category_sums( Row_Reader $reader, array $after, int $through ): array {
 		[ $server ] = $after;
-		$rows       = self::own_rows( $reader, self::GROUP_PAGE, [ $server, $through + 1, \PHP_INT_MAX, ...\array_slice( $after, 1 ), self::REBUILD_OPS ] );
+		$rows       = self::own_rows( $reader, self::group_page(), [ $server, $through + 1, \PHP_INT_MAX, ...\array_slice( $after, 1 ), self::REBUILD_OPS ] );
 		$last = \end( $rows );
 		if ( \count( $rows ) < self::REBUILD_OPS || false === $last ) {
 			$next = self::own_rows( $reader, 'SELECT id FROM %s.servers WHERE id > ? ORDER BY id LIMIT 1', [ $server ] )[0][0] ?? null;
@@ -1082,7 +1096,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string $urls The predicate naming the URLs: `urls_named()`, or URL_RANGE.
 	 */
 	private static function url_window_sql( string $urls ): string {
-		return 'SELECT ' . self::url_sums() . ", MAX( bucket ) FROM %1\$s.requests WHERE {$urls} AND bucket BETWEEN ? AND ? GROUP BY url_id, worker";
+		return 'SELECT ' . \implode( ', ', self::window_columns( 'urls_window' ) ) . ' FROM %1$s.' . self::WINDOW_SOURCES['urls_window'] . " WHERE {$urls} AND bucket BETWEEN ? AND ? GROUP BY url_id, worker";
 	}
 
 	/**
@@ -1101,9 +1115,35 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * finish.
 	 */
 	private static function url_sums(): string {
-		$classes = \implode( ', ', \array_map( static fn ( int $class ): string => "COUNT( CASE WHEN status / 100 = {$class} THEN 1 END )", self::WINDOW_CLASSES ) );
+		return \implode( ', ', \array_slice( self::window_columns( 'urls_window' ), 0, -1 ) );
+	}
+
+	/**
+	 * Each of `$window`'s columns, in its order, as a group of the table it
+	 * sums by its key reads it: the one derivation its expiry and rebuild
+	 * write by, and a reader's edge correction subtracts by.
+	 *
+	 * @api Stats_Query, which corrects a window's edge buckets by it.
+	 * @param string $window `category_window` or `urls_window`.
+	 * @return list<string>
+	 * @throws \InvalidArgumentException On any other table.
+	 */
+	public static function window_columns( string $window ): array {
+		$classes = \array_map( static fn ( int $class ): string => "COUNT( CASE WHEN status / 100 = {$class} THEN 1 END )", self::WINDOW_CLASSES );
 		$errors  = "'" . \implode( "', '", self::ERROR_KINDS ) . "'";
-		return "url_id, worker, COUNT( * ), COUNT( ms ), {$classes}, COUNT( CASE WHEN error IN ( {$errors} ) THEN 1 END ), TOTAL( ms ), TOTAL( peak_mb ), MIN( ms ), MAX( ms ), MAX( peak_mb ), MAX( finished_at )";
+		return match ( $window ) {
+			'category_window' => self::CATEGORY_COLUMNS,
+			'urls_window'     => [ 'url_id', 'worker', 'COUNT( * )', 'COUNT( ms )', ...$classes, "COUNT( CASE WHEN error IN ( {$errors} ) THEN 1 END )", 'TOTAL( ms )', 'TOTAL( peak_mb )', 'MIN( ms )', 'MAX( ms )', 'MAX( peak_mb )', 'MAX( finished_at )', 'MAX( bucket )' ],
+			default           => throw new \InvalidArgumentException( \esc_html( "no window {$window}" ) ),
+		};
+	}
+
+	/**
+	 * Server `?`'s next `?` `timings_site` groups after `( ?, ?, ?, ? )`, each
+	 * summed over the buckets from `?` through `?`, read through the key.
+	 */
+	private static function group_page(): string {
+		return 'SELECT ' . \implode( ', ', self::CATEGORY_COLUMNS ) . self::GROUP_PAGE;
 	}
 
 	/**
