@@ -89,7 +89,7 @@ Push back on any diff introducing a hub flag — an `enable_aggregator` / `enabl
 
 ### 8. The substrate floor is a version, not a presence check
 
-The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.127.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
+The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.129.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
 
 A diff calling a newer substrate API must raise the floor. `scripts/check-substrate-floor.sh` audits the declared floor against every substrate API PHPStan resolves this plugin as calling, and `lint-docs.sh` rule 6 holds the prose to the loader — **a floor set too LOW is worse than none**, because the handshake passes and the plugin fatals later. The deferred bootstrap runs at `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY` (-11001), below `hook_start_priority`, so a rule naming `plugins_loaded` times it; don't raise it past that.
 
@@ -283,11 +283,11 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 
 ### The MCP surface
 
-`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — eleven tools, each one verb, every argument named, replies JSON-encoded inside a `<site-data>` fence.
+`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — eleven tools, each one verb, every argument named, replies JSON-encoded inside a `<site-data>` fence. `App\MCP_Controller` declares it on the substrate's `Mcp_Door`, whose server methods are `final`: a diff here changes the tools, the glossary, the caveat or the fills, and the substrate enforces the session ceiling, the meter and the fence below.
 
-- **The scope is a ceiling, never a grant.** A `Bearer <handle>.<secret>` names a live session; the controller becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
+- **The scope is a ceiling, never a grant.** A `Bearer <handle>.<secret>` names a live session; the door becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
 - **`tools/list` offers only what the scope covers**, and `Findings::caveat()` — the measurement caveat — rides EVERY tool description, not just the first read. A new tool that drops the caveat hands a model a number it will over-read.
-- **Rate limiting is per handle**, `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, each slot freeing 9 to 10 seconds after its claim on memcached and 10 to 11 on APCu: each admitted call claims one slot through the substrate's `Rate_Limit`, whose claim is the atomic `add()` of `Cache_Backend::shared_first()`, never a transient, which has no atomic claim. The controller only maps its answer to 429 or 503; unlike `/command` and spawn, it never admits unmetered, because its tools are the expensive ones. It is checked AFTER the credential so an unauthenticated flood cannot fill the slots, and with no cache to claim in, or a slot read that fails, the door answers 503 rather than run unmetered. MCP does not route through `/command`, so the substrate's per-user cap does not bound it.
+- **Rate limiting is per handle**, in the slot `mcp:newspack-event-logger-nodes/v1:<handle>`; the substrate's [MCP doors](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/docs/API.md#mcp-doors) section owns the budget, the meter and the 503, and a diff here cannot change them.
 - **A brief redacts.** `Ask_Assembler` puts every URL through `Log_Manager::redact_url()`, allowlists the environment rather than filtering it, ships the `environment_v3` entry with no body, and caps entries. A new brief field bypassing that path leaks.
 
 ## Dashboards

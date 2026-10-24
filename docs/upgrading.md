@@ -6,7 +6,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **This release needs newspack-nodes 2.127.0.** Below it the plugin goes
+- **This release needs newspack-nodes 2.129.0.** Below it the plugin goes
   dormant behind an admin notice naming both versions. Update the
   substrate first.
 - **The stats schema is version 11, and a site refills its stats once.** The
