@@ -170,6 +170,17 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public const TIMED_CATEGORIES = 100;
 
+	/**
+	 * Chunk-size seam. Replaces URLS_PER_READ, REBUILD_OPS and
+	 * URLS_PER_REBUILD where the expiry and the rebuild chunk their reads
+	 * and batches; tests shrink them, so a few dozen rows cross several
+	 * chunks inside a test's time budget.
+	 * Signature: `function (): array{urls_per_read:positive-int, rebuild_ops:positive-int, urls_per_rebuild:positive-int}`.
+	 *
+	 * @var (\Closure(): array{urls_per_read:positive-int, rebuild_ops:positive-int, urls_per_rebuild:positive-int})|null
+	 */
+	public static ?\Closure $chunk_sizes = null;
+
 	/** Unix time of the last write that held a folded record, which GET_STATS reports as an age. */
 	private float $worked_at = 0.0;
 
@@ -901,7 +912,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				}
 			}
 			$sets = [];
-			foreach ( \array_chunk( \array_values( \array_unique( \array_map( Core::as_int( ... ), \array_column( $moved, 0 ) ) ) ), self::URLS_PER_READ ) as $chunk ) {
+			foreach ( \array_chunk( \array_values( \array_unique( \array_map( Core::as_int( ... ), \array_column( $moved, 0 ) ) ) ), self::chunk_sizes()['urls_per_read'] ) as $chunk ) {
 				$sets += self::url_window_sets( $reader, self::urls_named( \count( $chunk ) ), $chunk, $bucket );
 			}
 			foreach ( $moved as $key => $sums ) {
@@ -985,11 +996,12 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array{0:list<Row_Op>, 1:list<int>|null}
 	 */
 	private static function category_spends( Row_Reader $reader, array $after ): array {
-		$rows = self::own_rows( $reader, self::CATEGORY_PAGE, [ ...$after, self::REBUILD_OPS ] );
+		$size = self::chunk_sizes()['rebuild_ops'];
+		$rows = self::own_rows( $reader, self::CATEGORY_PAGE, [ ...$after, $size ] );
 		$last = \end( $rows );
 		return [
 			\array_map( static fn ( array $row ): array => self::window_op( $row, -1, Core::as_int( $row[8] ) ), $rows ),
-			\count( $rows ) < self::REBUILD_OPS || false === $last ? null : \array_map( Core::as_int( ... ), [ $last[0], $last[1], $last[2], $last[4] ] ),
+			\count( $rows ) < $size || false === $last ? null : \array_map( Core::as_int( ... ), [ $last[0], $last[1], $last[2], $last[4] ] ),
 		];
 	}
 
@@ -1006,9 +1018,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private static function category_sums( Row_Reader $reader, array $after, int $through ): array {
 		[ $server ] = $after;
-		$rows       = self::own_rows( $reader, self::group_page(), [ $server, $through + 1, \PHP_INT_MAX, ...\array_slice( $after, 1 ), self::REBUILD_OPS ] );
+		$size       = self::chunk_sizes()['rebuild_ops'];
+		$rows       = self::own_rows( $reader, self::group_page(), [ $server, $through + 1, \PHP_INT_MAX, ...\array_slice( $after, 1 ), $size ] );
 		$last = \end( $rows );
-		if ( \count( $rows ) < self::REBUILD_OPS || false === $last ) {
+		if ( \count( $rows ) < $size || false === $last ) {
 			$next = self::own_rows( $reader, 'SELECT id FROM %s.servers WHERE id > ? ORDER BY id LIMIT 1', [ $server ] )[0][0] ?? null;
 			$last = null === $next ? null : [ $next, -1, -1, -1, -1 ];
 		}
@@ -1033,7 +1046,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array{0:list<Row_Op>, 1:list<int>|null}
 	 */
 	private static function url_rebuild( Row_Reader $reader, array $after, int $through ): array {
-		$id    = self::own_rows( $reader, 'SELECT id FROM %s.urls WHERE id > ? ORDER BY id LIMIT 1 OFFSET ?', [ $after[0], self::URLS_PER_REBUILD - 1 ] )[0][0] ?? null;
+		$id    = self::own_rows( $reader, 'SELECT id FROM %s.urls WHERE id > ? ORDER BY id LIMIT 1 OFFSET ?', [ $after[0], self::chunk_sizes()['urls_per_rebuild'] - 1 ] )[0][0] ?? null;
 		$range = [ $after[0] + 1, null === $id ? \PHP_INT_MAX : Core::as_int( $id ) ];
 		$batch = [];
 		foreach ( self::own_rows( $reader, 'SELECT url_id, worker, last_seen, last_bucket FROM %s.urls_window WHERE ' . self::URL_RANGE . ' AND last_bucket <= ?', [ ...$range, $through ] ) as [ $url, $worker, $seen, $bucket ] ) {
@@ -1044,6 +1057,20 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
 		}
 		return [ $batch, null === $id ? null : [ $range[1] ] ];
+	}
+
+	/**
+	 * The chunk sizes the expiry and the rebuild use: `$chunk_sizes`, or
+	 * URLS_PER_READ, REBUILD_OPS and URLS_PER_REBUILD.
+	 *
+	 * @return array{urls_per_read:positive-int, rebuild_ops:positive-int, urls_per_rebuild:positive-int}
+	 */
+	private static function chunk_sizes(): array {
+		return ( self::$chunk_sizes ?? static fn (): array => [
+			'urls_per_read'    => self::URLS_PER_READ,
+			'rebuild_ops'      => self::REBUILD_OPS,
+			'urls_per_rebuild' => self::URLS_PER_REBUILD,
+		] )();
 	}
 
 	/**

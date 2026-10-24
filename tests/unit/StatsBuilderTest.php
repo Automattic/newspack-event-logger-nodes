@@ -52,10 +52,28 @@ final class StatsBuilderTest extends TestCase {
 		Flame_Tree::STATS_SWEEP . ' (complete)',
 	];
 
+	/** Chunk sizes small enough that a few dozen rows cross several chunks. */
+	private const CHUNKS = [
+		'urls_per_read'    => 5,
+		'rebuild_ops'      => 7,
+		'urls_per_rebuild' => 3,
+	];
+
 	/** A worker's partition is bound before its graph builds; a record names it. */
 	protected function setUp(): void {
 		parent::setUp();
 		Core::$var['partition'] = '0';
+	}
+
+	/** The chunk-size seam is the builder's own again. */
+	protected function tearDown(): void {
+		Stats_Builder_Node::$chunk_sizes = null;
+		parent::tearDown();
+	}
+
+	/** The builder reads and writes in `CHUNKS`-sized chunks. */
+	private static function use_small_chunks(): void {
+		Stats_Builder_Node::$chunk_sizes = static fn (): array => self::CHUNKS;
 	}
 
 	/**
@@ -2643,7 +2661,8 @@ final class StatsBuilderTest extends TestCase {
 	 */
 	public function test_an_expiry_moving_more_urls_than_one_read_names_recomputes_them_all(): void {
 		$this->window_world();
-		$moved  = self::builder_const( 'URLS_PER_READ' ) + 2;
+		self::use_small_chunks();
+		$moved  = self::CHUNKS['urls_per_read'] + 2;
 		$oldest = Bucket::id( self::NOW ) - Bucket::window() + 1;
 		$rows   = [];
 		foreach ( \range( 1, $moved ) as $i ) {
@@ -2672,7 +2691,8 @@ final class StatsBuilderTest extends TestCase {
 	 * @return int The URLs seeded.
 	 */
 	private function seed_urls_past_one_rebuild_batch(): int {
-		$urls = self::builder_const( 'URLS_PER_REBUILD' ) + 3;
+		self::use_small_chunks();
+		$urls = self::CHUNKS['urls_per_rebuild'] + 3;
 		$rows = [];
 		foreach ( \range( 1, $urls ) as $i ) {
 			$url    = "https://kea.example/huia-{$i}";
@@ -2712,7 +2732,7 @@ final class StatsBuilderTest extends TestCase {
 		$this->seed_urls_past_one_rebuild_batch();
 		$stale = Bucket::id( self::NOW ) - Bucket::window() - Bucket::RETAIN_SLACK - 1;
 		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $stale ] ] ] );
-		$last = self::builder_const( 'URLS_PER_REBUILD' );
+		$last = self::CHUNKS['urls_per_rebuild'];
 		$pdo  = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
 		$pdo->exec( "CREATE TRIGGER second_batch BEFORE INSERT ON urls_window WHEN NEW.url_id > ( SELECT id FROM urls ORDER BY id LIMIT 1 OFFSET {$last} - 1 ) BEGIN SELECT RAISE( ABORT, 'second batch refused' ); END" );
 		$sb   = $this->window_builder();
@@ -2757,9 +2777,10 @@ final class StatsBuilderTest extends TestCase {
 	 * @return int The groups seeded.
 	 */
 	private function seed_groups_past_one_rebuild_batch(): int {
+		self::use_small_chunks();
 		$rows = [];
-		foreach ( \range( 1, 81 ) as $c ) {
-			foreach ( \range( 0, 24 ) as $e ) {
+		foreach ( \range( 1, 3 ) as $c ) {
+			foreach ( \range( 0, 1 ) as $e ) {
 				foreach ( [ 0, 1 ] as $worker ) {
 					$rows[] = [ 'bucket' => Bucket::id( self::NOW ) - 2, 'server' => 'kea.example', 'worker' => $worker, 'category' => "hook:huia_{$c}", 'entry' => 0 === $e ? '' : "entry-{$e}", 'ms' => 2.5 * $c + $e, 'calls' => 3, 'requests' => 2 ];
 				}
@@ -2809,7 +2830,7 @@ final class StatsBuilderTest extends TestCase {
 		$this->window_world();
 		$groups  = $this->seed_groups_past_one_rebuild_batch();
 		$through = Bucket::id( self::NOW ) - Bucket::window();
-		$this->assertGreaterThan( self::builder_const( 'REBUILD_OPS' ), $groups );
+		$this->assertGreaterThan( self::CHUNKS['rebuild_ops'], $groups );
 
 		$this->window_builder()->flush();
 
@@ -2829,12 +2850,12 @@ final class StatsBuilderTest extends TestCase {
 		$this->seed_groups_past_one_rebuild_batch();
 		$through = Bucket::id( self::NOW ) - Bucket::window();
 		$pdo     = new \PDO( 'sqlite:' . $this->facts_file( 0 ) );
-		$pdo->exec( "CREATE TRIGGER last_category BEFORE INSERT ON category_window WHEN NEW.requests > 0 AND NEW.category_id = ( SELECT id FROM categories WHERE name = 'hook:huia_81' ) BEGIN SELECT RAISE( ABORT, 'second category batch refused' ); END" );
+		$pdo->exec( "CREATE TRIGGER last_category BEFORE INSERT ON category_window WHEN NEW.requests > 0 AND NEW.category_id = ( SELECT id FROM categories WHERE name = 'hook:huia_3' ) BEGIN SELECT RAISE( ABORT, 'second category batch refused' ); END" );
 		$sb = $this->window_builder();
 
 		try {
 			$sb->flush();
-			$this->fail( 'the category batch holding hook:huia_81 was written' );
+			$this->fail( 'the category batch holding hook:huia_3 was written' );
 		} catch ( Worker_Should_Stop $e ) {
 			$why = '';
 			for ( $at = $e; null !== $at; $at = $at->getPrevious() ) {
