@@ -26,7 +26,7 @@
 
 import { __ } from '@wordpress/i18n';
 import { createRoot, lazy, Suspense } from '@wordpress/element';
-import DashboardShell from '../components/DashboardShell';
+import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
 import './nodes/perf-errors-view-node';
 import './styles/base.scss';

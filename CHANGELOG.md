@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The dashboards' page chrome comes from the substrate.** `DashboardShell` and `ThemedRoot` move to `@newspack-nodes/shared/components/`, and the four dashboards and `UrlTable` import them from there; the local copies are deleted. The Performance modal's frame layout moves from `ThemedRoot.scss` into `overview/styles/modal.scss`. Requires newspack-nodes 2.130.0 at build time.
+
 ## [0.157.2] - 2026-10-25
 
 ### Fixed

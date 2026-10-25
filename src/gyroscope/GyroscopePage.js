@@ -13,7 +13,7 @@
 
 import { __ } from '@wordpress/i18n';
 import Inflight from './Inflight';
-import DashboardShell from '../components/DashboardShell';
+import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 
 /**
  * Gyroscope page: a fixed viewport for the live in-flight request table.

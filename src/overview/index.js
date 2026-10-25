@@ -22,7 +22,7 @@ import {
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { Notice } from '@wordpress/components';
-import DashboardShell from '../components/DashboardShell';
+import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
 import './nodes/register';
 

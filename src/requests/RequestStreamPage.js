@@ -9,7 +9,7 @@
 
 import { __ } from '@wordpress/i18n';
 import RequestStream from './RequestStream';
-import DashboardShell from '../components/DashboardShell';
+import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 
 /**
  * Request Log page: a fixed viewport for the live completed-request stream.
