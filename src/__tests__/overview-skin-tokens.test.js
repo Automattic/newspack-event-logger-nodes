@@ -34,8 +34,18 @@ describe( 'dashboard skin tokens', () => {
 		).toBe( false );
 	} );
 
+	it( 'carries no local copy of the shared page chrome', () => {
+		for ( const file of [
+			'components/DashboardShell.js',
+			'components/ThemedRoot.js',
+			'components/ThemedRoot.scss',
+		] ) {
+			expect( fs.existsSync( path.join( SRC, file ) ) ).toBe( false );
+		}
+	} );
+
 	it( 'keeps reskin rules off the bare theme class', () => {
-		expect( read( 'components/ThemedRoot.scss' ) ).not.toMatch(
+		expect( read( 'overview/styles/modal.scss' ) ).not.toMatch(
 			/^\s*\.newspack-nodes-theme\s*\{/m
 		);
 	} );

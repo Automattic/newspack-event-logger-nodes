@@ -43,7 +43,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { SearchControl, Spinner } from '@wordpress/components';
 import { useNodeField } from '@newspack-nodes/runtime';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
-import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
+import { PAGE_CONTENT_CLASS } from '@newspack-nodes/shared/components/DashboardShell';
 import SortHeaderButton from './components/SortHeaderButton';
 import BucketField from './components/BucketField';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
