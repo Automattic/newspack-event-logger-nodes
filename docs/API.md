@@ -183,7 +183,7 @@ bucket holds no rows rather than raising. A `min_lifetime` below 300 seconds is 
 every stats verb throws, naming the key.
 
 `overview`, `urls` and `query` answer from the URL snapshot the overview-prefetch job
-publishes once an interval of its tick, 120 s by default
+publishes once an interval of its tick, 300 s by default
 ([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-four-intervals)),
 which serves for four intervals from the end of its build. `urls` with no `--search`, no `--bucket` and no
 `--filter` answers off it for any sort, order, `--server`, `--page`,

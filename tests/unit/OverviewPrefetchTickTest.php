@@ -149,15 +149,15 @@ final class OverviewPrefetchTickTest extends TestCase {
 		$this->assertSame( [], $this->firehose_jobs() );
 	}
 
-	public function test_a_line_naming_no_interval_queues_every_two_minutes(): void {
+	public function test_a_line_naming_no_interval_queues_every_five_minutes(): void {
 		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 		$tick->arguments( [] );
 
-		// The two-minute interval BUILT_AT falls in ends at 1_790_008_080.
-		$this->ring( $tick, 1_790_008_079.0 );
+		// The five-minute interval BUILT_AT falls in ends at 1_790_008_200.
+		$this->ring( $tick, 1_790_008_199.0 );
 		$this->assertSame( [], $this->fed() );
-		$this->ring( $tick, 1_790_008_080.0 );
-		$this->assertSame( [ 'queued_at' => 1_790_008_080, 'interval' => 120 ], $this->fed()[0][1]['parameters'] ?? null );
+		$this->ring( $tick, 1_790_008_200.0 );
+		$this->assertSame( [ 'queued_at' => 1_790_008_200, 'interval' => 300 ], $this->fed()[0][1]['parameters'] ?? null );
 	}
 
 	/**
