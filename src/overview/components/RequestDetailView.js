@@ -21,8 +21,8 @@ import { useMemo, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
 import RequestSummary from '../../components/RequestSummary';
-import RequestProfile, { profileOrder } from '../RequestProfile';
-import OwnerTable from '../OwnerTable';
+import { profileOrder } from '../RequestProfile';
+import { ProfileWithOwners } from '../OwnerTable';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
 import FindingList from './FindingList';
@@ -142,18 +142,18 @@ export default function RequestDetailView( {
 
 			{ ! hasFlame && requestDetail.flame_cut && <FlameCutNote /> }
 
-			{ /* Profile Breakdown */ }
-			{ hasProfiles && (
-				<div>
-					<RequestProfile
-						profiles={ requestDetail.profiles }
-						totalMs={ requestDetail.duration_ms || 0 }
-					/>
-				</div>
+			{ ( hasProfiles || requestDetail.owners?.length > 0 ) && (
+				<ProfileWithOwners
+					profile={
+						hasProfiles
+							? { categories: requestDetail.profiles }
+							: null
+					}
+					totalMs={ requestDetail.duration_ms || 0 }
+					owners={ requestDetail.owners }
+					perRequest={ false }
+				/>
 			) }
-
-			{ /* Time By Owner */ }
-			<OwnerTable owners={ requestDetail.owners } />
 
 			{ /* Log Entries Table, or what a folded request kept instead */ }
 			{ hasEntries && (

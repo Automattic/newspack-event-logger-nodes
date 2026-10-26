@@ -473,6 +473,45 @@ describe( 'RequestDetailView', () => {
 		unmount();
 	} );
 
+	it( "closes the breakdown and the owner table as one section, on the categories' total", async () => {
+		const { container, unmount } = await renderAsync(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					profiles: {
+						'kea-7301 hook': { count: 2, time: 40 },
+						'emu-41 hook': { count: 1, time: 23 },
+					},
+					owners: [
+						{ owner: 'kea-7301', ms: 17, share: 0.3, calls: 2 },
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		const stack = container.querySelector( '.event-logger-sections' );
+		const sections = [ ...stack.children ].filter(
+			( child ) =>
+				child.textContent.includes( 'REQUEST_PROFILE' ) ||
+				child.textContent.includes( 'Time By Owner' )
+		);
+		expect( sections ).toHaveLength( 1 );
+		const text = sections[ 0 ].textContent;
+		expect( text.indexOf( 'REQUEST_PROFILE' ) ).toBeLessThan(
+			text.indexOf( 'Time By Owner' )
+		);
+		const totals = container.querySelectorAll(
+			'.newspack-nodes-table__summary'
+		);
+		expect( totals ).toHaveLength( 1 );
+		expect( totals[ 0 ].textContent ).toMatch(
+			/^Total Profiled63(\.0)?ms/
+		);
+		unmount();
+	} );
+
 	it( 'mounts the owner table from the request owners', async () => {
 		const { container, unmount } = await renderAsync(
 			React.createElement( RequestDetailView, {

@@ -14,6 +14,7 @@ import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import RequestProfile, {
 	averageCaption,
 	ProfileWithCaption,
+	profiledTotal,
 	ShareBar,
 	ShowMoreRow,
 	useShowMore,
@@ -203,15 +204,16 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 }
 
 /**
- * An averaged Time Breakdown and the Time By Owner table straight below it,
- * as one section. With owners listed, their table closes for both, carrying
- * the breakdown's Total Profiled figures and its caption; without, the
- * breakdown keeps them.
+ * A Time Breakdown and the Time By Owner table straight below it, as one
+ * section, for one request or an average. With owners listed, their table
+ * closes for both, carrying the breakdown's Total Profiled figures, and an
+ * average's caption; without, the breakdown keeps them.
  *
  * @param {Object}  props              Component props.
- * @param {?Object} props.profile      The averaged profile: `{ categories, count, total_time }`.
- * @param {?number} props.totalMs      Average wall-clock duration, every share's denominator.
- * @param {?Array}  props.owners       Owner rows, per request, as `OwnerTable` takes them.
+ * @param {?Object} props.profile      `{ categories }` for one request; an average adds `count` and `total_time`.
+ * @param {?number} props.totalMs      Wall-clock duration, an average's per request, every share's denominator.
+ * @param {?Array}  props.owners       Owner rows as `OwnerTable` takes them.
+ * @param {boolean} [props.perRequest] False for one request, whose total is its categories summed.
  * @param {string}  [props.heading]    Already-translated breakdown heading; omitted reads "Time Breakdown".
  * @param {string}  [props.serverName] Server the averages are scoped to; '' is site-wide.
  * @return {import('react').ReactElement} The section.
@@ -220,48 +222,62 @@ export function ProfileWithOwners( {
 	profile,
 	totalMs,
 	owners,
+	perRequest = true,
 	heading,
 	serverName = '',
 } ) {
-	const profiled = profile?.count > 0 ? profile : null;
+	const profiled = ( perRequest ? profile?.count > 0 : profile )
+		? profile
+		: null;
 	const owned = null !== profiled && owners?.length > 0;
+	let total = null;
+	if ( null !== profiled ) {
+		total = perRequest
+			? profiled.total_time
+			: profiledTotal( profiled.categories );
+	}
 	const share =
-		owned && null !== profiled.total_time && totalMs > 0
-			? profiled.total_time / totalMs
-			: null;
+		owned && null !== total && totalMs > 0 ? total / totalMs : null;
+	let breakdown = null;
+	if ( profiled && ( owned || ! perRequest ) ) {
+		breakdown = (
+			<RequestProfile
+				profiles={ profiled.categories }
+				totalMs={ totalMs }
+				totalProfiledTime={ total }
+				title={ heading }
+				totaled={ ! owned }
+			/>
+		);
+	} else if ( profiled ) {
+		breakdown = (
+			<ProfileWithCaption
+				profiles={ profiled.categories }
+				totalMs={ totalMs }
+				totalProfiledTime={ total }
+				count={ profiled.count }
+				heading={ heading }
+				serverName={ serverName }
+			/>
+		);
+	}
 	return (
 		<div>
-			{ profiled &&
-				( owned ? (
-					<RequestProfile
-						profiles={ profiled.categories }
-						totalMs={ totalMs }
-						totalProfiledTime={ profiled.total_time }
-						title={ heading }
-						totaled={ false }
-					/>
-				) : (
-					<ProfileWithCaption
-						profiles={ profiled.categories }
-						totalMs={ totalMs }
-						totalProfiledTime={ profiled.total_time }
-						count={ profiled.count }
-						heading={ heading }
-						serverName={ serverName }
-					/>
-				) ) }
+			{ breakdown }
 			<OwnerTable
 				owners={ owners }
-				perRequest
+				perRequest={ perRequest }
 				summary={
 					owned
 						? {
-								ms: profiled.total_time,
+								ms: total,
 								share,
-								caption: averageCaption(
-									profiled.count,
-									serverName
-								),
+								caption: perRequest
+									? averageCaption(
+											profiled.count,
+											serverName
+									  )
+									: undefined,
 						  }
 						: undefined
 				}
