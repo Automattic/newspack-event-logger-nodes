@@ -2,7 +2,7 @@
 #
 #   Consumer (flames.log) ─→ StatsBuilder ─→ Row_Table (flame-facts, Flame_Facts, by message via set_facts_target)
 #                                └─ reads each flame's record from requests.log at its request_at (set_requests_partition)
-#   Overview_Prefetch_Tick (Router tick) ─→ firehose job entry + jobfeed.p0, every two minutes
+#   Overview_Prefetch_Tick (Router tick) ─→ firehose job entry + jobfeed.p0, every five minutes
 #   topic-probe reports the Consumer's lag; table-probe sweeps the Row_Table
 #   into the station's Tables tab
 

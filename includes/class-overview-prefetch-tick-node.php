@@ -25,7 +25,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Overview_Prefetch_Tick_Node extends Timer_Node {
 	/** Seconds between jobs when the line names none. */
-	public const INTERVAL_S = 120;
+	public const INTERVAL_S = 300;
 
 	/** Seconds between jobs. */
 	protected int $interval_s = self::INTERVAL_S;

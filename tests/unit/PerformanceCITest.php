@@ -298,7 +298,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'with none, the 25 buckets the timings keep', $verbs['dump_url']['description'] );
 		$this->assertStringContainsString( 'aged past the 25 buckets the rows keep', $verbs['dump_request']['description'] );
 		$this->assertStringContainsString( 'at least `min_lifetime` unless `max_segments` prunes it sooner', $verbs['dump_request']['description'] );
-		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300)\b|24 hours|24-hour|25 hours|25-hour|seven days/', (string) \wp_json_encode( $verbs ) );
+		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300(?! s each by default))\b|24 hours|24-hour|25 hours|25-hour|seven days/', (string) \wp_json_encode( $verbs ) );
 	}
 
 	public function test_overview_verb_rejects_unauthorized(): void {
@@ -2070,7 +2070,7 @@ class PerformanceCITest extends TestCase {
 
 	/** The three verbs a snapshot answers name its shipped life. */
 	public function test_the_snapshot_verbs_name_its_life(): void {
-		$life = 'serves 4 of its tick\'s intervals, 120 s each by default';
+		$life = 'serves 4 of its tick\'s intervals, 300 s each by default';
 		foreach ( [ 'overview', 'urls', 'query' ] as $verb ) {
 			$this->assertStringContainsString( $life, self::verbs_by_name()[ $verb ]['description'], $verb );
 		}
