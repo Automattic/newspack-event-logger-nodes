@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.158.0] - 2026-10-25
+
 ### Added
 - **A Table's purge and WAL checkpoint are spans in the worker's record.** `Diagnostics_Bridge::install()` assigns the substrate's `Core::$around_span`, wrapping any wrapper already there, so each `table purge` and `table checkpoint` writes a `(start)` and a `(complete)` whose `m` names the Table and what it deleted or wrote back, whenever a record is started. With none started the work runs bare.
 
