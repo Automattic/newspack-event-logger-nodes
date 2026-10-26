@@ -718,6 +718,7 @@ abstract class TestCase extends RuntimeTestCase {
 			'actions'    => $GLOBALS['_wp_actions'],
 			'filters'    => $GLOBALS['_wp_test_filters'] ?? [],
 			'around'     => \Newspack_Nodes\Command_Interpreter_Node::$around_dispatch,
+			'span'       => \Newspack_Nodes\Core::$around_span,
 			'resolvers'  => \Newspack_Nodes\Core::$config_resolvers,
 			'formatters' => $formatters->getValue(),
 		];
@@ -728,6 +729,7 @@ abstract class TestCase extends RuntimeTestCase {
 			$GLOBALS['_wp_actions']                                    = $saved['actions'];
 			$GLOBALS['_wp_test_filters']                               = $saved['filters'];
 			\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = $saved['around'];
+			\Newspack_Nodes\Core::$around_span                         = $saved['span'];
 			\Newspack_Nodes\Core::$config_resolvers                    = $saved['resolvers'];
 			$formatters->setValue( null, $saved['formatters'] );
 		}

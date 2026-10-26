@@ -82,13 +82,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant below the 2.129.0 floor. check-substrate-floor.sh holds
+	// @longform Dormant below the 2.131.0 floor. check-substrate-floor.sh holds
 	// it to the substrate PHP this plugin calls; a floor that a topology, a
 	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
 	// why each raise was made. A floor set too low wires the plugin up against
 	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.129.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.131.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -133,8 +133,11 @@ function newspack_event_logger_nodes_boot(): void {
 	// A spawn request learns which worker it became after it began logging.
 	\add_action( 'newspack_nodes/worker_identified', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'identify_worker' ], 10, 2 );
 
-	// Every dispatched verb opens its own span in the request's record.
+	// Every verb and substrate span opens its own span in the record.
 	\Newspack_Event_Logger_Nodes\Diagnostics_Bridge::install();
+
+	// Each substrate stderr line, filed under the keyword the seam names.
+	\add_action( 'newspack_nodes/stderr', [ \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::class, 'on_stderr' ], 10, 2 );
 
 	// Prefix resolves node classes; the dir supplies stock topologies.
 	\Newspack_Nodes\Topology_Registry::register_plugin(
@@ -280,11 +283,6 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 		}
 	);
 } )();
-
-// @longform Bridge substrate stderr diagnostics into the Error Log. File-scope
-// like the hooks above: the action never fires without the substrate, so no
-// presence guard is needed. See Diagnostics_Bridge.
-\add_action( 'newspack_nodes/stderr', [ \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::class, 'on_stderr' ] );
 
 /**
  * Mount the three application service CIs onto the request-scope command
