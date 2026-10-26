@@ -173,6 +173,18 @@ export const profileOrder = ( profiles ) => {
 };
 
 /**
+ * One request's Total Profiled: its category times summed, the overlays left
+ * out, since their time already sits inside the spans they ran in.
+ *
+ * @param {?Object} profiles Category name to `{ time, count, entries }`.
+ * @return {number} Milliseconds.
+ */
+export const profiledTotal = ( profiles ) =>
+	sortProfiles( profiles )
+		.filter( ( p ) => ! isOverlayCategory( p.state ) )
+		.reduce( ( sum, p ) => sum + p.time, 0 );
+
+/**
  * A row of segments, each as wide as its share, coloured by its caller.
  *
  * A segment that takes `onSelect` is a button, reached by click, Enter or
@@ -315,15 +327,13 @@ export default function RequestProfile( {
 	);
 
 	// Use the pre-calculated total (aggregated) or sum it (single request).
-	const profiledTime = useMemo( () => {
-		if ( totalProfiledTime !== undefined ) {
-			return totalProfiledTime;
-		}
-		// Single request: sum category times, skip the overlays.
-		return sortedProfiles
-			.filter( ( p ) => ! isOverlayCategory( p.state ) )
-			.reduce( ( sum, p ) => sum + p.time, 0 );
-	}, [ sortedProfiles, totalProfiledTime ] );
+	const profiledTime = useMemo(
+		() =>
+			totalProfiledTime !== undefined
+				? totalProfiledTime
+				: profiledTotal( profiles ),
+		[ profiles, totalProfiledTime ]
+	);
 
 	const { sorted, dirOf, onSort } = useColumnSort( 'time' );
 

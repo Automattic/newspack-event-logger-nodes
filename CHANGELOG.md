@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A request's Time Breakdown and Time By Owner are one section, closed by one Total Profiled**, as the Overview and the URL detail lay them out. Each table carried its own Total Profiled, and the owner table's summed its owners. `ProfileWithOwners` takes one request as well as an average, and the request detail renders it: the owner table closes for both on the breakdown's total, its categories summed without the overlays.
+
 ## [0.158.1] - 2026-10-26
 
 ### Changed
