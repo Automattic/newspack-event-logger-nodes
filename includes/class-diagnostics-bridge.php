@@ -2,17 +2,21 @@
 /**
  * Diagnostics Bridge
  *
- * Carries two substrate seams into the event-logger: the verb span through
+ * Carries three substrate seams into the event-logger: the verb span through
  * `Command_Interpreter_Node::$around_dispatch` (see the architecture guide),
- * and the `newspack_nodes/stderr` seam. Every line the substrate emits
- * through `Core::_stderr()` — `stderr()`, `print_less_often()` and raw
- * callers such as `Shell_Node` alike — is logged to the ACTIVE request (or
- * job context) as a `stderr` entry. That puts it in the request's detail,
- * and — because `Request_Builder_Node` routes the `stderr` keyword to its
- * errors target — in the Error Log. With no started request logger the line
- * is dropped; the substrate's default handler already error_log()s it. Fleet
- * alerts do not pass through here: the substrate journals them itself into
- * `alerts.p0`.
+ * the span `Core::span()` opens through `Core::$around_span`, such as a
+ * Table's purge or WAL checkpoint, and the `newspack_nodes/stderr` seam.
+ * Every line the substrate emits through `Core::_stderr()` — `stderr()`,
+ * `print_less_often()`, `stderr_to_seam()` and raw callers such as
+ * `Shell_Node` alike — is logged to the ACTIVE request (or job context)
+ * under the keyword the seam names. A `stderr` line lands in the request's
+ * detail and — because `Request_Builder_Node` routes the `stderr` keyword to
+ * its errors target — in the Error Log; a `Core::stderr()` line also reaches
+ * the substrate's handler, which error_log()s it. A `stderr_to_seam()` line,
+ * such as a worker's routine stop under `worker (stop)`, reaches this seam
+ * alone and the request's detail alone. With no started request logger the
+ * line is dropped. Fleet alerts do not pass through here: the substrate
+ * journals them itself into `alerts.p0`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,24 +24,46 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Command_Interpreter_Node;
+use Newspack_Nodes\Core;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 /**
- * The verb wrapper and the `newspack_nodes/stderr` listener. The deferred
- * bootstrap in `newspack-event-logger-nodes.php` calls `install()`; the
- * listener is registered at that file's scope. Stateless.
+ * The verb and span wrappers and the `newspack_nodes/stderr` listener. The
+ * deferred bootstrap in `newspack-event-logger-nodes.php` calls `install()`
+ * and registers the listener beside it. Stateless.
  */
 class Diagnostics_Bridge {
 
 	/**
-	 * Wrap whatever `Command_Interpreter_Node::$around_dispatch` holds in the
-	 * verb span, so a wrapper another plugin assigned first runs inside it.
+	 * Wrap whatever `Command_Interpreter_Node::$around_dispatch` and
+	 * `Core::$around_span` hold in this plugin's spans, so a wrapper another
+	 * plugin assigned first runs inside each.
 	 */
 	public static function install(): void {
 		Command_Interpreter_Node::$around_dispatch = self::around_dispatch( Command_Interpreter_Node::$around_dispatch );
+		Core::$around_span                         = self::around_span( Core::$around_span );
+	}
+
+	/**
+	 * A wrapper that runs each substrate span — through `$inner` when one was
+	 * there — as a span on the active request, its `(complete)` `m` the
+	 * detail `$describe` reads off the result, and bare when no logger has
+	 * started, describing nothing.
+	 *
+	 * @param \Closure|null $inner The wrapper this one encloses; null runs the work.
+	 * @return \Closure(string, \Closure(): mixed, \Closure(mixed): string): mixed The `$around_span` value.
+	 */
+	public static function around_span( ?\Closure $inner ): \Closure {
+		return static function ( string $label, \Closure $work, \Closure $describe ) use ( $inner ): mixed {
+			if ( null !== $inner ) {
+				$work = static fn (): mixed => $inner( $label, $work, $describe );
+			}
+			$lm = Log_Manager::started_instance();
+			return null === $lm ? $work() : $lm->timed( $label, $work, $describe );
+		};
 	}
 
 	/**
@@ -73,8 +99,8 @@ class Diagnostics_Bridge {
 	}
 
 	/**
-	 * Log one substrate stderr line to the active request; drop it when no
-	 * logger has started.
+	 * Log one substrate stderr line to the active request under the keyword
+	 * the seam names; drop it when no logger has started.
 	 *
 	 * Two substrate guards make the bare one-liner safe. The seam wraps every
 	 * listener in its own try/catch, so a throw here cannot break the
@@ -83,12 +109,14 @@ class Diagnostics_Bridge {
 	 * `print_less_often()` a failed `Partition_Node` write emits below
 	 * `message()` cannot recurse back into this listener.
 	 *
-	 * @param string $line The stderr line. `Core::stderr()` prefixes it with
-	 *                     the process-identity midfix (host, argv0, pid,
-	 *                     uptime); the timestamp prefix is stamped downstream,
-	 *                     and a raw caller supplies neither.
+	 * @param string $line    The stderr line. `Core::stderr()` prefixes it with
+	 *                        the process-identity midfix (host, argv0, pid,
+	 *                        uptime); the timestamp prefix is stamped downstream,
+	 *                        and a raw caller supplies neither.
+	 * @param string $keyword The category it is written under: `stderr`, or a
+	 *                        routine line's own, such as `worker (stop)`.
 	 */
-	public static function on_stderr( string $line ): void {
-		Log_Manager::started_instance()?->message( 'stderr', [ 'm' => $line ] );
+	public static function on_stderr( string $line, string $keyword ): void {
+		Log_Manager::started_instance()?->message( $keyword, [ 'm' => $line ] );
 	}
 }

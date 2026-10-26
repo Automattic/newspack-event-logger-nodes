@@ -15,6 +15,7 @@ use Newspack_Event_Logger_Nodes\Diagnostics_Bridge;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
+use Newspack_Nodes\Core;
 
 #[CoversClass( Diagnostics_Bridge::class )]
 class DiagnosticsBridgeTest extends TestCase {
@@ -61,7 +62,7 @@ class DiagnosticsBridgeTest extends TestCase {
 
 	public function test_stderr_logs_to_the_started_log_manager(): void {
 		$lm = $this->started_log_manager();
-		Diagnostics_Bridge::on_stderr( 'worker spinner detected 7731' );
+		Diagnostics_Bridge::on_stderr( 'worker spinner detected 7731', 'stderr' );
 		$lm->finish();
 
 		$stderr = self::entries_of( self::firehose_entries( self::test_dir() ), 'stderr' );
@@ -69,9 +70,19 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertSame( 'worker spinner detected 7731', $stderr[0]['m'] );
 	}
 
+	public function test_a_line_is_written_under_the_keyword_the_seam_names(): void {
+		$lm = $this->started_log_manager();
+		Diagnostics_Bridge::on_stderr( 'kea-workers.p3: stopping — timeout (age 7733s)', 'worker (stop)' );
+		$lm->finish();
+
+		$entries = self::firehose_entries( self::test_dir() );
+		$this->assertSame( [ 'kea-workers.p3: stopping — timeout (age 7733s)' ], \array_column( self::entries_of( $entries, 'worker (stop)' ), 'm' ) );
+		$this->assertSame( [], self::entries_of( $entries, 'stderr' ), 'a routine stop is not a stderr line' );
+	}
+
 	public function test_stderr_is_dropped_when_no_started_log_manager(): void {
 		Log_Manager::reset();
-		Diagnostics_Bridge::on_stderr( 'orphan diagnostic 7732' );
+		Diagnostics_Bridge::on_stderr( 'orphan diagnostic 7732', 'stderr' );
 		$this->assertNull( Log_Manager::started_instance() );
 		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/firehose.p0' );
 		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/errors.p0' );
@@ -403,10 +414,32 @@ class DiagnosticsBridgeTest extends TestCase {
 
 	// ── bootstrap wiring ──────────────────────────────────────────────────────
 
-	public function test_the_plugin_file_bridges_stderr_and_no_alert_action(): void {
+	public function test_the_deferred_bootstrap_bridges_stderr_and_the_plugin_file_does_not(): void {
+		$this->assertArrayNotHasKey( 'newspack_nodes/stderr', $GLOBALS['_eln_boot_actions'] ?? [], 'below the floor the plugin listens to nothing' );
+		$booted = [];
+		self::with_deferred_bootstrap(
+			static function () use ( &$booted ): void {
+				$booted = $GLOBALS['_wp_actions']['newspack_nodes/stderr'] ?? [];
+			}
+		);
+		$this->assertContains( [ Diagnostics_Bridge::class, 'on_stderr' ], $booted );
+	}
+
+	/** The listener takes the keyword, so it must be registered to accept two arguments. */
+	public function test_the_bootstrapped_listener_receives_the_line_and_its_keyword(): void {
+		$lm = $this->started_log_manager();
+		self::with_deferred_bootstrap(
+			static function (): void {
+				\do_action( 'newspack_nodes/stderr', 'kea-workers.p5: stopping — stop requested (age 7744s)', 'worker (stop)' );
+			}
+		);
+		$lm->finish();
+
+		$this->assertSame( [ 'kea-workers.p5: stopping — stop requested (age 7744s)' ], \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'worker (stop)' ), 'm' ) );
+	}
+
+	public function test_the_plugin_file_registers_no_alert_action(): void {
 		$boot = $GLOBALS['_eln_boot_actions'] ?? [];
-		$this->assertArrayHasKey( 'newspack_nodes/stderr', $boot );
-		$this->assertContains( [ Diagnostics_Bridge::class, 'on_stderr' ], $boot['newspack_nodes/stderr'] );
 		$this->assertArrayNotHasKey(
 			'newspack_nodes/alert',
 			$boot,
@@ -449,5 +482,174 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertIsInt( $sentinel, 'the wrapper before the bootstrap still ran' );
 		$this->assertGreaterThan( $start, $sentinel, 'inside the span' );
 		$this->assertLessThan( $complete, $sentinel, 'inside the span' );
+	}
+
+	// ── substrate spans ───────────────────────────────────────────────────────
+
+	/** Run `$body` with only this plugin's span wrapper over `$inner`. */
+	private static function with_span_seam( ?\Closure $inner, \Closure $body ): void {
+		$saved = Core::$around_span;
+		try {
+			Core::$around_span = $inner;
+			Diagnostics_Bridge::install();
+			$body();
+		} finally {
+			Core::$around_span = $saved;
+		}
+	}
+
+	public function test_a_table_purge_in_a_started_record_is_a_span_carrying_its_detail(): void {
+		$lm = $this->started_log_manager();
+		self::with_span_seam(
+			null,
+			static function (): void {
+				\Newspack_Nodes\Table_Node::table( 'kea-span-7741', 600, 'sqlite' )->purge( 53 );
+			}
+		);
+		$lm->finish();
+
+		$entries = self::firehose_entries( self::test_dir() );
+		$this->assertCount( 1, self::entries_of( $entries, 'table purge (start)' ) );
+		$complete = self::entries_of( $entries, 'table purge (complete)' );
+		$this->assertCount( 1, $complete );
+		$this->assertMatchesRegularExpression( '/: 0 rows in 1 batches$/', (string) $complete[0]['m'] );
+	}
+
+	public function test_a_substrate_span_with_no_started_record_runs_bare_and_writes_nothing(): void {
+		Log_Manager::reset();
+		$described = 0;
+		$result    = null;
+		self::with_span_seam(
+			null,
+			static function () use ( &$result, &$described ): void {
+				$result = Core::span(
+					'kea span',
+					static fn (): string => 'kea-7742',
+					static function () use ( &$described ): string {
+						++$described;
+						return 'kea detail';
+					}
+				);
+			}
+		);
+		$this->assertSame( 'kea-7742', $result );
+		$this->assertSame( 0, $described );
+		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/firehose.p0' );
+	}
+
+	public function test_a_span_wrapper_installed_first_runs_inside_this_one(): void {
+		$lm    = $this->started_log_manager();
+		$order = [];
+		self::with_span_seam(
+			static function ( string $label, \Closure $work, \Closure $describe ) use ( &$order ): mixed {
+				$order[] = "inner {$label}";
+				return $work();
+			},
+			static function () use ( &$order ): void {
+				Core::span( 'heron span', static fn (): int => 7743, static fn ( int $n ): string => "heron {$n}" );
+			}
+		);
+		$lm->finish();
+
+		$this->assertSame( [ 'inner heron span' ], $order );
+		$this->assertSame( [ 'heron 7743' ], \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'heron span (complete)' ), 'm' ) );
+	}
+	/**
+	 * The two ways work inside a span ends early, and how its `(complete)`
+	 * line names each.
+	 *
+	 * @return array<string,array{0:\RuntimeException,1:string}>
+	 */
+	public static function throws(): array {
+		return [
+			'a stop'    => [ new \Newspack_Nodes\Worker_Should_Stop( 'stop 7751' ), 'stop' ],
+			'a failure' => [ new \RuntimeException( 'failure 7752' ), 'RuntimeException: failure 7752' ],
+		];
+	}
+
+	/** A span whose work throws closes on a `(complete)` naming the throw, and lets it through. */
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'throws' )]
+	public function test_a_span_whose_work_throws_names_it_and_lets_it_through( \RuntimeException $thrown, string $named ): void {
+		$lm     = $this->started_log_manager();
+		$caught = null;
+		self::with_span_seam(
+			static function () use ( $thrown ): never {
+				throw $thrown;
+			},
+			static function () use ( &$caught ): void {
+				try {
+					\Newspack_Nodes\Table_Node::table( 'kea-span-7753', 600, 'sqlite' )->purge( 59 );
+				} catch ( \RuntimeException $e ) {
+					$caught = $e;
+				}
+			}
+		);
+		$lm->finish();
+
+		$this->assertSame( $thrown, $caught );
+		$this->assertSame( [ $named ], \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'table purge (complete)' ), 'm' ) );
+	}
+
+	/**
+	 * A stop can fire at the span's own `(start)` write, through the
+	 * Partition's `pump()`, before the purge has run: the purge stays unrun
+	 * and counted as nothing deleted, and the tick raises the stop after
+	 * every other Table's step.
+	 */
+	public function test_a_stop_raised_by_the_purge_spans_start_write_leaves_the_purge_unrun(): void {
+		$lm          = $this->started_log_manager();
+		$clock       = Core::$clock;
+		Core::$clock = static fn (): float => 1790000000.0;
+		Core::$now   = 1790000000.0;
+		$table       = self::graph_table( 'kea-graph-7754' );
+		for ( $i = 0; $i < 41; ++$i ) {
+			$table->store( "kea-{$i}", 'kea-7754' );
+		}
+		$framework = \Newspack_Nodes\Event_Framework::instance();
+		$predicate = new \ReflectionProperty( \Newspack_Nodes\Event_Framework::class, 'continue_predicate' );
+		$last_pump = new \ReflectionProperty( \Newspack_Nodes\Event_Framework::class, 'last_pump' );
+		$caught    = null;
+		try {
+			self::with_span_seam(
+				null,
+				static function () use ( $framework, $predicate, $last_pump, &$caught ): void {
+					$predicate->setValue( $framework, static fn (): bool => false );
+					$last_pump->setValue( $framework, 0.0 );
+					try {
+						\Newspack_Nodes\Table_Node::tick( 1790000800 );
+					} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
+						$caught = $e;
+					} finally {
+						$predicate->setValue( $framework, null );
+					}
+				}
+			);
+			$purge = $table->stats()['PURGE'];
+			$this->assertInstanceOf( \Newspack_Nodes\Worker_Should_Stop::class, $caught, 'the stop reaches the tick\'s caller' );
+			$this->assertSame( 1, $purge['calls'] );
+			$this->assertSame( 0, $purge['asked'], 'no batch ran' );
+			$this->assertSame( 0, $purge['answered'] );
+			$this->assertSame( 1, $table->stats()['CHECKPOINT']['calls'], 'the tick still ran the next step' );
+			Core::$clock = static fn (): float => 1790000800.0;
+			$this->assertSame( 41, $table->purge( 101 ), 'every expired row was still there' );
+		} finally {
+			Core::$clock = $clock;
+			$table->remove_node();
+			$lm->finish();
+		}
+	}
+
+	/** A Table a worker's graph builds, on partition 3. */
+	private static function graph_table( string $name ): \Newspack_Nodes\Table_Node {
+		Core::$var['partition'] = '3';
+		try {
+			$table = new \Newspack_Nodes\Table_Node();
+			$table->name( $name );
+			$table->arguments( [ "{$name}:p3", '777', 'sqlite' ] );
+		} finally {
+			unset( Core::$var['partition'] );
+		}
+		$table->sink( new \Newspack_Nodes\Tests\Capture_Sink_Node() );
+		return $table;
 	}
 }

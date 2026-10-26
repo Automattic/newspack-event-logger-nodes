@@ -82,23 +82,39 @@ if ( ! function_exists( 'is_multisite' ) ) {
 if ( ! function_exists( 'do_action' ) ) {
 	$GLOBALS['_wp_actions']      = [];
 	$GLOBALS['_wp_test_filters'] = [];
+	$GLOBALS['_wp_accepted_args'] = [];
+	/**
+	 * The arguments `$cb` takes as WordPress hands them: as many as its
+	 * `add_action()` or `add_filter()` declared, every one for a callback a
+	 * test put in `_wp_actions` by hand.
+	 */
+	function _eln_test_hook_args( string $hook, mixed $cb, array $args ): array {
+		foreach ( $GLOBALS['_wp_accepted_args'][ $hook ] ?? [] as [ $registered, $accepted ] ) {
+			if ( $registered === $cb ) {
+				return \array_slice( $args, 0, $accepted );
+			}
+		}
+		return $args;
+	}
 	function do_action( string $hook, ...$args ): void {
 		foreach ( $GLOBALS['_wp_actions'][ $hook ] ?? [] as $cb ) {
-			$cb( ...$args );
+			$cb( ..._eln_test_hook_args( $hook, $cb, $args ) );
 		}
 	}
 	function add_action( string $hook, callable $cb, int $priority = 10, int $accepted_args = 1 ): void {
-		$GLOBALS['_wp_actions'][ $hook ][] = $cb;
+		$GLOBALS['_wp_actions'][ $hook ][]       = $cb;
+		$GLOBALS['_wp_accepted_args'][ $hook ][] = [ $cb, $accepted_args ];
 	}
 	function apply_filters( string $hook, mixed $value, ...$args ): mixed {
 		foreach ( $GLOBALS['_wp_actions'][ $hook ] ?? [] as $cb ) {
-			$value = $cb( $value, ...$args );
+			$value = $cb( ..._eln_test_hook_args( $hook, $cb, [ $value, ...$args ] ) );
 		}
 		return $value;
 	}
 	function add_filter( string $hook, callable $cb, int $priority = 10, int $accepted_args = 1 ): void {
-		$GLOBALS['_wp_actions'][ $hook ][]                      = $cb;
-		$GLOBALS['_wp_test_filters'][ $hook ][ $priority ][]    = $cb;
+		$GLOBALS['_wp_actions'][ $hook ][]                   = $cb;
+		$GLOBALS['_wp_test_filters'][ $hook ][ $priority ][] = $cb;
+		$GLOBALS['_wp_accepted_args'][ $hook ][]             = [ $cb, $accepted_args ];
 	}
 }
 

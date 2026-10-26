@@ -1668,6 +1668,20 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'stderr', $forwarded[0][ Message::VALUE ]['k'] );
 	}
 
+	public function test_a_routine_worker_stop_stays_out_of_the_error_log(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'POST https://kea.test/wp-json/newspack-nodes/v1/workers/spawn' ] );
+		$this->fill( $rb, 3, 'r1', 'worker (stop)', [ 'm' => 'kea-workers.p3: stopping — idle: no message for 37s (age 5592s)' ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$this->assertSame( [], \array_values( \array_filter( $capture->captured, static fn ( array $m ): bool => 'errors:target' === $m[ Message::TO ] ) ) );
+	}
+
 	public function test_alert_keyword_forwards_only_to_alerts_target(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

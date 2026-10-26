@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A Table's purge and WAL checkpoint are spans in the worker's record.** `Diagnostics_Bridge::install()` assigns the substrate's `Core::$around_span`, wrapping any wrapper already there, so each `table purge` and `table checkpoint` writes a `(start)` and a `(complete)` whose `m` names the Table and what it deleted or wrote back, whenever a record is started. With none started the work runs bare.
+
+### Changed
+- **A routine worker stop is a `worker (stop)` entry, kept out of the Error Log.** `Diagnostics_Bridge::on_stderr()` writes each substrate line under the keyword the `newspack_nodes/stderr` seam names, so a stop requested, a restart, the runtime-budget recycle and the idle exit land in the request's detail as `worker (stop)`, while every other substrate line is still a `stderr` entry the Error Log shows. The listener is registered by the deferred bootstrap, where it was registered at file load, so a substrate below the floor gets none.
+- **The substrate floor rises to 2.131.0**, the first release carrying `Core::$around_span`, `Core::span()` and the seam's keyword argument. `check-substrate-floor.sh` reads method calls and sees neither the property nor the action's arity.
+
 ## [0.157.3] - 2026-10-25
 
 ### Changed

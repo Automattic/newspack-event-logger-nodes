@@ -89,7 +89,7 @@ Push back on any diff introducing a hub flag — an `enable_aggregator` / `enabl
 
 ### 8. The substrate floor is a version, not a presence check
 
-The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.129.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
+The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.131.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
 
 A diff calling a newer substrate API must raise the floor. `scripts/check-substrate-floor.sh` audits the declared floor against every substrate API PHPStan resolves this plugin as calling, and `lint-docs.sh` rule 6 holds the prose to the loader — **a floor set too LOW is worse than none**, because the handshake passes and the plugin fatals later. The deferred bootstrap runs at `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY` (-11001), below `hook_start_priority`, so a rule naming `plugins_loaded` times it; don't raise it past that.
 
@@ -228,7 +228,7 @@ The plugin fires three extension points — `newspack_event_logger_nodes/setting
 | `newspack_nodes/settings_sync/value` (filter, two args) | A blank or absent value resolved to the OWNING config's default, and a pointer rule's hooks hydrated |
 | `newspack_nodes/registered_log_producers` (filter) | `Log_Manager::firehose_dir_template()`, so the log GC declares the dirs the writer writes |
 | `newspack_nodes/before_reconcile` / `after_reconcile` | The reconcile pass's own `/jobs/newspack-nodes` context, a shared `$entered` flag keeping the pair honest |
-| `newspack_nodes/stderr` | `Diagnostics_Bridge`, feeding the Error Log |
+| `newspack_nodes/stderr` | `Diagnostics_Bridge`, under the keyword the seam names; only a `stderr` entry feeds the Error Log |
 | `newspack_nodes/request_graph_ready` | The three service CIs |
 | `newspack_nodes/station_tab_bundles` (filter) | `Current_Request_Overlay`'s `current-request` tab bundle |
 
