@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.158.1] - 2026-10-26
+
 ### Changed
 - **The overview-prefetch job runs every five minutes, where it ran every two.** On eln.newspackstaging.com a snapshot build takes about 199 s, longer than the 120 s interval, so jobs were queued faster than one could finish. `Overview_Prefetch_Tick_Node::INTERVAL_S` is 300, so a build finishes inside its interval, and the snapshot, which serves four intervals, answers for 20 minutes from the end of its build where it answered for 8. A line naming its own interval keeps it.
 
