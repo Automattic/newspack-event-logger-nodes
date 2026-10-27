@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.158.5] - 2026-10-27
+
 ### Fixed
 - **The URL table's Avg, Min and Max columns fit a timing up to nine characters.** Each track was 55px, so a timing past six characters, `28,489ms` among them, was cut to `28,489…`. The three share one `TIMING_WIDTH` of 76px, which holds a timeout's `120,000ms`.
 
