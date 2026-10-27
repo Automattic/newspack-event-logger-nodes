@@ -26,6 +26,7 @@ class ProfilerMuPluginTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_options']['permalink_structure'] = '/%year%/%postname%/';
+		$GLOBALS['_wp_options']['home']                = 'https://kea-5108.test';
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
 		// Beneath the drop-in's, so no error it chains reaches PHPUnit's.
@@ -37,7 +38,7 @@ class ProfilerMuPluginTest extends TestCase {
 			\restore_error_handler();
 		}
 		$GLOBALS['_wp_actions'] = $this->actions;
-		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['_wp_options']['permalink_structure'] );
+		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['_wp_options']['permalink_structure'], $GLOBALS['_wp_options']['home'] );
 		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] );
@@ -257,11 +258,12 @@ class ProfilerMuPluginTest extends TestCase {
 		$body = self::command_to( 'raw-logs', 'read_block' ) . "\n" . self::command_to( 'raw-logs', 'list_logs' ) . "\n";
 		$lean = [ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ];
 		$cases = [
-			'the pretty route'   => [],
-			'the query route'    => [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ],
-			'a subdirectory one' => [ 'REQUEST_URI' => '/blog/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/blog/index.php' ],
+			'the pretty route'      => [ 'https://kea-5108.test', [] ],
+			'the query route'       => [ 'https://kea-5108.test', [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ] ],
+			'a site in a directory' => [ 'https://kea-5108.test/blog', [ 'REQUEST_URI' => '/blog/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/blog/index.php' ] ],
 		];
-		foreach ( $cases as $case => $overrides ) {
+		foreach ( $cases as $case => [ $home, $overrides ] ) {
+			$GLOBALS['_wp_options']['home'] = $home;
 			$this->assertSame( $lean, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body ), $case );
 		}
 	}
@@ -284,6 +286,8 @@ class ProfilerMuPluginTest extends TestCase {
 			'the route with another rest_route' => [ [ 'REQUEST_URI' => '/wp-json/newspack-nodes/v1/command?rest_route=/wp/v2/users' ], $fetch ],
 			'another script, by its path info'  => [ [ 'REQUEST_URI' => '/wp-login.php/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/wp-login.php', 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
 			'path info on the front controller' => [ [ 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
+			'the admin index, by rest_route'    => [ [ 'REQUEST_URI' => '/wp-admin/index.php?rest_route=/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/wp-admin/index.php' ], $fetch ],
+			'another directory\'s index.php'    => [ [ 'REQUEST_URI' => '/kea/index.php?rest_route=/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/kea/index.php' ], $fetch ],
 			'a form body'                       => [ [ 'CONTENT_TYPE' => 'application/x-www-form-urlencoded' ], $fetch ],
 			'a multipart body'                  => [ [ 'CONTENT_TYPE' => 'multipart/form-data; boundary=kea' ], $fetch ],
 			'no content type'                   => [ [ 'CONTENT_TYPE' => '' ], $fetch ],
