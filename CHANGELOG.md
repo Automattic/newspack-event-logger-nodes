@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The profiler drop-in narrows a hub's fetch on WP Cloud.** It required the script serving the request to be `index.php` at the site's home path, by `SCRIPT_NAME`. WP Cloud serves every request through `/__wp__/index.php`, core's own file behind the docroot's `__wp__` symlink, so no fetch matched and each one loaded every plugin. On spacenews-newspack staging, one fetch loaded all 38 and took 1,073 ms, of which its two block reads took 16 ms. The drop-in now asks PHP instead of the server: the request must have loaded `wp-blog-header.php` from `ABSPATH` before the plugin loop, as WordPress's front controller does. That matches WP Cloud, a standard install, and a site whose `index.php` sits at the home path above WordPress's own directory. The `rest_route` form matches at the install's root or its `index.php`.
+
 ## [0.159.3] - 2026-10-27
 
 ### Fixed

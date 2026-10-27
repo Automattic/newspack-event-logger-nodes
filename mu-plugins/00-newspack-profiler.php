@@ -222,27 +222,33 @@ if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
 	 * Skipping a plugin removes all of its behaviour, any restriction it
 	 * places on REST requests included; the substrate's own signature check
 	 * still decides every message. The match is exact, so that no other
-	 * script runs without the site's plugins. The site's own front controller,
-	 * the `index.php` at its home path, must serve the request, with no path
-	 * info. The path must be
-	 * the install's own `/wp-json` route under pretty permalinks, or the
-	 * install's root with `rest_route`. The body must be the substrate's
-	 * `text/plain`, which PHP never parses as a form. The body is read only
-	 * when all of that holds, and a line that is not a packed message
-	 * addressed to `raw-logs` loads the whole site.
+	 * script runs without the site's plugins. WordPress's front controller
+	 * must serve the request, with no path info: the request has loaded
+	 * `wp-blog-header.php` from `ABSPATH` before the plugin loop, wherever
+	 * the server says the script sits. That holds on WP Cloud, which serves
+	 * core's `index.php` through the docroot's `__wp__` symlink, and on a
+	 * site whose `index.php` sits at the home path above WordPress's own
+	 * directory. Core's `wp-signup.php` and `wp-activate.php` load the header
+	 * only after `wp-load.php` has run the loop, and the path below keeps any
+	 * other script that loads it first off the match. The path must be the
+	 * install's own `/wp-json` route under pretty permalinks, or the
+	 * install's root or its `index.php` with `rest_route`. The body must be
+	 * the substrate's `text/plain`, which PHP never parses as a form. The
+	 * body is read only when all of that holds, and a line that is not a
+	 * packed message addressed to `raw-logs` loads the whole site.
 	 *
 	 * @param list<string>         $plugins The active plugins, as `active_plugins` lists them.
 	 * @param array<array-key,mixed> $server The request's `$_SERVER`.
 	 * @param \Closure():string    $body    Reads the request body.
+	 * @param string               $abspath WordPress's own directory, `ABSPATH`.
+	 * @param \Closure():list<string> $loaded Lists the files PHP has loaded, as `get_included_files()` does.
 	 * @return list<string> The plugins to load, in the site's order.
 	 */
-	function newspack_profiler_lean_plugins( array $plugins, array $server, \Closure $body ): array {
-		$field  = static fn ( string $key ): string => \is_string( $server[ $key ] ?? null ) ? $server[ $key ] : '';
-		$script = $field( 'SCRIPT_NAME' );
-		$home   = \get_option( 'home' );
-		$root   = \rtrim( (string) \wp_parse_url( \is_string( $home ) ? $home : '', \PHP_URL_PATH ), '/' );
+	function newspack_profiler_lean_plugins( array $plugins, array $server, \Closure $body, string $abspath, \Closure $loaded ): array {
+		$field = static fn ( string $key ): string => \is_string( $server[ $key ] ?? null ) ? $server[ $key ] : '';
+		$home  = \get_option( 'home' );
+		$root  = \rtrim( (string) \wp_parse_url( \is_string( $home ) ? $home : '', \PHP_URL_PATH ), '/' );
 		if ( 'POST' !== $field( 'REQUEST_METHOD' )
-			|| "{$root}/index.php" !== $script
 			|| '' !== $field( 'PATH_INFO' )
 			|| ! \str_starts_with( \strtolower( $field( 'CONTENT_TYPE' ) ), 'text/plain' ) ) {
 			return $plugins;
@@ -253,8 +259,12 @@ if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
 		\parse_str( (string) \wp_parse_url( $uri, \PHP_URL_QUERY ), $query );
 		// Under plain permalinks, WordPress renders a page for a /wp-json path.
 		$by_path  = '' !== \get_option( 'permalink_structure' ) && "{$root}/wp-json{$route}" === $path && [] === $query;
-		$by_query = \in_array( $path, [ "{$root}/", $script ], true ) && $route === ( $query['rest_route'] ?? null );
+		$by_query = \in_array( $path, [ "{$root}/", "{$root}/index.php" ], true ) && $route === ( $query['rest_route'] ?? null );
 		if ( ! $by_path && ! $by_query ) {
+			return $plugins;
+		}
+		$wordpress = \realpath( $abspath );
+		if ( false === $wordpress || ! \in_array( \rtrim( $wordpress, '/' ) . '/wp-blog-header.php', $loaded(), true ) ) {
 			return $plugins;
 		}
 		$lines = \array_filter( \explode( "\n", $body() ), static fn ( string $line ): bool => '' !== \trim( $line ) );
@@ -284,6 +294,16 @@ global $newspack_profiler_body;
 // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsRemoteFile -- the request body, not a remote file.
 $newspack_profiler_body ??= static fn (): string => (string) \file_get_contents( 'php://input' );
 
+/**
+ * Loaded-files seam for the narrowing below: replaces `get_included_files()`.
+ * Tests assign a closure before loading the drop-in.
+ * Signature: `function (): list<string>`.
+ *
+ * @var \Closure():list<string>|null $newspack_profiler_loaded
+ */
+global $newspack_profiler_loaded;
+$newspack_profiler_loaded ??= static fn (): array => \get_included_files();
+
 \add_filter(
 	'option_active_plugins',
 	/**
@@ -298,8 +318,11 @@ $newspack_profiler_body ??= static fn (): string => (string) \file_get_contents(
 	 * @return mixed The plugins to load.
 	 */
 	static function ( $plugins ) {
-		/** @var \Closure():string $newspack_profiler_body */
-		global $newspack_profiler_body;
+		/**
+		 * @var \Closure():string       $newspack_profiler_body
+		 * @var \Closure():list<string> $newspack_profiler_loaded
+		 */
+		global $newspack_profiler_body, $newspack_profiler_loaded;
 		// Every read passes here; only a POST pays for the backtrace.
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared, never output.
 		if ( ! \is_array( $plugins ) || 'POST' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
@@ -310,7 +333,7 @@ $newspack_profiler_body ??= static fn (): string => (string) \file_get_contents(
 		if ( ! \in_array( 'wp_get_active_and_valid_plugins', $callers, true ) ) {
 			return $plugins;
 		}
-		return \newspack_profiler_lean_plugins( \array_values( \array_filter( $plugins, 'is_string' ) ), $_SERVER, $newspack_profiler_body );
+		return \newspack_profiler_lean_plugins( \array_values( \array_filter( $plugins, 'is_string' ) ), $_SERVER, $newspack_profiler_body, \ABSPATH, $newspack_profiler_loaded );
 	},
 	2
 );
