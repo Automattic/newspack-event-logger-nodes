@@ -339,10 +339,12 @@ class ProfilerMuPluginTest extends TestCase {
 
 	/**
 	 * Through the filter, a hub's fetch narrows only the read the plugin loop
-	 * makes, which is the first read after `muplugins_loaded`. A later read,
-	 * and any write built from one, returns the stored list.
+	 * makes, from inside `wp_get_active_and_valid_plugins()`. A read made
+	 * anywhere else, before the loop or after it, returns the stored list, so
+	 * a write built from one keeps every plugin.
 	 */
 	public function test_the_filter_narrows_the_plugin_loops_read_alone(): void {
+		require_once \dirname( __DIR__ ) . '/fixtures/wp-plugin-loop.php';
 		$GLOBALS['_wp_actions']            = [];
 		$GLOBALS['newspack_profiler_body'] = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
 		$server                            = $_SERVER;
@@ -350,9 +352,8 @@ class ProfilerMuPluginTest extends TestCase {
 		try {
 			self::load_drop_in();
 			$before = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
-			\do_action( 'muplugins_loaded' );
-			$loop  = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
-			$after = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
+			$loop   = \wp_get_active_and_valid_plugins( self::SITE_PLUGINS );
+			$after  = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
 		} finally {
 			$_SERVER = $server;
 		}

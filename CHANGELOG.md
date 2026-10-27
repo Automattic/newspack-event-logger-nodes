@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The profiler drop-in narrows the plugin loop's own read of `active_plugins`.** It narrowed the first read after `muplugins_loaded`, armed at that action's end. A later mu-plugin listening at the same priority could make that read first: it then got the two-plugin list, and the plugin loop got the full one. The drop-in now narrows only a read made from inside `wp_get_active_and_valid_plugins()`, which it finds on the call stack.
+
 ## [0.159.2] - 2026-10-27
 
 ### Changed

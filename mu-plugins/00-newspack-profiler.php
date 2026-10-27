@@ -284,37 +284,32 @@ global $newspack_profiler_body;
 // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsRemoteFile -- the request body, not a remote file.
 $newspack_profiler_body ??= static fn (): string => (string) \file_get_contents( 'php://input' );
 
-/** Whether the next read of `active_plugins` is the one the plugin loop makes. */
-$newspack_profiler_loop_read = false;
-
-\add_action(
-	'muplugins_loaded',
-	/** Arm the narrowing for the next read, which the plugin loop makes. This runs last, so every other listener reads the stored list. */
-	static function () use ( &$newspack_profiler_loop_read ): void {
-		$newspack_profiler_loop_read = true;
-	},
-	\PHP_INT_MAX
-);
-
 \add_filter(
 	'option_active_plugins',
 	/**
-	 * Narrow the read of `active_plugins` that the plugin loop makes during a
-	 * hub's fetch; see `newspack_profiler_lean_plugins()`. Only that read is
-	 * narrowed. A read that an mu-plugin makes before it, or that a plugin
-	 * makes after it, returns the stored list, so a write built from either
-	 * read keeps every plugin the site activated.
+	 * Narrow the read of `active_plugins` that WordPress's plugin loop makes,
+	 * from inside `wp_get_active_and_valid_plugins()`, during a hub's fetch;
+	 * see `newspack_profiler_lean_plugins()`. Only that read is narrowed. A
+	 * read from anywhere else, an mu-plugin's or a plugin's, returns the
+	 * stored list, so a write built from it keeps every plugin the site
+	 * activated.
 	 *
 	 * @param mixed $plugins The stored `active_plugins` value.
 	 * @return mixed The plugins to load.
 	 */
-	static function ( $plugins ) use ( &$newspack_profiler_loop_read ) {
+	static function ( $plugins ) {
 		/** @var \Closure():string $newspack_profiler_body */
 		global $newspack_profiler_body;
-		if ( ! $newspack_profiler_loop_read || ! \is_array( $plugins ) ) {
+		// Every read passes here; only a POST pays for the backtrace.
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- compared, never output.
+		if ( ! \is_array( $plugins ) || 'POST' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) ) {
 			return $plugins;
 		}
-		$newspack_profiler_loop_read = false;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- finds the plugin loop's read.
+		$callers = \array_column( \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, 12 ), 'function' );
+		if ( ! \in_array( 'wp_get_active_and_valid_plugins', $callers, true ) ) {
+			return $plugins;
+		}
 		return \newspack_profiler_lean_plugins( \array_values( \array_filter( $plugins, 'is_string' ) ), $_SERVER, $newspack_profiler_body );
 	},
 	2
