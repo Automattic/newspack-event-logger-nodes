@@ -25,6 +25,7 @@ class ProfilerMuPluginTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		$GLOBALS['_wp_options']['permalink_structure'] = '/%year%/%postname%/';
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
 		// Beneath the drop-in's, so no error it chains reaches PHPUnit's.
@@ -36,7 +37,7 @@ class ProfilerMuPluginTest extends TestCase {
 			\restore_error_handler();
 		}
 		$GLOBALS['_wp_actions'] = $this->actions;
-		unset( $GLOBALS['newspack_profiler'] );
+		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['_wp_options']['permalink_structure'] );
 		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] );
@@ -219,6 +220,176 @@ class ProfilerMuPluginTest extends TestCase {
 		self::with_deferred_bootstrap( static function (): void {} );
 
 		$this->assertSame( [ 'kea 7746 before boot' ], \array_column( self::entries_of( $this->logged_entries(), 'php (notice)' ), 'm' ) );
+	}
+
+	private const SITE_PLUGINS = [
+		'akismet/akismet.php',
+		'newspack-nodes/newspack-nodes.php',
+		'woocommerce/woocommerce.php',
+		'newspack-event-logger-nodes/newspack-event-logger-nodes.php',
+		'hello.php',
+	];
+
+	/** One packed command line to `$to`, as a hub's batch carries it. */
+	private static function command_to( string $to, string $verb ): string {
+		$m                   = \Newspack_Nodes\Message::new_message();
+		$m[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_COMMAND;
+		$m[ \Newspack_Nodes\Message::FROM ]  = '_http';
+		$m[ \Newspack_Nodes\Message::TO ]    = $to;
+		$m[ \Newspack_Nodes\Message::VALUE ] = [ 'name' => $verb, 'arguments' => [ 'firehose.p0', '6797:29360128' ] ];
+		return \Newspack_Nodes\Message::packed( $m );
+	}
+
+	/** The request a hub's fetch arrives as, through WordPress's front controller. */
+	private static function fetch_server( array $overrides = [] ): array {
+		return [
+			'REQUEST_METHOD' => 'POST',
+			'REQUEST_URI'    => '/wp-json/newspack-nodes/v1/command',
+			'SCRIPT_NAME'    => '/index.php',
+			'CONTENT_TYPE'   => 'text/plain; charset=UTF-8',
+			...$overrides,
+		];
+	}
+
+	/** A hub's fetch loads the substrate and the logger alone, in the site's order. */
+	public function test_a_raw_logs_batch_loads_the_substrate_and_the_logger_alone(): void {
+		self::load_drop_in();
+		$body = self::command_to( 'raw-logs', 'read_block' ) . "\n" . self::command_to( 'raw-logs', 'list_logs' ) . "\n";
+		$lean = [ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ];
+		$cases = [
+			'the pretty route'   => [],
+			'the query route'    => [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ],
+			'a subdirectory one' => [ 'REQUEST_URI' => '/blog/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/blog/index.php' ],
+		];
+		foreach ( $cases as $case => $overrides ) {
+			$this->assertSame( $lean, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body ), $case );
+		}
+	}
+
+	/**
+	 * Every other request loads the whole site. That includes a request that
+	 * names the route but that another script would serve, and one whose
+	 * body PHP would parse as a form.
+	 */
+	public function test_every_other_request_loads_every_plugin(): void {
+		self::load_drop_in();
+		$fetch = self::command_to( 'raw-logs', 'read_block' ) . "\n";
+		$cases = [
+			'another service in the batch'      => [ [], $fetch . self::command_to( 'performance', 'set' ) . "\n" ],
+			'a GET'                             => [ [ 'REQUEST_METHOD' => 'GET' ], $fetch ],
+			'another route'                     => [ [ 'REQUEST_URI' => '/wp-json/newspack-nodes/v1/auth' ], $fetch ],
+			'a route it only begins'            => [ [ 'REQUEST_URI' => '/wp-json/newspack-nodes/v1/commands' ], $fetch ],
+			'the route under another path'      => [ [ 'REQUEST_URI' => '/kea/wp-json/newspack-nodes/v1/command' ], $fetch ],
+			'the query route on another page'   => [ [ 'REQUEST_URI' => '/kea-5108/?rest_route=/newspack-nodes/v1/command' ], $fetch ],
+			'the route with another rest_route' => [ [ 'REQUEST_URI' => '/wp-json/newspack-nodes/v1/command?rest_route=/wp/v2/users' ], $fetch ],
+			'another script, by its path info'  => [ [ 'REQUEST_URI' => '/wp-login.php/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/wp-login.php', 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
+			'path info on the front controller' => [ [ 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
+			'a form body'                       => [ [ 'CONTENT_TYPE' => 'application/x-www-form-urlencoded' ], $fetch ],
+			'a multipart body'                  => [ [ 'CONTENT_TYPE' => 'multipart/form-data; boundary=kea' ], $fetch ],
+			'no content type'                   => [ [ 'CONTENT_TYPE' => '' ], $fetch ],
+			'an empty body'                     => [ [], '' ],
+			'a body that is not a batch'        => [ [], "kea-5108\n" ],
+		];
+		foreach ( $cases as $case => [ $overrides, $body ] ) {
+			$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body ), $case );
+		}
+	}
+
+	/**
+	 * Under plain permalinks, WordPress does not route a `/wp-json` path to
+	 * REST and renders a page for it instead, so only the query form narrows
+	 * the plugins.
+	 */
+	public function test_plain_permalinks_narrow_the_query_route_alone(): void {
+		$GLOBALS['_wp_options']['permalink_structure'] = '';
+		self::load_drop_in();
+		$body = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
+
+		$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server(), $body ), 'the pretty route' );
+		$this->assertSame(
+			[ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ],
+			\newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ] ), $body ),
+			'the query route'
+		);
+	}
+
+	/**
+	 * A fetch keeps whichever of the two plugins the site has, each matched by
+	 * its file name whatever directory holds it. The substrate alone serves
+	 * the fetch, the event logger alone boots silently, and when the site has
+	 * neither, no plugin loads.
+	 */
+	public function test_a_fetch_keeps_whichever_of_the_two_the_site_has(): void {
+		self::load_drop_in();
+		$body  = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
+		$cases = [
+			'the substrate under another directory' => [ [ 'akismet/akismet.php', 'newspack-nodes-main/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ], [ 'newspack-nodes-main/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ] ],
+			'the substrate alone'                   => [ [ 'akismet/akismet.php', 'newspack-nodes/newspack-nodes.php' ], [ 'newspack-nodes/newspack-nodes.php' ] ],
+			'the logger alone'                      => [ [ 'newspack-event-logger-nodes/newspack-event-logger-nodes.php', 'woocommerce/woocommerce.php' ], [ 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ] ],
+			'neither'                               => [ [ 'akismet/akismet.php', 'woocommerce/woocommerce.php' ], [] ],
+		];
+		foreach ( $cases as $case => [ $site, $lean ] ) {
+			$this->assertSame( $lean, \newspack_profiler_lean_plugins( $site, self::fetch_server(), $body ), $case );
+		}
+	}
+
+	/**
+	 * Through the filter, a hub's fetch narrows only the read the plugin loop
+	 * makes, which is the first read after `muplugins_loaded`. A later read,
+	 * and any write built from one, returns the stored list.
+	 */
+	public function test_the_filter_narrows_the_plugin_loops_read_alone(): void {
+		$GLOBALS['_wp_actions']            = [];
+		$GLOBALS['newspack_profiler_body'] = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
+		$server                            = $_SERVER;
+		$_SERVER                           = self::fetch_server();
+		try {
+			self::load_drop_in();
+			$before = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
+			\do_action( 'muplugins_loaded' );
+			$loop  = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
+			$after = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
+		} finally {
+			$_SERVER = $server;
+		}
+
+		$this->assertSame( self::SITE_PLUGINS, $before, 'an mu-plugin reads the stored list' );
+		$this->assertSame( [ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ], $loop );
+		$this->assertSame( self::SITE_PLUGINS, $after, 'a plugin reads, and writes, the stored list' );
+	}
+
+	/** Through the filter, each read of `active_plugins` comes back as written on an ordinary request. */
+	public function test_the_filter_reads_each_value_as_written(): void {
+		$GLOBALS['_wp_actions'] = [];
+		$server                 = $_SERVER;
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$_SERVER['REQUEST_URI']    = '/cincinnati/kea-5108/';
+		try {
+			self::load_drop_in();
+			$first  = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
+			$second = \apply_filters( 'option_active_plugins', [ 'woocommerce/woocommerce.php' ] );
+		} finally {
+			$_SERVER = $server;
+		}
+
+		$this->assertSame( self::SITE_PLUGINS, $first );
+		$this->assertSame( [ 'woocommerce/woocommerce.php' ], $second, 'a plugin activated mid-request reads back' );
+	}
+
+	/** A request on any other route never reads its body. */
+	public function test_another_route_never_reads_the_body(): void {
+		self::load_drop_in();
+		$read = 0;
+		\newspack_profiler_lean_plugins(
+			self::SITE_PLUGINS,
+			self::fetch_server( [ 'REQUEST_URI' => '/wp-json/newspack/v1/reader' ] ),
+			static function () use ( &$read ): string {
+				++$read;
+				return '';
+			}
+		);
+
+		$this->assertSame( 0, $read );
 	}
 
 	/** Load the drop-in at file scope, as WordPress includes it. */
