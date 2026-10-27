@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Profiler
  * Description: Times each active plugin's load — duration, new classes, new files — records the moment PHP began the request, and catches the PHP errors raised before Event Logger Nodes boots. Event Logger Nodes writes the measurements to the firehose when it is active; nothing here depends on it.
- * Version: 0.158.2
+ * Version: 0.158.3
  * Author: Automattic
  *
  * Two facts are gone by the time a regular plugin can run. WordPress loads
