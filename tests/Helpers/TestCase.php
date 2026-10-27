@@ -586,6 +586,7 @@ abstract class TestCase extends RuntimeTestCase {
 				'content'    => "{$fixtures}/content",
 				'abspath'    => "{$fixtures}/abspath/",
 				'managed'    => "{$fixtures}/managed",
+				'scripts'    => "{$fixtures}/scripts",
 			]
 		);
 	}

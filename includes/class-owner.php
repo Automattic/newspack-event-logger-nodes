@@ -2,7 +2,8 @@
 /**
  * Owner
  *
- * Who owns a PHP file: a plugin, an mu-plugin, a theme, a drop-in or core.
+ * Who owns a PHP file: a plugin, an mu-plugin, a theme, a drop-in, the host's
+ * platform or core.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,8 +21,11 @@ namespace Newspack_Event_Logger_Nodes;
  * or a host-managed copy at `/wordpress/plugins/<slug>/<version>/`;
  * `mu:<slug>` for an mu-plugin; `theme:<slug>` for a theme, under a theme
  * directory or at `/wordpress/themes/<slug>/<version>/`; `dropin` for a
- * drop-in core loads by name from `WP_CONTENT_DIR`; `core` for `wp-admin`,
- * `wp-includes` and the files at `ABSPATH`; and `''` for anything else,
+ * drop-in core loads by name from `WP_CONTENT_DIR`, or the host's copy in
+ * `/wordpress/drop-ins/` it links to; `core` for `wp-admin`, `wp-includes`
+ * and the files at `ABSPATH`; `platform` for the rest of the host's managed
+ * tree, its own mu-plugins among them, and for its scripts directory, which
+ * holds the object cache a drop-in loads; and `''` for anything else,
  * `eval()`'d code included.
  * PHP names a file with every symlink resolved, so each root matches as
  * written and as resolved, and each carries a trailing slash, so a root never
@@ -36,6 +40,9 @@ final class Owner {
 
 	/** The owner of a drop-in. */
 	public const DROPIN = 'dropin';
+
+	/** The owner of the host's own code, in its managed tree or its scripts. */
+	public const PLATFORM = 'platform';
 
 	/** The bucket for time no owner claims. */
 	public const UNOWNED = '(unowned)';
@@ -74,6 +81,13 @@ final class Owner {
 		'wp-includes' => true,
 	];
 
+	/** The owners that name no file's plugin, though none carries a prefix. */
+	private const NOT_PLUGINS = [
+		self::CORE     => true,
+		self::DROPIN   => true,
+		self::PLATFORM => true,
+	];
+
 	/** The root kinds whose entries may be links to a checkout elsewhere. */
 	private const LINKABLE = [
 		'plugin' => true,
@@ -83,19 +97,21 @@ final class Owner {
 
 	/** The root kinds that hold the others, which a link answers ahead of. */
 	private const BROAD = [
-		'content' => true,
-		'core'    => true,
+		'content'  => true,
+		'core'     => true,
+		'platform' => true,
 	];
 
 	/**
 	 * Roots seam. Replaces the WordPress constants that locate each root —
 	 * `WP_PLUGIN_DIR`, `WPMU_PLUGIN_DIR`, `WP_CONTENT_DIR`, `ABSPATH` — and the
-	 * host's managed tree, `/wordpress` on WP Cloud, which are read once a
-	 * process. The theme directories are not among them: they are read from
-	 * the `$wp_theme_directories` global `register_theme_directory()` fills,
-	 * which runs no filter, and re-read whenever it changes. Tests reassign
-	 * the seam to classify against a tree of their own.
-	 * Signature: `function (): array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}`
+	 * host's managed tree and scripts directory, `/wordpress` and `/scripts`
+	 * on WP Cloud, which are read once a process. The theme directories are
+	 * not among them: they are read from the `$wp_theme_directories` global
+	 * `register_theme_directory()` fills, which runs no filter, and re-read
+	 * whenever it changes. Tests reassign the seam to classify against a tree
+	 * of their own.
+	 * Signature: `function (): array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string}`
 	 *
 	 * @var \Closure|null
 	 */
@@ -113,7 +129,7 @@ final class Owner {
 	 * directories, slash-terminated, in the order they are tried, with the
 	 * kind of owner a file under one has.
 	 *
-	 * @var array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}|null
+	 * @var array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}|null
 	 */
 	private static ?array $table = null;
 
@@ -189,10 +205,10 @@ final class Owner {
 	/**
 	 * The roots the seam answers, or the running install's.
 	 *
-	 * @return array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}
+	 * @return array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string}
 	 */
 	private static function read_roots(): array {
-		/** @var array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string} $roots As the seam's signature declares. */
+		/** @var array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string} $roots As the seam's signature declares. */
 		$roots = ( self::$roots ?? self::wordpress_roots( ... ) )();
 		return $roots;
 	}
@@ -200,7 +216,7 @@ final class Owner {
 	/**
 	 * The roots of the running install.
 	 *
-	 * @return array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}
+	 * @return array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string}
 	 */
 	private static function wordpress_roots(): array {
 		return [
@@ -209,18 +225,20 @@ final class Owner {
 			'content'    => WP_CONTENT_DIR,
 			'abspath'    => ABSPATH,
 			'managed'    => '/wordpress',
+			'scripts'    => '/scripts',
 		];
 	}
 
 	/**
 	 * Every root, as written and as resolved, in the order a file tries them:
 	 * the narrower roots, then the links into them, then the content dir and
-	 * `ABSPATH` a link's target may sit under. A link carries its owner; a
-	 * root's is read off the path below it.
+	 * `ABSPATH` a link's target may sit under, and last the managed tree,
+	 * whose core a resolved `ABSPATH` has already claimed. A link carries its
+	 * owner; a root's is read off the path below it.
 	 *
-	 * @param array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string} $roots  The roots.
+	 * @param array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string} $roots  The roots.
 	 * @param array<mixed> $themes The theme directories.
-	 * @return array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}
+	 * @return array{roots: array{plugins: string, mu_plugins: string, content: string, abspath: string, managed: string, scripts: string}, themes: array<mixed>, dirs: list<array{0:string,1:string,2:?string}>}
 	 */
 	private static function table( array $roots, array $themes ): array {
 		$kinds  = [
@@ -228,10 +246,13 @@ final class Owner {
 			[ 'release', $roots['content'] . '/plugin-releases' ],
 			[ 'managed_plugin', $roots['managed'] . '/plugins' ],
 			[ 'managed_theme', $roots['managed'] . '/themes' ],
+			[ 'managed_dropin', $roots['managed'] . '/drop-ins' ],
 			[ 'mu', $roots['mu_plugins'] ],
 			...\array_map( static fn ( mixed $dir ): array => [ 'theme', \is_string( $dir ) ? $dir : '' ], $themes ),
 			[ 'content', $roots['content'] ],
 			[ 'core', $roots['abspath'] ],
+			[ 'platform', $roots['managed'] ],
+			[ 'platform', $roots['scripts'] ],
 		];
 		$narrow = [];
 		$linked = [];
@@ -302,7 +323,8 @@ final class Owner {
 			'managed_theme'  => $count > 2 ? self::THEME_PREFIX . $segments[0] : '',
 			'mu'             => self::MU_PREFIX . $slug,
 			'theme'          => $count > 1 ? self::THEME_PREFIX . $segments[0] : '',
-			'content'        => 1 === $count && isset( self::DROPINS[ $segments[0] ] ) ? self::DROPIN : '',
+			'content', 'managed_dropin' => 1 === $count && isset( self::DROPINS[ $segments[0] ] ) ? self::DROPIN : '',
+			'platform'       => self::PLATFORM,
 			default          => 1 === $count || isset( self::CORE_DIRS[ $segments[0] ] ) ? self::CORE : '',
 		};
 	}
@@ -323,7 +345,7 @@ final class Owner {
 	 * @param string $owner An owner `of()` answered.
 	 */
 	public static function is_plugin( string $owner ): bool {
-		return '' !== $owner && self::CORE !== $owner && self::DROPIN !== $owner && ! \str_contains( $owner, ':' );
+		return '' !== $owner && ! isset( self::NOT_PLUGINS[ $owner ] ) && ! \str_contains( $owner, ':' );
 	}
 
 	/**
