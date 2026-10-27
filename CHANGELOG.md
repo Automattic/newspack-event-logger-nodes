@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.158.4] - 2026-10-27
+
 ### Changed
 - **A top-level hook's own time is core's once one of its listeners is timed.** The time a hook spends outside its timed listeners is `WP_Hook` dispatching them, and it read as `(unowned)`: 80.7 ms, a tenth, of an 803 ms www.elsol.com.ar homepage, 72.7 ms of it in hooks whose listeners were timed. A hook the request fires opens with a claim to core, a listener closing inside it settles the claim, and `fold_owner()` reads it when the hook closes, so the spans inside it keep the owner they inherit whatever order they ran in. A hook that times no listener stays `(unowned)`, because its own time then holds every listener it ran, and a hook fired inside a listener keeps that listener's owner. A by-reference callback the wrapper skips sits in its hook's own time, so on a hook that timed other listeners it reads as core's. Each stack frame carries the claim as a seventh slot, so an envelope checkpointed before this release is dropped and logged when a worker restores it after the deploy, as one lacking any owner slot already is. The owner rows stored before the deploy count that dispatch as `(unowned)` and the platform's code under the plugin or core outside it, so an owner table over a window that spans the deploy mixes the two until those rows age out of the 300 buckets they are kept.
 
