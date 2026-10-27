@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The overview-prefetch job's overviews take their totals from the snapshot it builds.** Each overview, unscoped and for each server, read its totals off the rows again inside the build, and on eln.newspackstaging.com those twelve reads took about 102 s of a 374 s run, the unscoped one 66.6 s for its exact distinct URL count. `Url_Snapshot::publish()` hands the answers closure the snapshot being built, and an overview reads its totals from that snapshot's `totals`, which groups the same window. A stored overview's totals now date from the build's group step, a few minutes before its leaderboard and owners are read, so the request total and the profiled count can differ by the requests that arrived in between, about 0.1% on eln. `Performance_CI_Node::URL_TOTALS` gains `timed`, so `totals` carries it. A snapshot published before this release has no `timed` column, so until the job next publishes, `urls` answers live and says once a window that the snapshot did not read.
+- **A leaderboard, and a page listing's shapes, read every row in one statement.** Each paged through `Stats_Query::run()` 1,000 rows at a time, and every page grouped the whole selection again: the unscoped leaderboard's three pages took 17.6 s of that run. `Stats_Query::every()` reads up to `EVERY_ROWS`, 11,000, the depth the pages reached, in one statement. A leaderboard past it still keeps the dearest rows and says so once a window, now as `leaderboard rows past the read bound`, and a page listing past it is refused. Exactly 11,000 rows now read whole, where the pages called them cut. The test seam `Performance_CI_Node::$board_paging` is `$board_rows`, the bound alone.
+
 ## [0.158.2] - 2026-10-26
 
 ### Fixed

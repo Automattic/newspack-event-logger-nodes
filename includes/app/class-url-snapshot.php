@@ -87,7 +87,7 @@ final class Url_Snapshot {
 	];
 
 	/** What a scope with no URLs totals, in `URL_TOTALS` order. */
-	private const NO_TOTALS = [ 0, null, null, 0, 0, 0 ];
+	private const NO_TOTALS = [ 0, 0, null, null, 0, 0, 0 ];
 
 	/** The id of the server a `?` names; null for a name `servers` lacks. */
 	private const SERVER_ID = '( SELECT id FROM servers WHERE name = ? )';
@@ -167,12 +167,12 @@ final class Url_Snapshot {
 	 * On a started record the build is a `snapshot build` span closing
 	 * `published` or `no partition file`, each of its steps a span inside;
 	 * the architecture guide says what the build span's own time holds. The
-	 * answers are asked inside the build, after its totals, so each is a span
-	 * inside `snapshot build`.
+	 * answers are asked inside the build, after its totals, of the snapshot
+	 * being built, so each is a span inside `snapshot build`.
 	 *
-	 * @param int                                                    $now     The job's tick.
-	 * @param int                                                    $ttl     Seconds the snapshot serves from the end of its build.
-	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers busiest first.
+	 * @param int                                          $now     The job's tick.
+	 * @param int                                          $ttl     Seconds the snapshot serves from the end of its build.
+	 * @param \Closure(self): array<string,array<string,mixed>> $answers The stored answers by key, given the snapshot being built.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Row_Table_Node::build()`,
 	 *                                           or when no active topology
 	 *                                           declares a Flame_Facts table.
@@ -199,10 +199,10 @@ final class Url_Snapshot {
 	/**
 	 * Write the snapshot's tables into the file `$db` builds.
 	 *
-	 * @param Row_Reader                                             $db      The building connection.
-	 * @param int                                                    $now     The job's tick.
-	 * @param int                                                    $ttl     Seconds the snapshot serves from the end of its build.
-	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers.
+	 * @param Row_Reader                                   $db      The building connection.
+	 * @param int                                          $now     The job's tick.
+	 * @param int                                          $ttl     Seconds the snapshot serves from the end of its build.
+	 * @param \Closure(self): array<string,array<string,mixed>> $answers The stored answers by key, given the snapshot being built.
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
 	private static function fill( Row_Reader $db, int $now, int $ttl, \Closure $answers ): void {
@@ -225,7 +225,7 @@ final class Url_Snapshot {
 			]
 		);
 		$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-		foreach ( $answers( self::servers( $db ) ) as $key => $answer ) {
+		foreach ( $answers( new self( $db, $now ) ) as $key => $answer ) {
 			$json = \wp_json_encode( $answer );
 			if ( false === $json ) {
 				throw new \RuntimeException( \esc_html( "overview prefetch: answer {$key} will not encode" ) );
@@ -234,20 +234,6 @@ final class Url_Snapshot {
 		}
 		$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
 		$db->rows( 'INSERT INTO meta ( as_of, expires ) VALUES ( ?, ? )', [ $now, (int) Core::right_now() + $ttl ] );
-	}
-
-	/**
-	 * Every server of the window, worker traffic counted, busiest first and
-	 * ties as `Stats_Query::ranking()` breaks them, as many as one page of a
-	 * live read names: the `overview`'s `servers`, summed off the `totals`
-	 * the build just wrote.
-	 *
-	 * @param Row_Reader $db The building connection.
-	 * @return list<string>
-	 */
-	private static function servers( Row_Reader $db ): array {
-		$rows = $db->rows( 'SELECT s.name FROM totals AS t JOIN servers AS s ON s.id = t.server_id WHERE t.workers = 1 ORDER BY ' . Stats_Query::ranking( [ 't.count' ], [ 's.name' ], 'desc', false ) . ' LIMIT ?', [ Stats_Query::MAX_LIMIT ] );
-		return \array_map( static fn ( array $row ): string => Core::as_string( $row[0] ), $rows );
 	}
 
 	/**
@@ -607,6 +593,18 @@ final class Url_Snapshot {
 			$binds[] = 'server' === $field ? Url_Parts::server_name( Core::as_string( $values[0] ) ) : $values[0];
 		}
 		return [ [] === $clauses ? '' : ' WHERE ' . \implode( ' AND ', $clauses ), $binds ];
+	}
+
+	/**
+	 * Every server of the window, worker traffic counted, busiest first and
+	 * ties as `Stats_Query::ranking()` breaks them, as many as one page of a
+	 * live read names: the `overview`'s `servers`, summed off `totals`.
+	 *
+	 * @return list<string>
+	 */
+	public function servers(): array {
+		$rows = $this->db->rows( 'SELECT s.name FROM totals AS t JOIN servers AS s ON s.id = t.server_id WHERE t.workers = 1 ORDER BY ' . Stats_Query::ranking( [ 't.count' ], [ 's.name' ], 'desc', false ) . ' LIMIT ?', [ Stats_Query::MAX_LIMIT ] );
+		return \array_map( static fn ( array $row ): string => Core::as_string( $row[0] ), $rows );
 	}
 
 	/**

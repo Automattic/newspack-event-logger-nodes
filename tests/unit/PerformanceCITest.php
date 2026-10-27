@@ -13,6 +13,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
@@ -82,7 +83,7 @@ class PerformanceCITest extends TestCase {
 		VerbHarness::reset();
 		Core::$clock                        = null;
 		Settings_Event_Writer::$append_seam = null;
-		Performance_CI_Node::$board_paging  = null;
+		Performance_CI_Node::$board_rows    = null;
 		unset( $GLOBALS['_test_fire_option_actions'] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
@@ -2458,10 +2459,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A scoped overview handed a server list that lacks its server asks
-	 * whether the server has traffic of the window, and reads the URL window
-	 * to answer: a worker row there no request backs makes the list read
-	 * again and name it.
+	 * A scoped overview the job stored none for, its servers the stored
+	 * overview's list, which lacks its server, asks whether the server has
+	 * traffic of the window, and reads the URL window to answer: a worker row
+	 * there no request backs makes the list read again and name it.
 	 */
 	public function test_a_scoped_overviews_traffic_check_reads_the_url_window(): void {
 		$latest = self::latest();
@@ -2472,9 +2473,11 @@ class PerformanceCITest extends TestCase {
 			]
 		);
 		$this->seed_url_window( 0, $latest - Bucket::window() );
-		$scoped = static fn (): array => Performance_CI_Node::answer_live( 'overview', [ 'server' => 'moa-8151.example' ], self::tick(), [ 'kea-8151.example' ] );
+		$unscoped = Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [ Overview_Prefetch::key( 'overview', $unscoped ) => [ 'as_of' => self::tick(), 'available' => true, 'servers' => [ 'kea-8151.example', 'tui-8151.example' ] ] ] );
+		$scoped = static fn (): array => Core::arr( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--server=moa-8151.example' ) );
 
-		$this->assertSame( [ 'kea-8151.example' ], $scoped()['servers'] );
+		$this->assertSame( [ 'kea-8151.example', 'tui-8151.example' ], $scoped()['servers'], 'the stored list, which names a server no read would' );
 		$this->seed_rows( 0, self::phantom_window_row( 'https://moa-8151.example/hoiho-8151/', 'moa-8151.example', 1, $latest ) );
 		$reply = $scoped();
 
@@ -2606,6 +2609,54 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 50, $board['categories']['heavy']['entries'], 'a category past a hundred keeps its fifty slowest' );
 	}
 
+	/** A board deeper than one page of a query reads its rows in one statement. */
+	public function test_a_board_past_a_page_reads_its_rows_once(): void {
+		$board     = null;
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::STATS_QUERY,
+			function () use ( &$board ): void {
+				$rows = [ [ 'category' => 'kokako-6203', 'ms' => 700000.5, 'calls' => 9, 'requests' => 1 ] ];
+				for ( $i = 0; $i <= Stats_Query::MAX_LIMIT; $i++ ) {
+					$rows[] = [ 'category' => 'kokako-6203', 'entry' => "SELECT kokako {$i}", 'ms' => 40.5 + $i, 'calls' => 1, 'requests' => 1 ];
+				}
+				$this->seed_site_timings( $rows );
+				$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['leaderboard'];
+			}
+		);
+
+		$timings = \array_values( \array_filter( \array_column( $spans, 1 ), static fn ( mixed $label ): bool => \str_starts_with( Core::as_string( $label ), 'timings' ) ) );
+		$this->assertSame( [ 'timings by category,entry,listener' ], $timings );
+		$this->assertSame( [ 'SELECT kokako 1000' => [ 1040.5, 1, 1 ] ], \array_slice( Core::arr( $board['categories']['kokako-6203']['entries'] ?? [] ), 0, 1 ), 'the dearest entry, past the first page' );
+	}
+
+	/**
+	 * A full page listing whose slowest pages lie past it reads their shapes
+	 * in one statement each: a thousand busy pages listed, eleven slow ones
+	 * beyond them, so the shapes cover more than one page of a query.
+	 */
+	public function test_a_page_listing_past_a_page_of_shapes_reads_them_once(): void {
+		$reply     = null;
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::STATS_QUERY,
+			function () use ( &$reply ): void {
+				$rows = [];
+				for ( $i = 0; $i < Stats_Query::MAX_LIMIT; $i++ ) {
+					\array_push( $rows, [ 'url' => "https://seed.example/tui-6204-{$i}/", 'ms' => 2.5 ], [ 'url' => "https://seed.example/tui-6204-{$i}/", 'ms' => 3.5 ] );
+				}
+				for ( $i = 0; $i < 11; $i++ ) {
+					$rows[] = [ 'url' => "https://seed.example/hoiho-6204-{$i}/", 'ms' => 900.5 + $i ];
+				}
+				$this->seed_requests( $rows );
+				$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--limit=' . Stats_Query::MAX_LIMIT ] );
+			}
+		);
+
+		$shapes = \array_values( \array_filter( \array_column( $spans, 1 ), static fn ( mixed $label ): bool => \str_starts_with( Core::as_string( $label ), 'requests by page,server' ) ) );
+		$this->assertSame( [ 'requests by page,server', 'requests by page,server', 'requests by page,server,url' ], $shapes, 'the listing, then each shape read once' );
+		$this->assertIsArray( $reply );
+		$this->assertSame( 'https://seed.example/hoiho-6204-10/', $reply['slowest'][0]['url'] ?? null, 'the slowest page, past the listing, named by its one URL' );
+	}
+
 	/** The cheapest category stays on the board however many dearer categories precede it. */
 	public function test_the_cheapest_category_survives_past_a_full_page_of_categories(): void {
 		$rows = [];
@@ -2623,15 +2674,15 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The entries read stops at the deepest page a query may start, and says
-	 * so. The category row files through the writer; the 11,001 entries past
-	 * the bound are bulk-filled in SQL beside it, ids by join, so the test
-	 * spends its budget on the read it is about.
+	 * The entries read stops at `Stats_Query::EVERY_ROWS`, and says so. The
+	 * category row files through the writer; the 11,001 entries past the
+	 * bound are bulk-filled in SQL beside it, ids by join, so the test spends
+	 * its budget on the read it is about.
 	 */
-	public function test_the_entries_read_stops_at_the_offset_bound_and_says_so(): void {
+	public function test_the_entries_read_stops_at_its_bound_and_says_so(): void {
 		$this->seed_site_timings( [ [ 'category' => 'heavy', 'ms' => 900000.5, 'calls' => 9, 'requests' => 1 ] ] );
 		$db   = new \PDO( 'sqlite:' . $this->facts_file( 0 ), null, null, [ \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION ] );
-		$last = Stats_Query::MAX_OFFSET + Stats_Query::MAX_LIMIT;
+		$last = Stats_Query::EVERY_ROWS;
 		$db->exec( "WITH RECURSIVE n ( i ) AS ( SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < {$last} ) INSERT INTO entries ( name ) SELECT 'SELECT moa ' || i FROM n" );
 		$db->exec( "INSERT INTO timings_site ( bucket, server_id, worker, category_id, entry_id, listener, ms, calls, requests ) SELECT t.bucket, t.server_id, t.worker, t.category_id, e.id, 0, 0.5 + CAST( substr( e.name, 12 ) AS INTEGER ), 1, 1 FROM entries AS e, ( SELECT * FROM timings_site LIMIT 1 ) AS t WHERE e.name LIKE 'SELECT moa %'" );
 		$db     = null;
@@ -2640,7 +2691,7 @@ class PerformanceCITest extends TestCase {
 		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['leaderboard'];
 
 		$this->assertCount( 50, $board['categories']['heavy']['entries'] );
-		$lines = \array_filter( \array_slice( Core::$recent_log, $logged ), static fn ( string $line ): bool => \str_contains( $line, 'performance: leaderboard rows past the offset bound' ) );
+		$lines = \array_filter( \array_slice( Core::$recent_log, $logged ), static fn ( string $line ): bool => \str_contains( $line, 'performance: leaderboard rows past the read bound' ) );
 		$this->assertCount( 1, $lines );
 	}
 
@@ -4052,13 +4103,13 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A board deeper than the rows one read may page through still holds
-	 * every category's total: a cheap category whose total ranks past the
-	 * last page keeps its row, and the profiled total counts it. The bound
-	 * is shrunk to pages of 4 rows, the last starting at row 8.
+	 * A board deeper than the rows one read may take still holds every
+	 * category's total: a cheap category whose total ranks past the bound
+	 * keeps its row, and the profiled total counts it. The bound is shrunk
+	 * to 12 rows.
 	 */
-	public function test_a_board_past_the_paging_bound_keeps_every_category_total(): void {
-		Performance_CI_Node::$board_paging = static fn (): array => [ 4, 8 ];
+	public function test_a_board_past_its_bound_keeps_every_category_total(): void {
+		Performance_CI_Node::$board_rows = static fn (): int => 12;
 		$url = 'https://seed.example/kakariki-7391/';
 		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'ms' => 900.5, 'calls' => 9, 'requests' => 2 ] );
 		for ( $e = 0; $e < 12; $e++ ) {

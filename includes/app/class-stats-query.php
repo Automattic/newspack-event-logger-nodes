@@ -89,6 +89,9 @@ final class Stats_Query {
 	/** The farthest row a page may start at. */
 	public const MAX_OFFSET = 10000;
 
+	/** Most rows `every()` reads: as many as pages of `run()` reach. */
+	public const EVERY_ROWS = self::MAX_OFFSET + self::MAX_LIMIT;
+
 	/** Most tuples a `top` answer ranks in: the series one chart draws. */
 	public const MAX_TOP = 20;
 
@@ -587,7 +590,42 @@ final class Stats_Query {
 	 *                                   or a `top` it cannot rank.
 	 */
 	public static function run( array $spec ): array {
-		$spec   = self::checked( $spec );
+		return self::answer( self::checked( $spec ) );
+	}
+
+	/**
+	 * Every row a spec groups, in its sort's order, read in one statement up
+	 * to `$most`, and whether more lay past them: an unpaged `run()` for a
+	 * caller that wants the whole answer, which no page of `MAX_LIMIT` holds.
+	 *
+	 * @api Performance_CI_Node, whose leaderboard and page shapes read whole.
+	 * @param array<string,mixed> $spec As `run()` takes it, with no `limit`,
+	 *                                  `offset`, `top` or `also`.
+	 * @param int                 $most Most rows read, 1 to `EVERY_ROWS`.
+	 * @return array{0:list<list<mixed>>, 1:bool} The rows, then whether any
+	 *                                            lay past `$most`.
+	 * @throws \InvalidArgumentException As `run()`, on a `limit`, `offset`,
+	 *                                   `top` or `also`, or on `$most` outside
+	 *                                   1 to `EVERY_ROWS`.
+	 */
+	public static function every( array $spec, int $most ): array {
+		if ( [] !== \array_intersect_key( $spec, \array_flip( [ 'limit', 'offset', 'top', 'also' ] ) ) ) {
+			throw new \InvalidArgumentException( 'every reads every row: no limit, offset, top or also' );
+		}
+		if ( $most < 1 || $most > self::EVERY_ROWS ) {
+			throw new \InvalidArgumentException( \esc_html( 'every reads 1..' . self::EVERY_ROWS . " rows, not {$most}" ) );
+		}
+		$rows = self::answer( [ 'limit' => $most + 1 ] + self::checked( $spec ) )['rows'];
+		return [ \array_slice( $rows, 0, $most ), \count( $rows ) > $most ];
+	}
+
+	/**
+	 * `run()`'s answer to a checked spec.
+	 *
+	 * @param Spec $spec The checked spec.
+	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, groups:?int, available:bool, also?:list<list<mixed>>}
+	 */
+	private static function answer( array $spec ): array {
 		$read   = [ self::table( $spec ), $spec ];
 		$rows   = self::read(
 			self::label( $spec ),

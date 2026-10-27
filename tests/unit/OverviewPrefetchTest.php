@@ -204,22 +204,69 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertTrue( self::snapshot_published() );
 	}
 
-	/** An overview handed its servers names them and reads none. */
-	public function test_an_overview_handed_its_servers_names_them(): void {
-		$this->seed_request( [ 'server' => 'kea-7010.example', 'url' => 'https://kea-7010.example/a/', 'ms' => 8.5 ] );
-		$answer = Performance_CI_Node::answer_live( 'overview', self::overview_args( [] ), self::NOW, [ 'moa-7010.example', 'kea-7010.example' ] );
+	/** The job's overviews take their totals from the snapshot it builds, and read the rows for none. */
+	public function test_the_jobs_overviews_read_no_totals_from_the_rows(): void {
+		$read   = [];
+		$answer = null;
+		foreach ( self::entries_of( $this->logged_job(), 'prefetch answer (start)', 'prefetch answer (complete)', 'stats query (start)' ) as $entry ) {
+			if ( 'stats query (start)' !== $entry['k'] ) {
+				$answer = 'prefetch answer (start)' === $entry['k'] ? Core::as_string( $entry['l'] ?? '' ) : null;
+				continue;
+			}
+			if ( null !== $answer ) {
+				$read[ $answer ][] = $entry['l'] ?? null;
+			}
+		}
 
-		$this->assertSame( [ 'moa-7010.example', 'kea-7010.example' ], $answer['servers'], 'the list handed in, never a read' );
-		$this->assertSame( 1, $answer['totals']['requests'] );
+		$this->assertNotContains( 'requests', $read['overview'] ?? [ 'requests' ] );
+		$this->assertNotContains( 'requests', $read['server_overview'] ?? [ 'requests' ] );
+		$this->assertContains( 'timings by category,entry,listener', $read['overview'] ?? [], 'the leaderboard still reads its rows' );
 	}
 
-	/** The job answers its overview with the servers the build hands it, never a read of its own. */
-	public function test_the_jobs_overview_names_the_servers_it_is_handed(): void {
+	/** A stored overview's totals are the live overview's, an untimed request among them. */
+	public function test_a_stored_overviews_totals_are_the_live_ones(): void {
+		$this->seed_requests(
+			[
+				[ 'server' => 'kea-7013.example', 'url' => 'https://kea-7013.example/a/', 'ms' => 8.5, 'peak_mb' => 30.5 ],
+				[ 'server' => 'kea-7013.example', 'url' => 'https://kea-7013.example/b/', 'ms' => null, 'error' => 'T' ],
+				[ 'server' => 'kea-7013.example', 'url' => 'https://kea-7013.example/wp-cron.php', 'ms' => 3.5, 'worker' => 1 ],
+			]
+		);
+		$this->seed_request( [ 'server' => 'moa-7013.example', 'url' => 'https://moa-7013.example/c/', 'ms' => 61.25 ], partition: 1 );
+		$live = static fn ( string $server ): mixed => Performance_CI_Node::answer_live( 'overview', self::overview_args( '' === $server ? [] : [ "--server={$server}" ] ), self::NOW, null )['totals'];
+		$want = [ '' => $live( '' ), 'kea-7013.example' => $live( 'kea-7013.example' ) ];
+		$this->run_job();
+		self::clock( self::NOW + 9 );
+
+		foreach ( $want as $server => $totals ) {
+			$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '' === $server ? [] : [ "--server={$server}" ] );
+			$this->assertSame( $totals, \is_array( $stored ) ? $stored['totals'] : $stored, "scope '{$server}'" );
+		}
+		$this->assertSame( 2, $want['kea-7013.example']['requests'] ?? null, 'the worker request left out' );
+		$this->assertSame( 1, $want['kea-7013.example']['timed'] ?? null, 'the untimed one counted, not timed' );
+	}
+
+	/** The job answers its overview with the servers of the snapshot it builds. */
+	public function test_the_jobs_overview_names_the_servers_of_its_snapshot(): void {
 		$this->seed_request( [ 'server' => 'kea-7012.example', 'url' => 'https://kea-7012.example/a/', 'ms' => 8.5 ] );
+		$this->seed_requests(
+			[
+				[ 'server' => 'moa-7012.example', 'url' => 'https://moa-7012.example/b/', 'ms' => 4.5 ],
+				[ 'server' => 'moa-7012.example', 'url' => 'https://moa-7012.example/c/', 'ms' => 6.5 ],
+			],
+			partition: 1
+		);
+		$answers = [];
+		Url_Snapshot::publish(
+			self::NOW,
+			self::TTL,
+			static function ( Url_Snapshot $built ) use ( &$answers ): array {
+				$answers = ( new \ReflectionMethod( Overview_Prefetch::class, 'answers' ) )->invoke( null, Overview_Prefetch::stored(), self::NOW, $built );
+				return [];
+			}
+		);
 
-		$answers = ( new \ReflectionMethod( Overview_Prefetch::class, 'answers' ) )->invoke( null, Overview_Prefetch::stored(), self::NOW, [ 'moa-7012.example', 'kea-7012.example' ] );
-
-		$this->assertSame( [ 'moa-7012.example', 'kea-7012.example' ], $answers[ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) ]['servers'] );
+		$this->assertSame( [ 'moa-7012.example', 'kea-7012.example' ], Core::arr( $answers )[ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) ]['servers'] ?? null );
 	}
 
 	/** The stored servers are those the live read returns, ties and worker traffic included. */

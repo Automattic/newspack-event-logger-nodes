@@ -389,7 +389,7 @@ final class StatsQueryTest extends TestCase {
 			'kaka, workers left out'         => [ [ 'filter' => Performance_CI_Node::scope( 'kaka-7130.example', false ) ], [ [ 1, 1 ] ] ],
 			'by server, workers counted'     => [ [ 'group' => [ 'server' ], 'sort' => 'server' ], [ [ 'kaka-7130.example', 2, 2 ], [ 'kea-7130.example', 2, 1 ] ] ],
 			'by worker flag'                 => [ [ 'group' => [ 'worker' ], 'sort' => 'worker' ], [ [ 0, 3, 2 ], [ 1, 2, 2 ] ] ],
-			'the listing totals, kea scoped' => [ [ 'filter' => Performance_CI_Node::scope( 'kea-7130.example', false ), 'measure' => Performance_CI_Node::URL_TOTALS ], [ [ 3, 64.5, 30.5, 2, 0, 1 ] ] ],
+			'the listing totals, kea scoped' => [ [ 'filter' => Performance_CI_Node::scope( 'kea-7130.example', false ), 'measure' => Performance_CI_Node::URL_TOTALS ], [ [ 3, 3, 64.5, 30.5, 2, 0, 1 ] ] ],
 		];
 		foreach ( $expected as $name => [ $over, $rows ] ) {
 			$window   = Stats_Query::run( $counted( $over ) );

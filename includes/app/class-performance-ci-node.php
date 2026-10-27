@@ -166,7 +166,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SNAPSHOT_VARIES = [ 'server', 'page', 'include_workers', 'sort', 'order', 'offset', 'limit' ];
 
 	/** What a `urls` listing totals, ungrouped, live and in the snapshot. */
-	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
+	public const URL_TOTALS = [ 'count', 'timed', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
 
 	/** What one URL's stats read beyond `URL_MEASURES`, which no snapshot keeps. */
 	private const URL_DETAIL_EXTRAS = [ 'p50_ms', 'p95_ms', 'p99_ms', 'error_rate' ];
@@ -249,16 +249,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
 	/**
-	 * Leaderboard paging seam. Replaces the bound `timing_rows()` pages to,
-	 * `Stats_Query::MAX_LIMIT` rows a page and no page past
-	 * `Stats_Query::MAX_OFFSET`; tests shrink it, so a board deeper than the
+	 * Leaderboard bound seam. Replaces the most rows `timing_rows()` reads,
+	 * `Stats_Query::EVERY_ROWS`; tests shrink it, so a board deeper than the
 	 * bound fits a test's time budget.
-	 * Signature: `function (): array{0:int,1:int}`, the page size and the
-	 * farthest offset a page starts at.
+	 * Signature: `function (): int`.
 	 *
-	 * @var (\Closure(): array{0:int,1:int})|null
+	 * @var (\Closure(): int)|null
 	 */
-	public static ?\Closure $board_paging = null;
+	public static ?\Closure $board_rows = null;
 
 	/**
 	 * The overview-prefetch job's questions by stored key, read on this
@@ -1488,7 +1486,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( '' === $server ) {
 			return self::answer_live( $verb, $args, $now, null );
 		}
-		return [ 'as_of' => $now ] + self::answer_overview( $server, $now, null === $listed ? null : \array_values( Core::arr( $listed['servers'] ) ) );
+		return [ 'as_of' => $now ] + self::answer_overview( $server, $now, null === $listed ? null : \array_values( Core::arr( $listed['servers'] ) ), null );
 	}
 
 	/**
@@ -1585,19 +1583,20 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The live answer to `overview`, `urls` or `query` for bound arguments,
-	 * dated `$now`.
+	 * dated `$now`. An `overview` asked of a snapshot being built names its
+	 * servers and takes its totals from it.
 	 *
 	 * @api Overview_Prefetch, which stores these.
-	 * @param string                 $verb    `overview`, `urls` or `query`.
-	 * @param array<array-key,mixed> $args    Its bound arguments.
-	 * @param int                    $now     The reply's clock.
-	 * @param list<mixed>|null       $servers The servers an `overview` names; null reads them.
+	 * @param string                 $verb  `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args  Its bound arguments.
+	 * @param int                    $now   The reply's clock.
+	 * @param Url_Snapshot|null      $built The snapshot being built; null reads the rows.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
 	 */
-	public static function answer_live( string $verb, array $args, int $now, ?array $servers ): array {
+	public static function answer_live( string $verb, array $args, int $now, ?Url_Snapshot $built ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
-			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
+			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $built?->servers(), $built ),
 			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
@@ -1615,16 +1614,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * lacks, worker traffic counted as the list counts it; only a live read
 	 * names that server, and a server the list lacks costs one scoped count
 	 * a poll to rule it out. Stats that will not open answer `available`
-	 * false and null totals, never zeroes.
+	 * false and null totals, never zeroes. A snapshot being built, which
+	 * groups the same window, answers the totals off its own.
 	 *
-	 * @param string           $server  Server to scope to; '' is every server.
-	 * @param int              $now     The reply's clock.
-	 * @param list<mixed>|null $servers The `servers` to name; null reads them.
+	 * @param string            $server  Server to scope to; '' is every server.
+	 * @param int               $now     The reply's clock.
+	 * @param list<mixed>|null  $servers The `servers` to name; null reads them.
+	 * @param Url_Snapshot|null $built   The snapshot being built; null reads the rows.
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, owners: list<array{owner:string,ms_per_request:float,share:float,calls_per_request:float}>, available: bool}
 	 */
-	private static function answer_overview( string $server, int $now, ?array $servers ): array {
+	private static function answer_overview( string $server, int $now, ?array $servers, ?Url_Snapshot $built ): array {
 		$chart   = Bucket::last( Bucket::window(), $now );
-		$answer  = Stats_Query::run(
+		$answer  = $built?->totals( $server, false ) ?? Stats_Query::run(
 			[
 				'source'  => 'requests',
 				'group'   => [],
@@ -1822,38 +1823,29 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Every row of a timings spec grouped by `$group`, dearest first, a page
-	 * of `Stats_Query::MAX_LIMIT` at a time until a page comes back short,
-	 * and whether the read was cut. A board deeper than the farthest page a
-	 * query may start says so once a window and answers what it read, the
-	 * cheapest rows left out, cut.
+	 * Every row of a timings spec grouped by `$group`, dearest first, in one
+	 * read of up to `Stats_Query::EVERY_ROWS`, and whether the read was cut.
+	 * A board deeper than that says so once a window and answers what it
+	 * read, the cheapest rows left out, cut.
 	 *
 	 * @param list<string>                                                                                                          $group   The fields to group by.
-	 * @param array{source:string, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, now:int} $timings The timings spec, less its group, sort and page.
+	 * @param array{source:string, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, now:int} $timings The timings spec, less its group and sort.
 	 * @return array{0:list<list<mixed>>, 1:bool}
 	 */
 	private static function timing_rows( array $group, array $timings ): array {
-		[ $size, $farthest ] = ( self::$board_paging ?? static fn (): array => [ Stats_Query::MAX_LIMIT, Stats_Query::MAX_OFFSET ] )();
-		$rows                = [];
-		for ( $offset = 0; ; $offset += $size ) {
-			$page = Stats_Query::run(
-				[
-					'group'  => $group,
-					'sort'   => 'ms',
-					'order'  => 'desc',
-					'limit'  => $size,
-					'offset' => $offset,
-				] + $timings
-			)['rows'];
-			\array_push( $rows, ...$page );
-			if ( \count( $page ) < $size ) {
-				return [ $rows, false ];
-			}
-			if ( $offset + $size > $farthest ) {
-				Core::print_less_often( 'performance: leaderboard rows past the offset bound', ' — kept the ' . \count( $rows ) . ' dearest' );
-				return [ $rows, true ];
-			}
+		$most = ( self::$board_rows ?? static fn (): int => Stats_Query::EVERY_ROWS )();
+		$read = Stats_Query::every(
+			[
+				'group' => $group,
+				'sort'  => 'ms',
+				'order' => 'desc',
+			] + $timings,
+			$most
+		);
+		if ( $read[1] ) {
+			Core::print_less_often( 'performance: leaderboard rows past the read bound', ' — kept the ' . \count( $read[0] ) . ' dearest' );
 		}
+		return $read;
 	}
 
 	/**
@@ -2094,34 +2086,34 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Every row of a URL set's requests on the pages `$rows` name, grouped by
-	 * `$group` over one measure, `Stats_Query::MAX_LIMIT` at a time until a
-	 * short read; past `Stats_Query::MAX_OFFSET` the query refuses.
+	 * `$group` over one measure, in one read; past `Stats_Query::EVERY_ROWS`
+	 * it refuses.
 	 *
 	 * @param Url_Set $base A `url_set()` naming no page.
 	 * @param array<list<mixed>> $rows    Page rows, each its hash first.
 	 * @param list<string>       $group   The fields to group by, `page` first.
 	 * @param string             $measure The measure.
 	 * @return list<list<mixed>>
+	 * @throws \InvalidArgumentException When the pages hold more than
+	 *                                   `Stats_Query::EVERY_ROWS` rows.
 	 */
 	private static function every_row( array $base, array $rows, array $group, string $measure ): array {
 		$pages = \array_values( \array_unique( \array_map( static fn ( array $row ): string => Core::as_string( $row[0] ), $rows ) ) );
-		$found = [];
-		for ( $offset = 0; [] !== $pages; $offset += Stats_Query::MAX_LIMIT ) {
-			$read = Stats_Query::run(
-				[
-					'group'   => $group,
-					'filter'  => [ 'page' => $pages ] + $base['filter'],
-					'measure' => [ $measure ],
-					'sort'    => 'page',
-					'order'   => 'asc',
-					'limit'   => Stats_Query::MAX_LIMIT,
-					'offset'  => $offset,
-				] + $base
-			)['rows'];
-			\array_push( $found, ...$read );
-			if ( \count( $read ) < Stats_Query::MAX_LIMIT ) {
-				break;
-			}
+		if ( [] === $pages ) {
+			return [];
+		}
+		[ $found, $cut ] = Stats_Query::every(
+			[
+				'group'   => $group,
+				'filter'  => [ 'page' => $pages ] + $base['filter'],
+				'measure' => [ $measure ],
+				'sort'    => 'page',
+				'order'   => 'asc',
+			] + $base,
+			Stats_Query::EVERY_ROWS
+		);
+		if ( $cut ) {
+			throw new \InvalidArgumentException( 'the listed pages hold more than ' . \esc_html( (string) Stats_Query::EVERY_ROWS ) . ' rows' );
 		}
 		return $found;
 	}
