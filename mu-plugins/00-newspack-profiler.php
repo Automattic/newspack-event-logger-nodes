@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Newspack Profiler
- * Description: Times each active plugin's load — duration, new classes, new files — records the moment PHP began the request, and catches the PHP errors raised before Event Logger Nodes boots. Event Logger Nodes writes the measurements to the firehose when it is active; nothing here depends on it.
+ * Description: Times each active plugin's load — duration, new classes, new files — records the moment PHP began the request, catches the PHP errors raised before Event Logger Nodes boots, and lets a hub's block fetch load only the substrate and the logger. Event Logger Nodes writes the measurements to the firehose when it is active; nothing here depends on it.
  * Version: 0.159.1
  * Author: Automattic
  *
@@ -18,6 +18,10 @@
  *
  * Its error handler is registered here, ahead of every plugin, so a warning a
  * plugin raises while it loads is caught; it chains to the handler before it.
+ *
+ * A hub's fetch of a log block, a POST to the substrate's `/command` route
+ * carrying only `raw-logs` messages, loads newspack-nodes and the event logger
+ * alone; see `newspack_profiler_lean_plugins()`.
  *
  * Deploy manually: Copy to wp-content/mu-plugins/00-newspack-profiler.php
  * Remove: Delete the file. No persistent state, no options, no database writes.
@@ -200,6 +204,117 @@ $newspack_profiler_state = [
 		return $plugins;
 	},
 	1
+);
+
+if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
+	/**
+	 * The plugins a request loads. A hub fetching a block of a log sends a
+	 * POST to the substrate's `/command` route in which every message goes to
+	 * `raw-logs`. That request loads two plugins: the substrate, which
+	 * answers it, and the event logger, which logs it. Each is matched by its
+	 * file name, whatever directory holds it. The request loads none of the
+	 * site's other plugins, which cost a WP Cloud site about a second to start
+	 * and serve nothing the request asks for. Either of the two may be absent:
+	 * the event logger boots silently without the substrate, and when the
+	 * site has neither, the route does not exist and the request answers 404.
+	 * Every other request loads every active plugin.
+	 *
+	 * Skipping a plugin removes behaviour and grants nothing, because the
+	 * substrate still checks each message's signature. The match is exact, so
+	 * that no other script runs without the site's plugins. The front
+	 * controller must serve the request, with no path info. The path must be
+	 * the install's own `/wp-json` route under pretty permalinks, or the
+	 * install's root with `rest_route`. The body must be the substrate's
+	 * `text/plain`, which PHP never parses as a form. The body is read only
+	 * when all of that holds, and a line that is not a packed message
+	 * addressed to `raw-logs` loads the whole site.
+	 *
+	 * @param list<string>         $plugins The active plugins, as `active_plugins` lists them.
+	 * @param array<array-key,mixed> $server The request's `$_SERVER`.
+	 * @param \Closure():string    $body    Reads the request body.
+	 * @return list<string> The plugins to load, in the site's order.
+	 */
+	function newspack_profiler_lean_plugins( array $plugins, array $server, \Closure $body ): array {
+		$field  = static fn ( string $key ): string => \is_string( $server[ $key ] ?? null ) ? $server[ $key ] : '';
+		$script = $field( 'SCRIPT_NAME' );
+		if ( 'POST' !== $field( 'REQUEST_METHOD' )
+			|| 'index.php' !== \basename( $script )
+			|| '' !== $field( 'PATH_INFO' )
+			|| ! \str_starts_with( \strtolower( $field( 'CONTENT_TYPE' ) ), 'text/plain' ) ) {
+			return $plugins;
+		}
+		$root  = \rtrim( \dirname( $script ), '/' );
+		$route = '/newspack-nodes/v1/command';
+		$uri   = $field( 'REQUEST_URI' );
+		$path  = (string) \wp_parse_url( $uri, \PHP_URL_PATH );
+		\parse_str( (string) \wp_parse_url( $uri, \PHP_URL_QUERY ), $query );
+		// Under plain permalinks, WordPress renders a page for a /wp-json path.
+		$by_path  = '' !== \get_option( 'permalink_structure' ) && "{$root}/wp-json{$route}" === $path && [] === $query;
+		$by_query = \in_array( $path, [ "{$root}/", $script ], true ) && $route === ( $query['rest_route'] ?? null );
+		if ( ! $by_path && ! $by_query ) {
+			return $plugins;
+		}
+		$lines = \array_filter( \explode( "\n", $body() ), static fn ( string $line ): bool => '' !== \trim( $line ) );
+		if ( [] === $lines ) {
+			return $plugins;
+		}
+		foreach ( $lines as $line ) {
+			$message = \json_decode( $line, true );
+			// TO sits at index 3; the Message class has not loaded yet.
+			if ( ! \is_array( $message ) || 'raw-logs' !== ( $message[3] ?? null ) ) {
+				return $plugins;
+			}
+		}
+		// Match each plugin by file name, whatever directory holds it.
+		return \array_values( \array_filter( $plugins, static fn ( string $plugin ): bool => \in_array( \basename( $plugin ), [ 'newspack-nodes.php', 'newspack-event-logger-nodes.php' ], true ) ) );
+	}
+}
+
+/**
+ * Request-body seam for the narrowing below: replaces the read of
+ * `php://input`. Tests assign a closure before loading the drop-in.
+ * Signature: `function (): string`.
+ *
+ * @var \Closure():string|null $newspack_profiler_body
+ */
+global $newspack_profiler_body;
+// phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsRemoteFile -- the request body, not a remote file.
+$newspack_profiler_body ??= static fn (): string => (string) \file_get_contents( 'php://input' );
+
+/** Whether the next read of `active_plugins` is the one the plugin loop makes. */
+$newspack_profiler_loop_read = false;
+
+\add_action(
+	'muplugins_loaded',
+	/** Arm the narrowing for the next read, which the plugin loop makes. This runs last, so every other listener reads the stored list. */
+	static function () use ( &$newspack_profiler_loop_read ): void {
+		$newspack_profiler_loop_read = true;
+	},
+	\PHP_INT_MAX
+);
+
+\add_filter(
+	'option_active_plugins',
+	/**
+	 * Narrow the read of `active_plugins` that the plugin loop makes during a
+	 * hub's fetch; see `newspack_profiler_lean_plugins()`. Only that read is
+	 * narrowed. A read that an mu-plugin makes before it, or that a plugin
+	 * makes after it, returns the stored list, so a write built from either
+	 * read keeps every plugin the site activated.
+	 *
+	 * @param mixed $plugins The stored `active_plugins` value.
+	 * @return mixed The plugins to load.
+	 */
+	static function ( $plugins ) use ( &$newspack_profiler_loop_read ) {
+		/** @var \Closure():string $newspack_profiler_body */
+		global $newspack_profiler_body;
+		if ( ! $newspack_profiler_loop_read || ! \is_array( $plugins ) ) {
+			return $plugins;
+		}
+		$newspack_profiler_loop_read = false;
+		return \newspack_profiler_lean_plugins( \array_values( \array_filter( $plugins, 'is_string' ) ), $_SERVER, $newspack_profiler_body );
+	},
+	2
 );
 
 \add_action(
