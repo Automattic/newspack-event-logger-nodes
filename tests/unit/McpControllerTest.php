@@ -324,7 +324,7 @@ class McpControllerTest extends TestCase {
 			$this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'initialize' ], $bearer )
 		)['result']['instructions'];
 
-		foreach ( [ 'masked as `?`', '`?oid=?`', '`rest_route`', '`utm_*` and `fbclid` are dropped', 'its worker as a bare key', 'lowercased and as `https://`', 'its scheme, query and worker mark dropped', 'timeouts and fatals only', '`status_class=5`', '`mu:<slug>`', '`theme:<slug>`', '`dropin`', '`(unowned)` is time no owned frame encloses', '`(unmeasured)` the duration no span covers', 'do not sum to the request', '`Y-m-d-H-i` UTC' ] as $term ) {
+		foreach ( [ 'masked as `?`', '`?oid=?`', '`rest_route`', '`utm_*` and `fbclid` are dropped', 'its worker as a bare key', 'lowercased and as `https://`', 'its scheme, query and worker mark dropped', 'timeouts and fatals only', '`status_class=5`', '`mu:<slug>`', '`theme:<slug>`', '`dropin`', '`platform` for the host\'s own code', 'a top-level hook whose listeners are timed', '`(unowned)` is time no owned frame encloses', '`(unmeasured)` the duration no span covers', 'do not sum to the request', '`Y-m-d-H-i` UTC' ] as $term ) {
 			$this->assertStringContainsString( $term, $instructions, $term );
 		}
 		$this->assertStringStartsWith( Mcp_Door::FENCE_NOTE . ' The ruleset tools change what the site logs', $instructions );

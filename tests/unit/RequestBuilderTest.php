@@ -1290,8 +1290,8 @@ class RequestBuilderTest extends TestCase {
 	/**
 	 * A hook timed inside a listener is the listener's owner's, and so is the
 	 * query it asks for, less what that query's own owner took; the listener's
-	 * time leaves the top-level hook's `(unowned)`, and an inherited span adds
-	 * time and no call.
+	 * time leaves the top-level hook, whose own time is core's, and an
+	 * inherited span adds time and no call.
 	 */
 	public function test_owners_inherit_down_the_stack_and_a_listener_leaves_its_hook(): void {
 		$record = $this->record_after(
@@ -1311,12 +1311,125 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEquals(
 			[
 				'kea-7746'     => [ 25.5, 1 ],
-				'core'         => [ 4.5, 1 ],
-				'(unowned)'    => [ 3.25, 0 ],
+				'core'         => [ 7.75, 1 ],
 				'(unmeasured)' => [ 16.75, 0 ],
 			],
 			$record['owners']
 		);
+	}
+
+	/**
+	 * A top-level hook whose listeners are timed spends the rest of its time
+	 * in core's dispatch, so that time is core's. A top-level hook that timed
+	 * no listener, and a listener timed outside any hook, leave the time
+	 * `(unowned)`: nothing says who ran it.
+	 */
+	public function test_a_top_level_hooks_own_time_is_cores_once_a_listener_is_timed(): void {
+		$record = $this->record_after(
+			[
+				[ '[tui-6712] Tui->boot @10 (start)' ],
+				[ '[tui-6712] Tui->boot @10 (complete)', [ 'duration_ms' => 2.5 ] ],
+				[ 'wp_head hook (start)' ],
+				[ '[tui-6712] Tui->head @10 (start)' ],
+				[ '[tui-6712] Tui->head @10 (complete)', [ 'duration_ms' => 6.0 ] ],
+				[ 'wp_head hook (complete)', [ 'duration_ms' => 9.75 ] ],
+				[ 'body_class hook (start)' ],
+				[ 'body_class hook (complete)', [ 'duration_ms' => 1.25 ] ],
+			],
+			30.0
+		);
+
+		$this->assertEquals(
+			[
+				'tui-6712'     => [ 8.5, 2 ],
+				'core'         => [ 3.75, 0 ],
+				'(unowned)'    => [ 1.25, 0 ],
+				'(unmeasured)' => [ 16.5, 0 ],
+			],
+			$record['owners']
+		);
+	}
+
+	/**
+	 * A hook's claim to core is settled when it closes, so the spans inside it
+	 * inherit the same owner whichever side of a timed listener they ran on:
+	 * an ownerless listener before one and after one both stay `(unowned)`.
+	 */
+	public function test_an_ownerless_listener_stays_unowned_either_side_of_a_timed_one(): void {
+		$record = $this->record_after(
+			[
+				[ 'wp_head hook (start)' ],
+				[ 'Ghost_4417->a @5 (start)' ],
+				[ 'Ghost_4417->a @5 (complete)', [ 'duration_ms' => 1.0 ] ],
+				[ '[tui-6712] Tui->head @10 (start)' ],
+				[ '[tui-6712] Tui->head @10 (complete)', [ 'duration_ms' => 2.0 ] ],
+				[ 'Ghost_4417->c @20 (start)' ],
+				[ 'Ghost_4417->c @20 (complete)', [ 'duration_ms' => 1.5 ] ],
+				[ 'wp_head hook (complete)', [ 'duration_ms' => 5.5 ] ],
+			],
+			20.0
+		);
+
+		$this->assertEquals(
+			[
+				'tui-6712'     => [ 2.0, 1 ],
+				'core'         => [ 1.0, 0 ],
+				'(unowned)'    => [ 2.5, 0 ],
+				'(unmeasured)' => [ 14.5, 0 ],
+			],
+			$record['owners']
+		);
+	}
+
+	/**
+	 * Only a hook the request itself fired is core's: one fired inside an
+	 * ownerless listener keeps that listener's `(unowned)`, though its own
+	 * listener is timed.
+	 */
+	public function test_a_hook_inside_an_ownerless_listener_is_no_top_level_hook(): void {
+		$record = $this->record_after(
+			[
+				[ 'init hook (start)' ],
+				[ 'Ghost_4417->boot @5 (start)' ],
+				[ 'gettext hook (start)' ],
+				[ '[tui-6712] Tui->translate @10 (start)' ],
+				[ '[tui-6712] Tui->translate @10 (complete)', [ 'duration_ms' => 1.0 ] ],
+				[ 'gettext hook (complete)', [ 'duration_ms' => 1.5 ] ],
+				[ 'Ghost_4417->boot @5 (complete)', [ 'duration_ms' => 3.0 ] ],
+				[ 'init hook (complete)', [ 'duration_ms' => 4.0 ] ],
+			],
+			10.0
+		);
+
+		$this->assertEquals(
+			[
+				'tui-6712'     => [ 1.0, 1 ],
+				'core'         => [ 1.0, 0 ],
+				'(unowned)'    => [ 2.0, 0 ],
+				'(unmeasured)' => [ 6.0, 0 ],
+			],
+			$record['owners']
+		);
+	}
+
+	/**
+	 * A Query Monitor timer between a top-level hook and its listener hides
+	 * nothing: the listener still settles the hook's own time as core's.
+	 */
+	public function test_a_listener_inside_a_query_monitor_timer_still_claims_its_hook(): void {
+		$record = $this->record_after(
+			[
+				[ 'wp_footer hook (start)' ],
+				[ 'qm (start)', [ 'l' => '[weka-31] footer' ] ],
+				[ '[tui-6712] Tui->foot @10 (start)' ],
+				[ '[tui-6712] Tui->foot @10 (complete)', [ 'duration_ms' => 2.0 ] ],
+				[ 'qm (complete)', [ 'duration_ms' => 3.0 ] ],
+				[ 'wp_footer hook (complete)', [ 'duration_ms' => 4.0 ] ],
+			],
+			10.0
+		);
+
+		$this->assertEquals( [ 'tui-6712' => [ 2.0, 1 ], 'core' => [ 2.0, 0 ], '(unmeasured)' => [ 6.0, 0 ] ], $record['owners'] );
 	}
 
 	/** A plugin's load span is its plugin's, and leaves the request's own time. */
@@ -1354,7 +1467,7 @@ class RequestBuilderTest extends TestCase {
 		);
 
 		$this->assertEquals(
-			[ 'ruru-3301' => [ 10.0, 1 ], '(unowned)' => [ 2.25, 0 ], '(unmeasured)' => [ 27.75, 0 ] ],
+			[ 'ruru-3301' => [ 10.0, 1 ], 'core' => [ 2.25, 0 ], '(unmeasured)' => [ 27.75, 0 ] ],
 			$record['owners']
 		);
 	}
@@ -1456,8 +1569,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEquals(
 			[
 				'kea-7746'     => [ 6.5, 1 ],
-				'core'         => [ 2.5, 1 ],
-				'(unowned)'    => [ 2.0, 0 ],
+				'core'         => [ 4.5, 1 ],
 				'(unmeasured)' => [ 29.0, 0 ],
 			],
 			$record['owners']
@@ -1509,7 +1621,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 7, 'r-owner', 'process (complete)', [ 'duration_ms' => 20.0, 'status_code' => 200 ] );
 
 		$this->assertEquals(
-			[ 'kea-7746' => [ 6.5, 1 ], '(unowned)' => [ 1.75, 0 ], '(unmeasured)' => [ 11.75, 0 ] ],
+			[ 'kea-7746' => [ 6.5, 1 ], 'core' => [ 1.75, 0 ], '(unmeasured)' => [ 11.75, 0 ] ],
 			$this->captured_request( $capture )['owners']
 		);
 	}
@@ -1556,6 +1668,23 @@ class RequestBuilderTest extends TestCase {
 		$rb  = $this->restore_reshaped(
 			static function ( array &$envelope ): void {
 				$envelope['stack'] = \array_map( static fn ( array $frame ): array => \array_slice( $frame, 0, 2 ), $envelope['stack'] );
+			},
+			$buf
+		);
+
+		$this->assertSame( 0, $this->cache_size( $rb ) );
+		$this->assertStringContainsString( 'dropping a restored envelope lacking owner slots: r-kea-5521', $buf );
+	}
+
+	/**
+	 * A restored envelope whose frames end before the core-claim slot, as an
+	 * envelope checkpointed before that slot existed does, is dropped too.
+	 */
+	public function test_an_envelope_restored_without_the_claim_slot_is_dropped_and_logged(): void {
+		$buf = '';
+		$rb  = $this->restore_reshaped(
+			static function ( array &$envelope ): void {
+				$envelope['stack'] = \array_map( static fn ( array $frame ): array => \array_slice( $frame, 0, 6 ), $envelope['stack'] );
 			},
 			$buf
 		);

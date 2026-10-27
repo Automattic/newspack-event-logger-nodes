@@ -123,7 +123,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-config.php` | Application config loader and the `<eln:>` token resolver; substrate keys live in `newspack-nodes` |
 | `includes/class-{rule,rule-set,rule-matcher}.php` | The per-URL logging ruleset: value object, durable two-tier storage, matcher |
 | `includes/class-log-manager.php` | Per-request firehose writer; redacts URL secrets; refuses root |
-| `includes/class-owner.php` | `Owner::of()`, the one classifier from a file to its plugin, `mu:<slug>`, `theme:<slug>`, `dropin` or `core`, and `label()`, which prefixes every label that names code with `[<owner>] ` |
+| `includes/class-owner.php` | `Owner::of()`, the one classifier from a file to its plugin, `mu:<slug>`, `theme:<slug>`, `dropin`, `platform` or `core`, and `label()`, which prefixes every label that names code with `[<owner>] ` |
 | `includes/class-object-cache-counts.php` | What a request asked of the object cache, read where core's cache and WP Cloud's memcached drop-in each keep the truth |
 | `includes/class-{request-builder,request-flight,flame-builder,stats-builder,auto-tuner}-node.php` | Request assembly, the in-flight snapshot sibling, the flames, the stats rows read back from each flame's record, auto-tune |
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |

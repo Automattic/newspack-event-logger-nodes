@@ -24,6 +24,7 @@ class OwnerTest extends TestCase {
 		'content'    => '/srv/kea-7746/wp-content',
 		'abspath'    => '/srv/kea-7746/',
 		'managed'    => '/srv/managed-6620',
+		'scripts'    => '/srv/scripts-6620',
 	];
 
 	protected function setUp(): void {
@@ -61,10 +62,18 @@ class OwnerTest extends TestCase {
 			'a path outside every root'      => [ '/etc/kea-7746.php', '' ],
 			'no file at all'                 => [ '', '' ],
 			'a managed plugin'               => [ '/srv/managed-6620/plugins/boost-3311/4.2.1-b.7/app/class-boost.php', 'boost-3311' ],
-			'a managed plugin without a version' => [ '/srv/managed-6620/plugins/boost-3311/stray.php', '' ],
+			'a managed plugin without a version' => [ '/srv/managed-6620/plugins/boost-3311/stray.php', 'platform' ],
 			'a managed theme'                => [ '/srv/managed-6620/themes/kowhai-8840/2.28.1/inc/template-tags.php', 'theme:kowhai-8840' ],
-			'a managed theme without a version' => [ '/srv/managed-6620/themes/kowhai-8840/style.php', '' ],
-			'a managed root outside its kinds' => [ '/srv/managed-6620/languages/kowhai.php', '' ],
+			'a managed theme without a version' => [ '/srv/managed-6620/themes/kowhai-8840/style.php', 'platform' ],
+			'a managed drop-in'              => [ '/srv/managed-6620/drop-ins/object-cache.php', 'dropin' ],
+			'a managed drop-in core reads on error' => [ '/srv/managed-6620/drop-ins/fatal-error-handler.php', 'dropin' ],
+			'a managed drop-ins file that is no drop-in' => [ '/srv/managed-6620/drop-ins/kaka-6620.php', 'platform' ],
+			'a platform mu-plugin'           => [ '/srv/managed-6620/mu-plugins/tieke-6620.php', 'platform' ],
+			'a platform mu-plugin directory' => [ '/srv/managed-6620/mu-plugins/tieke-6620/tieke.php', 'platform' ],
+			'a managed root outside its kinds' => [ '/srv/managed-6620/languages/kowhai.php', 'platform' ],
+			'a sibling of the managed root'  => [ '/srv/managed-6620-old/mu-plugins/tieke.php', '' ],
+			'a platform script'              => [ '/srv/scripts-6620/object-cache.memcached.php', 'platform' ],
+			'a sibling of the scripts root'  => [ '/srv/scripts-6620-old/env.php', '' ],
 			'code eval() ran in a plugin'    => [ "{$content}/plugins/weka-4410/includes/class-weka.php(12) : eval()'d code", '' ],
 		];
 	}
@@ -211,7 +220,7 @@ class OwnerTest extends TestCase {
 			$managed = \realpath( "{$base}/managed-5531" );
 
 			$this->assertSame( 'nuc-5531', Owner::of( "{$managed}/plugins/nuc-5531/nuc-5531.php" ) );
-			$this->assertSame( '', Owner::of( "{$managed}/plugins/stray-5531/stray.php" ) );
+			$this->assertSame( 'platform', Owner::of( "{$managed}/plugins/stray-5531/stray.php" ) );
 		} finally {
 			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
 		}
@@ -264,6 +273,19 @@ class OwnerTest extends TestCase {
 		}
 	}
 
+	/**
+	 * Core served from inside the managed tree stays core: `ABSPATH` is tried
+	 * before the managed root, and only what core names no owner for there
+	 * falls through to the platform.
+	 */
+	public function test_core_inside_the_managed_tree_is_core(): void {
+		self::own_files_under( [ 'abspath' => '/srv/managed-6620/core/7.1.3/' ] + self::ROOTS );
+
+		$this->assertSame( 'core', Owner::of( '/srv/managed-6620/core/7.1.3/wp-includes/class-wp-hook.php' ) );
+		$this->assertSame( 'core', Owner::of( '/srv/managed-6620/core/7.1.3/wp-settings.php' ) );
+		$this->assertSame( 'platform', Owner::of( '/srv/managed-6620/core/7.1.3/vendor-6620/loader.php' ) );
+	}
+
 	/** A file is classified once a process: its second answer is the first. */
 	public function test_a_file_keeps_the_owner_it_was_first_given(): void {
 		$file = self::ROOTS['plugins'] . '/weka-4410/weka.php';
@@ -300,6 +322,9 @@ class OwnerTest extends TestCase {
 		$this->assertSame( 'theme:pukeko-2207', Owner::of( \WP_CONTENT_DIR . '/themes/pukeko-2207/functions.php' ) );
 		$this->assertSame( 'dropin', Owner::of( \WP_CONTENT_DIR . '/advanced-cache.php' ) );
 		$this->assertSame( 'jetpack', Owner::of( '/wordpress/plugins/jetpack/16.4-a.3/jetpack.php' ) );
+		$this->assertSame( 'dropin', Owner::of( '/wordpress/drop-ins/object-cache.php' ) );
+		$this->assertSame( 'platform', Owner::of( '/wordpress/mu-plugins/edge-cache/edge-cache.php' ) );
+		$this->assertSame( 'platform', Owner::of( '/scripts/object-cache.memcached.php' ) );
 		$this->assertSame( 'theme:newspack-theme', Owner::of( '/wordpress/themes/newspack-theme/2.28.1/functions.php' ) );
 	}
 
@@ -366,7 +391,7 @@ class OwnerTest extends TestCase {
 	/** Only a bare slug is a plugin; the other owners are something else. */
 	public function test_a_plugin_owner_is_a_bare_slug(): void {
 		$this->assertTrue( Owner::is_plugin( 'weka-4410' ) );
-		foreach ( [ '', 'mu:ruru-3301', 'theme:pukeko-2207', 'dropin', 'core' ] as $owner ) {
+		foreach ( [ '', 'mu:ruru-3301', 'theme:pukeko-2207', 'dropin', 'core', 'platform' ] as $owner ) {
 			$this->assertFalse( Owner::is_plugin( $owner ), $owner );
 		}
 	}

@@ -279,9 +279,10 @@ A performance verb tells where its time goes inside its command span (`Performan
 
 ## Reading the owner tables
 
-`dump_request` carries `owners`, `dump_url` `aggregate_owners` and `overview` `owners`: each owner's self time, so the rows add up to the part of the request's duration that spans cover. A bracketed name is the code that ran, `theme:<slug>` for a theme, `mu:<slug>` for an mu-plugin, `core` for WordPress, and the rest plugin slugs.
+`dump_request` carries `owners`, `dump_url` `aggregate_owners` and `overview` `owners`: each owner's self time, so the rows add up to the part of the request's duration that spans cover. A bracketed name is the code that ran, `theme:<slug>` for a theme, `mu:<slug>` for an mu-plugin, `dropin` for a drop-in, `platform` for the host's own code in `/wordpress/`, `core` for WordPress, and the rest plugin slugs.
 
-- **`(unowned)`** is time in frames that name no owner and sit under no owned frame: a top-level hook's own dispatch, a custom event, a platform span outside any listener. It also holds a plugin's listener on a hook the rule does not mark significant, because only listeners on significant hooks are wrapped.
+- **`core`** also holds a top-level hook's own time once one of its listeners is timed: the rest is `WP_Hook` dispatching them.
+- **`(unowned)`** is time in frames that name no owner and sit under no owned frame: a top-level hook that timed no listener, a custom event, the logger's own spans outside any listener. That covers a plugin's listener on a hook the rule does not mark significant, because only listeners on significant hooks are wrapped.
 - **The time no span covers** is listed under no owner: it is the share bar's unfilled remainder, the request's duration less every span the record holds. It grows when hooks are untimed or a fold dropped detail.
 - **To shrink `(unowned)` and the uncovered time,** mark the lifecycle hooks significant: the rule editor's "Measure plugin time" adds them, `sql` and `http`, and switches on Log queries, Log HTTP and Log plugin loads. Save the rule, then read a request it logs.
 - **The Overview and URL tables read per request.** `ms_per_request` divides by every timed request folded, so a plugin that runs on one request in ten shows a tenth of its cost. A table that is missing after an upgrade is the old snapshot, or stats still refilling after the schema reset.

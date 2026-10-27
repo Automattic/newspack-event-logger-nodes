@@ -188,8 +188,15 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** A stack frame's slot holding whether it is a Query Monitor timer. */
 	private const TIMER_SLOT = 5;
 
+	/**
+	 * A stack frame's slot holding a hook's claim to core: false for a hook
+	 * the request fired, true once a listener inside it closes, null for any
+	 * other frame.
+	 */
+	private const CLAIM_SLOT = 6;
+
 	/** The request's own frame, every stack's bottom: unowned, nothing inside yet. */
-	private const REQUEST_FRAME = [ Log_Manager::REQUEST_LABEL, '', Owner::UNOWNED, 0.0, false, false ];
+	private const REQUEST_FRAME = [ Log_Manager::REQUEST_LABEL, '', Owner::UNOWNED, 0.0, false, false, null ];
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
@@ -761,8 +768,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Push state onto request stack.
 	 *
-	 * Stack frames are [ state, label, owner, inner, named, timer ], settled
-	 * as the frame opens. Three kinds of span name their own owner, and
+	 * Stack frames are [ state, label, owner, inner, named, timer, claim ],
+	 * settled as the frame opens. Three kinds of span name their own owner, and
 	 * `named` says so: a listener in its state, a plugin load as
 	 * `<slug> plugin`, and a transport in its label, the code that asked.
 	 * Every other span takes its parent's: a hook, whose label under
@@ -790,7 +797,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool}> $stack */
+		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack */
 		$stack = &$request->stack;
 		// Dynamic \stdClass property: per-state profile records keyed by state.
 		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
@@ -815,7 +822,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			? Owner::of_label( Flame_Tree::node_name( $state, $label ) )
 			: $settled['owner'];
 		$parent  = [] === $stack ? Owner::UNOWNED : $stack[ \count( $stack ) - 1 ][ self::OWNER_SLOT ];
-		$stack[] = [ $state, $label, '' === $own ? $parent : $own, 0.0, '' !== $own, 'qm' === $settled['kind'] ];
+		$claim   = 'hook' === $settled['kind'] && self::fired_by_the_request( $stack ) ? false : null;
+		$stack[] = [ $state, $label, '' === $own ? $parent : $own, 0.0, '' !== $own, 'qm' === $settled['kind'], $claim ];
 
 		$profile = &$profiles[ $state ];
 		if ( $label && \count( $profile['entries'] ) < self::MAX_PROFILE_ENTRY_LABELS && ! isset( $profile['entries'][ $label ] ) ) {
@@ -862,7 +870,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool}> $stack */
+		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack */
 		$stack = &$request->stack;
 		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
 		$profiles = &$request->profiles;
@@ -906,16 +914,20 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			unset( $profile );
 		}
 
+		$kind = $this->kind_of_state( $state )['kind'];
+
 		/** @var array<array-key,array{0: float,1: int}> $owners */
 		$owners = &$request->owners;
 		$gain   = self::fold_owner( $owners, $frame, $time, $inner );
 		$parent = \count( $stack ) - 1;
 		if ( isset( $stack[ $parent ] ) ) {
 			$stack[ $parent ][ self::INNER_SLOT ] += $gain;
+			if ( 'listener' === $kind ) {
+				self::settle_claim( $stack );
+			}
 		}
 
 		// A listener's or a QM timer's time is already its ancestors'.
-		$kind = $this->kind_of_state( $state )['kind'];
 		if ( ! empty( $stack ) && 'qm' !== $kind && 'listener' !== $kind ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
@@ -953,7 +965,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * spliced away, which credit nothing themselves.
 	 *
 	 * @param array<array-key,array{0: float,1: int}>                    $owners Owner → [ ms, calls ], mutated.
-	 * @param array{0: string,1: string,2: string,3: float,4: bool,5: bool} $frame  The frame that closed.
+	 * @param array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool} $frame  The frame that closed.
 	 * @param float                                                      $time   Its duration in ms.
 	 * @param float                                                      $inner  The ms its closed children took.
 	 * @return float The ms its parent's `inner` gains.
@@ -962,9 +974,52 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( $frame[ self::TIMER_SLOT ] ) {
 			return $inner;
 		}
-		$owner            = $frame[ self::OWNER_SLOT ];
+		$owner            = true === $frame[ self::CLAIM_SLOT ] ? Owner::CORE : $frame[ self::OWNER_SLOT ];
 		$owners[ $owner ] = [ ( $owners[ $owner ][0] ?? 0.0 ) + $time - $inner, ( $owners[ $owner ][1] ?? 0 ) + ( $frame[ self::NAMED_SLOT ] ? 1 : 0 ) ];
 		return $time;
+	}
+
+	/**
+	 * Mark the hook a listener just closed in, the nearest frame that is no
+	 * Query Monitor timer, as core's once the request fired it. Its listeners
+	 * are timed, so the rest of its time is `WP_Hook` dispatching them; a
+	 * hook that times none keeps its owner, since its own time then holds
+	 * every listener it ran. `fold_owner()` reads the claim when the hook
+	 * closes, so the spans inside it inherit one owner however they fall.
+	 *
+	 * @param list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack The stack, the listener popped, mutated.
+	 */
+	private static function settle_claim( array &$stack ): void {
+		$host = self::untimed_top( $stack );
+		if ( null !== $host && false === $stack[ $host ][ self::CLAIM_SLOT ] ) {
+			$stack[ $host ][ self::CLAIM_SLOT ] = true;
+		}
+	}
+
+	/**
+	 * Whether a span opening now is the request's own: only Query Monitor
+	 * timers stand between it and the request frame, so a hook fired inside
+	 * a listener, owned or not, is not.
+	 *
+	 * @param list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack The stack it opens on.
+	 */
+	private static function fired_by_the_request( array $stack ): bool {
+		$host = self::untimed_top( $stack );
+		return null !== $host && Log_Manager::REQUEST_LABEL === $stack[ $host ][0];
+	}
+
+	/**
+	 * The index of the topmost frame that is no Query Monitor timer, or null.
+	 *
+	 * @param list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack The stack.
+	 */
+	private static function untimed_top( array $stack ): ?int {
+		for ( $i = \count( $stack ) - 1; $i >= 0; $i-- ) {
+			if ( ! $stack[ $i ][ self::TIMER_SLOT ] ) {
+				return $i;
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -1781,7 +1836,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			return false;
 		}
 		foreach ( $envelope['stack'] as $frame ) {
-			if ( ! \is_array( $frame ) || ! \array_key_exists( self::TIMER_SLOT, $frame ) ) {
+			if ( ! \is_array( $frame ) || ! \array_key_exists( self::CLAIM_SLOT, $frame ) ) {
 				return false;
 			}
 		}
