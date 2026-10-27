@@ -109,30 +109,32 @@ final class Overview_Prefetch {
 		$questions = self::stored();
 		Event_Framework::instance()->uninterruptible(
 			static function () use ( $questions, $now, $interval ): void {
-				Url_Snapshot::publish( $now, self::SNAPSHOT_INTERVALS * $interval, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
+				Url_Snapshot::publish( $now, self::SNAPSHOT_INTERVALS * $interval, static fn ( Url_Snapshot $built ): array => self::answers( $questions, $now, $built ) );
 			}
 		);
 	}
 
 	/**
 	 * Each of `$questions`' live answer by key, a template's once for each
-	 * of `$servers`, keyed as that server's poll binds it, and an `overview`
-	 * naming `$servers`; each is a `prefetch answer` span labelled with its
-	 * question's name. An answer the stats could not open for is never stored.
+	 * of the servers `$built` names, keyed as that server's poll binds it,
+	 * and an `overview` naming them, its totals the snapshot's own; each is
+	 * a `prefetch answer` span labelled with its question's name. An answer
+	 * the stats could not open for is never stored.
 	 *
 	 * @param array<string,array{name:string,verb:string,tokens:list<string>,args:array<string,mixed>}> $questions The `stored()` questions.
 	 * @param int                                                                                     $now       The job's tick.
-	 * @param list<string>                                                                            $servers   The window's servers, busiest first.
+	 * @param Url_Snapshot                                                                            $built     The snapshot being built.
 	 * @return array<string,array<string,mixed>>
 	 * @throws \InvalidArgumentException As `Performance_CI_Node::answer_live()`.
 	 */
-	private static function answers( array $questions, int $now, array $servers ): array {
+	private static function answers( array $questions, int $now, Url_Snapshot $built ): array {
 		$answers = [];
+		$servers = $built->servers();
 		$verbs   = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		foreach ( $questions as [ 'name' => $name, 'verb' => $verb, 'args' => $args, 'tokens' => $tokens ] ) {
 			foreach ( self::is_template( $tokens ) ? $servers : [ null ] as $server ) {
 				$bound  = null === $server ? $args : Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) );
-				$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $bound, $now, $servers ), start: [ 'l' => $name ] );
+				$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $bound, $now, $built ), start: [ 'l' => $name ] );
 				if ( true === ( $answer['available'] ?? null ) ) {
 					$answers[ self::key( $verb, $bound ) ] = $answer;
 				}

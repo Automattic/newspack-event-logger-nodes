@@ -161,8 +161,8 @@ final class UrlSnapshotTest extends TestCase {
 		Url_Snapshot::publish(
 			self::NOW,
 			self::TTL,
-			static function ( array $servers ) use ( &$handed ): array {
-				$handed = $servers;
+			static function ( Url_Snapshot $built ) use ( &$handed ): array {
+				$handed = $built->servers();
 				return [];
 			}
 		);
@@ -519,7 +519,7 @@ final class UrlSnapshotTest extends TestCase {
 		$shapes = $snapshot->shapes( self::shaped( '' ), 'absent-4471.example', true, 'count', 'desc', 0, 50 );
 
 		$this->assertSame( [ [], [], [], [] ], [ $pages['rows'], $pages['also'], $shapes['rows'], $shapes['also'] ] );
-		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->shape_totals( self::shaped( '' ), 'absent-4471.example', true )['rows'] );
+		$this->assertSame( [ [ 0, 0, null, null, 0, 0, 0 ] ], $snapshot->shape_totals( self::shaped( '' ), 'absent-4471.example', true )['rows'] );
 	}
 
 	/**
@@ -567,7 +567,7 @@ final class UrlSnapshotTest extends TestCase {
 				$this->assertTrue( $totals['available'], $label );
 			}
 		}
-		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
+		$this->assertSame( [ [ 0, 0, null, null, 0, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
 	}
 
 	/**
@@ -955,7 +955,7 @@ final class UrlSnapshotTest extends TestCase {
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 		$this->assertSame( [], $snapshot->pages( '', true, 'count', 'desc', 0, 50 )['rows'] );
-		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->totals( '', true )['rows'] );
+		$this->assertSame( [ [ 0, 0, null, null, 0, 0, 0 ] ], $snapshot->totals( '', true )['rows'] );
 	}
 
 	public function test_a_publish_leaves_no_build_file_and_replaces_the_last(): void {
