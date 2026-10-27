@@ -98,7 +98,7 @@ The substrate's security model tables its own doors: the auth, spawn, health-run
 |---|---|---|
 | The MCP server | A bearer credential naming a live session, 20 calls per ten seconds, each slot freeing nine to ten seconds after its call on memcached, refused with a 503 when no cache can meter them | Strict shape; constant-time key compare; a session an OAuth grant minted for another resource is refused; scope can only subtract from the session's. Two tools write; both need `tune`. Every success result leaves inside a `<site-data>` fence the `initialize` instructions explain, hex-escaped so no payload can close it. |
 | The `admin_post` handler, reset settings (the substrate registers three more: its own reset, flush cache and the OAuth approval decision) | `manage` with a nonce | Nonce, then capability. |
-| The profiler mu-plugin | Every request | Per-plugin load timings only, once the logger has started. |
+| The profiler mu-plugin | Every request | Per-plugin load timings only, once the logger has started. A POST to the substrate's `/command` route loads only the substrate and this plugin when WordPress's front controller serves it with no `PATH_INFO`, at the install's own route, with a `text/plain` body whose every line is a packed message to `raw-logs` ([`newspack_profiler_lean_plugins()`](../mu-plugins/00-newspack-profiler.php#L247)). That request runs without the site's other plugins and any REST restriction they place; the substrate still checks every message's signature, and `raw-logs` answers only reads. |
 
 [MCP: one route, eleven tools](architecture-guide.md#mcp-one-route-eleven-tools) covers the MCP server; [The profiler drop-in](architecture-guide.md#the-profiler-drop-in) covers the mu-plugin.
 

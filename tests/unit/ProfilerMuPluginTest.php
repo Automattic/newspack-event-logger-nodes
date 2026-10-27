@@ -23,6 +23,29 @@ class ProfilerMuPluginTest extends TestCase {
 	/** @var callable|null The error handler the test began under. */
 	private $handler;
 
+	/** The directory WordPress's layouts stand in under, for the class. */
+	private static string $base = '';
+
+	/** `ABSPATH` for the standard layout, and the files its front controller loaded. */
+	private static array $front = [];
+
+	public static function setUpBeforeClass(): void {
+		self::$base = \sys_get_temp_dir() . '/kea-5108-' . \bin2hex( \random_bytes( 4 ) );
+		\mkdir( self::$base . '/core', 0700, true );
+		\mkdir( self::$base . '/htdocs' );
+		\mkdir( self::$base . '/site/wp', 0700, true );
+		\symlink( '../core', self::$base . '/htdocs/__wp__' );
+		$core        = \realpath( self::$base . '/core' );
+		self::$front = [ self::$base . '/core/', static fn (): array => [ "{$core}/index.php", "{$core}/wp-blog-header.php" ] ];
+	}
+
+	public static function tearDownAfterClass(): void {
+		\unlink( self::$base . '/htdocs/__wp__' );
+		foreach ( [ 'site/wp', 'site', 'htdocs', 'core', '' ] as $dir ) {
+			\rmdir( self::$base . '/' . $dir );
+		}
+	}
+
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_options']['permalink_structure'] = '/%year%/%postname%/';
@@ -38,7 +61,7 @@ class ProfilerMuPluginTest extends TestCase {
 			\restore_error_handler();
 		}
 		$GLOBALS['_wp_actions'] = $this->actions;
-		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['_wp_options']['permalink_structure'], $GLOBALS['_wp_options']['home'] );
+		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['newspack_profiler_loaded'], $GLOBALS['_wp_options']['permalink_structure'], $GLOBALS['_wp_options']['home'] );
 		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] );
@@ -246,7 +269,6 @@ class ProfilerMuPluginTest extends TestCase {
 		return [
 			'REQUEST_METHOD' => 'POST',
 			'REQUEST_URI'    => '/wp-json/newspack-nodes/v1/command',
-			'SCRIPT_NAME'    => '/index.php',
 			'CONTENT_TYPE'   => 'text/plain; charset=UTF-8',
 			...$overrides,
 		];
@@ -260,11 +282,11 @@ class ProfilerMuPluginTest extends TestCase {
 		$cases = [
 			'the pretty route'      => [ 'https://kea-5108.test', [] ],
 			'the query route'       => [ 'https://kea-5108.test', [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ] ],
-			'a site in a directory' => [ 'https://kea-5108.test/blog', [ 'REQUEST_URI' => '/blog/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/blog/index.php' ] ],
+			'a site in a directory' => [ 'https://kea-5108.test/blog', [ 'REQUEST_URI' => '/blog/wp-json/newspack-nodes/v1/command' ] ],
 		];
 		foreach ( $cases as $case => [ $home, $overrides ] ) {
 			$GLOBALS['_wp_options']['home'] = $home;
-			$this->assertSame( $lean, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body ), $case );
+			$this->assertSame( $lean, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body, ...self::$front ), $case );
 		}
 	}
 
@@ -284,10 +306,10 @@ class ProfilerMuPluginTest extends TestCase {
 			'the route under another path'      => [ [ 'REQUEST_URI' => '/kea/wp-json/newspack-nodes/v1/command' ], $fetch ],
 			'the query route on another page'   => [ [ 'REQUEST_URI' => '/kea-5108/?rest_route=/newspack-nodes/v1/command' ], $fetch ],
 			'the route with another rest_route' => [ [ 'REQUEST_URI' => '/wp-json/newspack-nodes/v1/command?rest_route=/wp/v2/users' ], $fetch ],
-			'another script, by its path info'  => [ [ 'REQUEST_URI' => '/wp-login.php/wp-json/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/wp-login.php', 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
+			'another script, by its path info'  => [ [ 'REQUEST_URI' => '/wp-login.php/wp-json/newspack-nodes/v1/command', 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
 			'path info on the front controller' => [ [ 'PATH_INFO' => '/wp-json/newspack-nodes/v1/command' ], $fetch ],
-			'the admin index, by rest_route'    => [ [ 'REQUEST_URI' => '/wp-admin/index.php?rest_route=/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/wp-admin/index.php' ], $fetch ],
-			'another directory\'s index.php'    => [ [ 'REQUEST_URI' => '/kea/index.php?rest_route=/newspack-nodes/v1/command', 'SCRIPT_NAME' => '/kea/index.php' ], $fetch ],
+			'the admin index, by rest_route'    => [ [ 'REQUEST_URI' => '/wp-admin/index.php?rest_route=/newspack-nodes/v1/command' ], $fetch ],
+			'another directory\'s index.php'    => [ [ 'REQUEST_URI' => '/kea/index.php?rest_route=/newspack-nodes/v1/command' ], $fetch ],
 			'a form body'                       => [ [ 'CONTENT_TYPE' => 'application/x-www-form-urlencoded' ], $fetch ],
 			'a multipart body'                  => [ [ 'CONTENT_TYPE' => 'multipart/form-data; boundary=kea' ], $fetch ],
 			'no content type'                   => [ [ 'CONTENT_TYPE' => '' ], $fetch ],
@@ -295,7 +317,32 @@ class ProfilerMuPluginTest extends TestCase {
 			'a body that is not a batch'        => [ [], "kea-5108\n" ],
 		];
 		foreach ( $cases as $case => [ $overrides, $body ] ) {
-			$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body ), $case );
+			$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( $overrides ), static fn (): string => $body, ...self::$front ), $case );
+		}
+	}
+
+	/**
+	 * WordPress's front controller has loaded `wp-blog-header.php` from
+	 * `ABSPATH` by the plugin loop, wherever the server says the script sits: WP Cloud's core `index.php` behind the docroot's `__wp__`
+	 * symlink, or the `index.php` at the home path of a site that gives
+	 * WordPress its own directory. A request that loaded no such file runs
+	 * another script, and loads every plugin.
+	 */
+	public function test_the_front_controller_has_loaded_wp_blog_header_by_the_plugin_loop(): void {
+		self::load_drop_in();
+		$body  = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
+		$core  = \realpath( self::$base . '/core' );
+		$own   = \realpath( self::$base . '/site' );
+		$lean  = [ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ];
+		$cases = [
+			'WP Cloud, through the __wp__ symlink' => [ self::$base . '/htdocs/__wp__/', [ "{$core}/index.php", "{$core}/wp-blog-header.php" ], $lean ],
+			'WordPress in its own directory'       => [ self::$base . '/site/wp/', [ "{$own}/index.php", "{$own}/wp/wp-blog-header.php" ], $lean ],
+			'a script that loads no header'        => [ self::$base . '/core/', [ "{$core}/wp-login.php", "{$core}/wp-load.php" ], self::SITE_PLUGINS ],
+			'another install\'s header'            => [ self::$base . '/core/', [ "{$own}/index.php", "{$own}/wp/wp-blog-header.php" ], self::SITE_PLUGINS ],
+			'an ABSPATH that resolves nowhere'     => [ self::$base . '/kea/', [ "{$core}/index.php", "{$core}/wp-blog-header.php" ], self::SITE_PLUGINS ],
+		];
+		foreach ( $cases as $case => [ $abspath, $loaded, $expected ] ) {
+			$this->assertSame( $expected, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server(), $body, $abspath, static fn (): array => $loaded ), $case );
 		}
 	}
 
@@ -309,10 +356,10 @@ class ProfilerMuPluginTest extends TestCase {
 		self::load_drop_in();
 		$body = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
 
-		$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server(), $body ), 'the pretty route' );
+		$this->assertSame( self::SITE_PLUGINS, \newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server(), $body, ...self::$front ), 'the pretty route' );
 		$this->assertSame(
 			[ 'newspack-nodes/newspack-nodes.php', 'newspack-event-logger-nodes/newspack-event-logger-nodes.php' ],
-			\newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ] ), $body ),
+			\newspack_profiler_lean_plugins( self::SITE_PLUGINS, self::fetch_server( [ 'REQUEST_URI' => '/?rest_route=/newspack-nodes/v1/command' ] ), $body, ...self::$front ),
 			'the query route'
 		);
 	}
@@ -333,7 +380,7 @@ class ProfilerMuPluginTest extends TestCase {
 			'neither'                               => [ [ 'akismet/akismet.php', 'woocommerce/woocommerce.php' ], [] ],
 		];
 		foreach ( $cases as $case => [ $site, $lean ] ) {
-			$this->assertSame( $lean, \newspack_profiler_lean_plugins( $site, self::fetch_server(), $body ), $case );
+			$this->assertSame( $lean, \newspack_profiler_lean_plugins( $site, self::fetch_server(), $body, ...self::$front ), $case );
 		}
 	}
 
@@ -345,10 +392,11 @@ class ProfilerMuPluginTest extends TestCase {
 	 */
 	public function test_the_filter_narrows_the_plugin_loops_read_alone(): void {
 		require_once \dirname( __DIR__ ) . '/fixtures/wp-plugin-loop.php';
-		$GLOBALS['_wp_actions']            = [];
-		$GLOBALS['newspack_profiler_body'] = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
-		$server                            = $_SERVER;
-		$_SERVER                           = self::fetch_server();
+		$GLOBALS['_wp_actions']              = [];
+		$GLOBALS['newspack_profiler_body']   = static fn (): string => self::command_to( 'raw-logs', 'read_block' ) . "\n";
+		$GLOBALS['newspack_profiler_loaded'] = static fn (): array => [ '/index.php', '/wp-blog-header.php' ];
+		$server                              = $_SERVER;
+		$_SERVER                             = self::fetch_server();
 		try {
 			self::load_drop_in();
 			$before = \apply_filters( 'option_active_plugins', self::SITE_PLUGINS );
@@ -391,7 +439,8 @@ class ProfilerMuPluginTest extends TestCase {
 			static function () use ( &$read ): string {
 				++$read;
 				return '';
-			}
+			},
+			...self::$front
 		);
 
 		$this->assertSame( 0, $read );
