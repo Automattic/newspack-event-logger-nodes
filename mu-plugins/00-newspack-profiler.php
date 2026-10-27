@@ -219,10 +219,12 @@ if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
 	 * site has neither, the route does not exist and the request answers 404.
 	 * Every other request loads every active plugin.
 	 *
-	 * Skipping a plugin removes behaviour and grants nothing, because the
-	 * substrate still checks each message's signature. The match is exact, so
-	 * that no other script runs without the site's plugins. The front
-	 * controller must serve the request, with no path info. The path must be
+	 * Skipping a plugin removes all of its behaviour, any restriction it
+	 * places on REST requests included; the substrate's own signature check
+	 * still decides every message. The match is exact, so that no other
+	 * script runs without the site's plugins. The site's own front controller,
+	 * the `index.php` at its home path, must serve the request, with no path
+	 * info. The path must be
 	 * the install's own `/wp-json` route under pretty permalinks, or the
 	 * install's root with `rest_route`. The body must be the substrate's
 	 * `text/plain`, which PHP never parses as a form. The body is read only
@@ -237,13 +239,14 @@ if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
 	function newspack_profiler_lean_plugins( array $plugins, array $server, \Closure $body ): array {
 		$field  = static fn ( string $key ): string => \is_string( $server[ $key ] ?? null ) ? $server[ $key ] : '';
 		$script = $field( 'SCRIPT_NAME' );
+		$home   = \get_option( 'home' );
+		$root   = \rtrim( (string) \wp_parse_url( \is_string( $home ) ? $home : '', \PHP_URL_PATH ), '/' );
 		if ( 'POST' !== $field( 'REQUEST_METHOD' )
-			|| 'index.php' !== \basename( $script )
+			|| "{$root}/index.php" !== $script
 			|| '' !== $field( 'PATH_INFO' )
 			|| ! \str_starts_with( \strtolower( $field( 'CONTENT_TYPE' ) ), 'text/plain' ) ) {
 			return $plugins;
 		}
-		$root  = \rtrim( \dirname( $script ), '/' );
 		$route = '/newspack-nodes/v1/command';
 		$uri   = $field( 'REQUEST_URI' );
 		$path  = (string) \wp_parse_url( $uri, \PHP_URL_PATH );
