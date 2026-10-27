@@ -1736,6 +1736,24 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
+	it( "says a scrolled page's shapes failed in the first slot it shows", () => {
+		shapesView( PIWAKAWAKA_VIEW, {
+			loading: false,
+			error: 'filter page=c4d2b17e0a99 refused',
+		} );
+		scrollTo( 1 + 50, 10 );
+		const { container, unmount } = mount( {
+			urls: [ { ...PIWAKAWAKA, shapes: 2400 } ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		} );
+
+		expect( rowsOf( container )[ 0 ].textContent ).toBe(
+			'Could not load URLs: filter page=c4d2b17e0a99 refused'
+		);
+		unmount();
+	} );
+
 	it( 'leaves a one-shape page and an unexpanded page shut', () => {
 		const { container, unmount } = mount( {
 			urls: [ RURU, PIWAKAWAKA ],

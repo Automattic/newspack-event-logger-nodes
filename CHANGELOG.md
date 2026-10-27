@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A page's URL list says it is loading, or why it failed, wherever it is scrolled.** The note sat in the page's first URL slot alone, so a list opened partway down, at its fiftieth URL say, showed blank rows while its URLs loaded and when they failed. The first slot shown carries it now.
+
 ## [0.159.0] - 2026-10-27
 
 ### Changed

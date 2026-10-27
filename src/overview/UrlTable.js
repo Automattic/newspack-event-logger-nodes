@@ -578,7 +578,8 @@ const rowState = ( row, selected, busy ) => {
 /**
  * One run of an expanded page's shape slots, filled from the window of shapes
  * its slice's view holds, each shape keyed by its hash; a slot outside that
- * window waits for the next. Not memoized: the slice is built
+ * window waits for the next, and until the view answers, the run's first
+ * slot says it is loading or why it failed. Not memoized: the slice is built
  * after the row that reads it, so it re-reads its view on the table's next
  * render.
  *
@@ -616,7 +617,7 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
 		) : (
 			<NoteRow
 				key={ `#${ index }` }
-				text={ 0 === index && unanswered ? waiting : '' }
+				text={ 0 === at && unanswered ? waiting : '' }
 			/>
 		);
 	} );
