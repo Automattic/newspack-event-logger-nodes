@@ -4,8 +4,8 @@
  * aggregated firehose entries.
  *
  * The rewrite is a graph node the `aggregator` topology wires between the
- * per-spoke substrate `Remote_Source_Node`s and the firehose `Topic`, keeping
- * the substrate Remote_Source / SSE_In application-agnostic.
+ * per-spoke substrate brokers and the firehose `Topic`, keeping the
+ * substrate's brokers application-agnostic.
  *
  * `Job_Worker_Node` selects its handler map off the entry kind alone —
  * `newspack_nodes/job_handlers` for `job`, `newspack_nodes/remote_job_handlers`
@@ -33,7 +33,7 @@ use Newspack_Nodes\Node;
  *
  * The node takes no constructor arguments, exposes no verbs and adds no state
  * of its own, so the topology makes a single `remote-job-rewrite` and every
- * spoke's Remote_Source connects to that one instance.
+ * spoke's broker connects to that one instance.
  */
 class Remote_Job_Rewrite_Node extends Node {
 

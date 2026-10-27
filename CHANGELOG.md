@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`aggregator` and `hub` fetch each spoke over HTTP.** Each spoke's broker is an `HTTP_Source`, which reads the spoke's firehose and PHP error log in blocks over one command channel and holds none of the spoke's SSE slots or PHP workers between fetches; a `Remote_Source` held one of each for as long as its stream was open.
+- **The substrate floor rises to 2.132.0**, the first release whose `HTTP_Source` keeps up with a busy spoke and reports the counters and status the aggregator dashboard reads. `check-substrate-floor.sh` reads PHP calls and does not see what a topology builds.
+
+### Added
+- **`aggregator-sse` and `hub-sse`**, which build a `Remote_Source` per spoke, so `aggregator` and `hub` each have a streaming twin. A hub moved from `hub` to `hub-sse` starts new cursors under the new name, at the end of each spoke's log.
+
 ## [0.158.5] - 2026-10-27
 
 ### Fixed
