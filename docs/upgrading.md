@@ -6,9 +6,13 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **This release needs newspack-nodes 2.131.0.** Below it the plugin goes
+- **This release needs newspack-nodes 2.132.0.** Below it the plugin goes
   dormant behind an admin notice naming both versions. Update the
   substrate first.
+- **`aggregator` and `hub` fetch each spoke over HTTP.** To keep streaming
+  over SSE, activate `hub-sse` or `aggregator-sse` in their place. Their
+  readers start new cursors under the new name, at the end of each
+  spoke's log, so what the old readers had not read is skipped.
 - **The stats schema is version 11, and a site refills its stats once.** The
   `flame-facts` Row_Table gains `pages`, `timings_page` and `urls_window`,
   its `requests_url` index widens, and `category_window` is keyed by

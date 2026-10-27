@@ -1,30 +1,32 @@
-# Aggregator topology (hub side).
+# Aggregator topology (hub side), fetching each spoke over HTTP.
 #
 #   spokes:<id> ─┬─ firehose.p<n> ─→ Remote_Job_Rewrite ─→ Topic (firehose:topic)
 #                └─ sources:php ──→ Partition (php-errors:partition)
 #   php-errors:tail (the hub's own error log) ─→ php-errors:partition
 #
+# `spokes` is a Vault_Group over Vault group `spoke`: it builds one
+# HTTP_Source per member, `{id}` substituted for each Vault id, and follows
+# the Vault on reload. A spoke is added or dropped by editing group
+# membership, never by hand-editing this file. Each HTTP_Source is a broker
+# with one command channel to its spoke. Over it, the broker fetches the two
+# logs its `add_source` lines name, `firehose.p{partition}` and `sources:php`
+# (the spoke's PHP error log), in blocks, so it holds none of the spoke's SSE
+# slots and no PHP worker there between fetches. Each log is read by its own
+# Remote_Consumer, published as `spokes:<id>:<stamp>`, with its own cursor
+# under `<topology>.{id}/`. Never hand-wire a second broker for a spoke
+# already in the group: two readers pulling the same spoke log under
+# independent cursors ingest every entry twice.
+#
+# `aggregator-sse` builds the same graph with a Remote_Source per spoke,
+# which streams both logs over one SSE connection, holding one of the
+# spoke's SSE slots and one of its PHP workers while it is open. The two
+# files differ only in the broker's class, each complete on its own. A reader's
+# cursor lives under `<topology>.{id}/`, so a hub moved from `hub` to
+# `hub-sse` starts fresh cursors at the end of each spoke's log.
+#
 # Remote_Job_Rewrite flips aggregated k:"job" entries to k:"remote_job" so they
 # dispatch on the hub via newspack_nodes/remote_job_handlers; non-job entries
 # pass through. The firehose Topic is the multi-partition, KEY-routed sink.
-#
-# `spokes` is a Vault_Group over Vault group `spoke`: it builds one
-# Remote_Source per member, `{id}` substituted for each Vault id, and follows
-# the Vault on reload — a spoke is added or dropped by editing group
-# membership, never by hand-editing this file. Each Remote_Source is a broker
-# holding ONE connection to its spoke, which carries both of the spoke's
-# streams its `add_source` lines name, `firehose.p{partition}` and
-# `sources:php` (the spoke's PHP error log); each stream is read by its own
-# Remote_Consumer, published as `spokes:<id>:<stamp>`, with its own cursor
-# under `<topology>.{id}/`. Never hand-wire a second Remote_Source for a spoke
-# already in the group beside it: two readers pulling the same spoke stream
-# under independent cursors double-ingest every entry.
-#
-# Each `add_source` line names a spoke log and the node its lines go to,
-# which is also the declaration of where a spoke's lines may go: a firehose
-# record carries no TO of its own, and a reader refuses any line a spoke
-# addressed rather than letting it name a node in this worker's graph — the
-# refusal consumes the line, and the cursor advances past it.
 #
 # `php-errors.p0` collects every spoke's PHP error log and the hub's own,
 # which `php-errors:tail` follows. A line from the hub's own log opens its FROM
@@ -33,10 +35,16 @@
 # is its only writer, so `void_warranty` lifts its 4 KB cap and a database
 # error line past PIPE_BUF still lands.
 #
+# Each `add_source` line names a spoke log and the node its lines go to,
+# which is also the declaration of where a spoke's lines may go: a firehose
+# record carries no TO of its own, and a reader refuses any line a spoke
+# addressed rather than letting it name a node in this worker's graph — the
+# refusal consumes the line, and the cursor advances past it.
+#
 # Every `sources:<name>` a pair or a Tail names must resolve where it is
-# read, or that leg fails loud: a spoke lacking `php` refuses the
-# subscription, costing the hub that spoke's whole stream, and a hub lacking
-# it fails this load. The built-in `php` needs PHP's `error_log` set to an
+# read, or that leg fails loud: a spoke lacking `php` refuses that reader's
+# fetches, which the broker's status reports, and a hub lacking it fails this
+# load. The built-in `php` needs PHP's `error_log` set to an
 # absolute file path; `wp nodes doctor`'s `log-sources` row checks what each
 # site reads itself.
 #
@@ -44,7 +52,7 @@
 # `{partition}`, so each worker pulls its own partition of every spoke's
 # firehose; `sources:php` and the hub's own log name no partition, so worker
 # p0 alone reads them. On a multi-partition hub, worker p0 carries
-# `firehose.p0` and `sources:php` on one connection per spoke and tails the
+# `firehose.p0` and `sources:php` on one channel per spoke and tails the
 # hub's own log; p1 and up each carry their own firehose partition.
 #
 # assume_clean_shutdown and set_multi_writer are recorded ONCE, on the group,
@@ -62,10 +70,11 @@
 # an offsetlog is a reader's cursor and the reader is the FLEET, so two hubs
 # pulling one spoke stream must not share one.
 #
-# Each broker patrons its own SSE_In + HTTP_Out and publishes a status
-# snapshot under the install-scoped cache key remote:<broker>:p{partition},
-# e.g. remote:spokes:<id>:p0. SSL/HTTPS policy comes from the substrate
-# vault_verify_ssl / vault_require_ssl config — not a per-topology setter.
+# Each broker patrons its own HTTP_Out and publishes a status snapshot under
+# the install-scoped cache key remote:<broker>:p{partition}, e.g.
+# remote:spokes:<id>:p0, with the same fields whichever broker built
+# it. SSL/HTTPS policy comes from the substrate vault_verify_ssl /
+# vault_require_ssl config — not a per-topology setter.
 #
 # A Vault id colliding with a declared node name — `config`, the slot of the
 # group's own `spokes:config` — fails the load, naming the id; on reload it
@@ -80,16 +89,17 @@ var on_demand_idle = 0
 
 include topic-probe
 
-make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id}
+make_node Vault_Group spokes HTTP_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id}
 command_node spokes:config add_source firehose.p{partition} remote-job-rewrite
 command_node spokes:config add_source sources:php php-errors:partition
+command_node spokes:config assume_clean_shutdown true
+command_node spokes:config set_multi_writer true
+
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic     firehose:topic       <config:logs_dir>/firehose.p{partition}
 make_node File_Tail php-errors:tail      sources:php <config:offsets_dir>/<topology>.php-errors.tail <config:deadletter_dir>/<topology>.php-errors.tail
 make_node Partition php-errors:partition <config:logs_dir>/php-errors.p0
 
-command_node spokes:config assume_clean_shutdown true
-command_node spokes:config set_multi_writer true
 connect_node php-errors:tail php-errors:partition
 command_node php-errors:partition:config void_warranty
 connect_node remote-job-rewrite firehose:topic

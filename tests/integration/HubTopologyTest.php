@@ -21,8 +21,10 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\HTTP_Out_Node;
+use Newspack_Nodes\HTTP_Source_Node;
 use Newspack_Nodes\Lock_Node;
 use Newspack_Nodes\Null_Node;
+use Newspack_Nodes\Remote_Broker_Node;
 use Newspack_Nodes\Remote_Source_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Settings_Sync_Node;
@@ -32,6 +34,7 @@ use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Topology_Registry;
 use Newspack_Nodes\Vault;
 use Newspack_Nodes\Vault_Group_Node;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class HubTopologyTest extends TestCase {
 
@@ -73,7 +76,20 @@ class HubTopologyTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function load_hub(): Command_Interpreter_Node {
+	/**
+	 * Each hub, with the broker it builds per spoke and the names that
+	 * broker takes.
+	 *
+	 * @return array<string,array{string,class-string,int}>
+	 */
+	public static function hubs(): array {
+		return [
+			'hub'     => [ 'hub', HTTP_Source_Node::class, 17 ],
+			'hub-sse' => [ 'hub-sse', Remote_Source_Node::class, 18 ],
+		];
+	}
+
+	private function load_hub( string $name = 'hub' ): Command_Interpreter_Node {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
@@ -81,46 +97,64 @@ class HubTopologyTest extends TestCase {
 		$interpreter->name( '_command_interpreter' );
 		$interpreter->sink( $router );
 
-		Topology_Loader::load( 'hub', 0, $interpreter );
+		Topology_Loader::load( $name, 0, $interpreter );
 		return $interpreter;
 	}
 
-	public function test_frontmatter_pins_num_partitions_to_one(): void {
-		$front = Topology_Analyzer::frontmatter( 'hub' );
+	#[DataProvider( 'hubs' )]
+	public function test_frontmatter_pins_num_partitions_to_one( string $hub ): void {
+		$front = Topology_Analyzer::frontmatter( $hub );
 		$this->assertArrayHasKey( 'num_partitions', $front );
 		$this->assertSame( '1', $front['num_partitions'] );
 	}
 
-	public function test_synthesis_honours_the_pin_over_a_nondefault_global(): void {
-		$entry = Topology_Registry::synthesize_entry( 'hub', 3, Lock_Node::STALE_TIMEOUT, 0 );
+	#[DataProvider( 'hubs' )]
+	public function test_synthesis_honours_the_pin_over_a_nondefault_global( string $hub ): void {
+		$entry = Topology_Registry::synthesize_entry( $hub, 3, Lock_Node::STALE_TIMEOUT, 0 );
 		$this->assertNotNull( $entry );
 		// The global num_partitions passed in here (3) is what a worker fleet
 		// would otherwise mount per topology; the pin must win regardless.
 		$this->assertSame( 1, $entry['num_partitions'] );
 	}
 
-	public function test_mounts_the_firehose_leg(): void {
-		$this->load_hub();
+	#[DataProvider( 'hubs' )]
+	public function test_mounts_the_firehose_leg( string $hub, string $class ): void {
+		$this->load_hub( $hub );
 
 		$this->assertInstanceOf( Vault_Group_Node::class, Core::node( 'spokes' ) );
 		$this->assertInstanceOf( Remote_Job_Rewrite_Node::class, Core::node( 'remote-job-rewrite' ) );
 		$this->assertInstanceOf( Topic_Node::class, Core::node( 'firehose:topic' ) );
-		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'spokes:tw7' ) );
+		$this->assertInstanceOf( $class, Core::node( 'spokes:tw7' ) );
 	}
 
 	/**
 	 * What one spoke costs the hub worker's registry, as `hub-control.md` and
-	 * its `d07b` sheet count it: eighteen names for its broker, and two for
+	 * its `d07b` sheet count it: seventeen names for an HTTP_Source broker,
+	 * eighteen for a Remote_Source, whose stream adds `:sse-in`, and two for
 	 * its settings link.
 	 */
-	public function test_one_spoke_costs_eighteen_broker_names_and_two_settings_names(): void {
-		$this->load_hub();
+	#[DataProvider( 'hubs' )]
+	public function test_one_spoke_costs_its_broker_names_and_two_settings_names( string $hub, string $class, int $names ): void {
+		$this->load_hub( $hub );
 		Core::node( 'spokes:tw7' )->fire();
 
-		$names   = \array_keys( Core::$nodes_by_name );
-		$under   = static fn ( string $root ): array => \array_values( \array_filter( $names, static fn ( string $name ): bool => $root === $name || \str_starts_with( $name, "{$root}:" ) ) );
-		$this->assertCount( 18, $under( 'spokes:tw7' ), \implode( ', ', $under( 'spokes:tw7' ) ) );
+		$all   = \array_keys( Core::$nodes_by_name );
+		$under = static fn ( string $root ): array => \array_values( \array_filter( $all, static fn ( string $name ): bool => $root === $name || \str_starts_with( $name, "{$root}:" ) ) );
+		$this->assertCount( $names, $under( 'spokes:tw7' ), \implode( ', ', $under( 'spokes:tw7' ) ) );
 		$this->assertCount( 2, $under( 'settings:tw7' ), \implode( ', ', $under( 'settings:tw7' ) ) );
+	}
+
+	/**
+	 * The static analyzer sees each spoke's broker as the load builds it:
+	 * the aggregator dashboard lists spokes, and the conflict check claims
+	 * their cursors, through what the analyzer reads.
+	 */
+	#[DataProvider( 'hubs' )]
+	public function test_the_analyzer_sees_each_spokes_broker( string $hub, string $class ): void {
+		$brokers = Topology_Analyzer::nodes_of_type( $hub, Remote_Broker_Node::class );
+
+		$this->assertSame( [ $class ], \array_values( \array_unique( \array_map( static fn ( array $n ): string => Command_Interpreter_Node::resolve_class( $n['type'] ) ?? $n['type'], $brokers ) ) ) );
+		$this->assertContains( 'offsetlog:<config:offsets_dir>/' . $hub . '.tw7', Topology_Analyzer::write_set( $hub ) );
 	}
 
 	public function test_mounts_the_settings_leg(): void {
@@ -137,18 +171,20 @@ class HubTopologyTest extends TestCase {
 
 		// spokes and settings are two independent Vault_Group nodes, both over
 		// group `spoke`, so the one seeded `tw7` entry builds a child in each —
-		// an HTTP_Out here, a Remote_Source on spokes.
+		// an HTTP_Out here, an HTTP_Source on spokes.
 		$this->assertInstanceOf( HTTP_Out_Node::class, Core::node( 'settings:tw7' ) );
 	}
 
-	public function test_frontmatter_pins_on_demand_idle_to_zero(): void {
-		$front = Topology_Analyzer::frontmatter( 'hub' );
+	#[DataProvider( 'hubs' )]
+	public function test_frontmatter_pins_on_demand_idle_to_zero( string $hub ): void {
+		$front = Topology_Analyzer::frontmatter( $hub );
 		$this->assertArrayHasKey( 'on_demand_idle', $front );
 		$this->assertSame( '0', $front['on_demand_idle'] );
 	}
 
-	public function test_secure_is_honoured_only_at_the_top_level(): void {
-		$this->load_hub();
+	#[DataProvider( 'hubs' )]
+	public function test_secure_is_honoured_only_at_the_top_level( string $hub ): void {
+		$this->load_hub( $hub );
 
 		// aggregator.tsl and hub-control.tsl each end in `secure`, but both are
 		// `include`d — only hub.tsl's own trailing `secure` line runs, climbing

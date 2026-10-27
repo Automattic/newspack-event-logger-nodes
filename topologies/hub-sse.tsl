@@ -1,0 +1,33 @@
+# hub-sse.tsl — `hub` with `aggregator-sse` in place of `aggregator`, so the
+# hub streams each spoke over SSE rather than fetching it. Both hub legs,
+# aggregator's firehose and PHP error-log ingest and hub-control's
+# settings/discovery egress, run in one worker. Frontmatter
+# is read from the top-level file only, so the three pins below live here —
+# an included file's own frontmatter is skipped.
+#
+# `is_hub = 1` declares the site a hub, which `<eln:is_hub>` reads; the one in
+# `aggregator-sse` counts only where that file is activated on its own.
+#
+# `num_partitions = 1` does two things at once: it keeps hub-control's
+# single-instance control plane single (without it, a hub configured above
+# one data partition would mount that plane once per partition), and it means
+# every Remote_Source the `spokes` group builds streams the spoke's
+# `firehose.p0` and `sources:php` over one connection, beside the hub's own
+# error log. A spoke running more than one partition needs `aggregator-sse`
+# and `hub-control` activated as their own topology instead, with
+# `num_partitions` matching the spoke's count: there worker p0 carries
+# `firehose.p0` plus `sources:php` on one connection per spoke and tails the
+# hub's own log, and p1 and up each carry their own firehose partition.
+#
+# `on_demand_idle = 0` keeps the worker from idling out between ticks, so the
+# hub's streams and its outbound settings and discovery commands stay open
+# rather than waiting to cold-start on the next reconcile pass.
+
+var is_hub = 1
+var num_partitions = 1
+var on_demand_idle = 0
+
+include aggregator-sse
+include hub-control
+
+secure

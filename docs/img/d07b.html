@@ -26,13 +26,13 @@
   .math .op { flex: 0 0 26px; font-size: 17px; color: #787C82; align-self: center; padding: 0; }
 </style>
 <div class="sheet">
-  <h1>The live hub is five lines, and twenty names a spoke</h1>
+  <h1>The live hub is five lines, and nineteen names a spoke</h1>
   <p class="sub">The top-level topology names ONE include, ELN's own <span class="mono">hub</span> composition, which runs both stock <span class="mono">Vault_Group</span> legs — each a <span class="mono">make_node</span> line building a child per Vault entry in group <span class="mono">spoke</span> — and each child still costs the hub the names below.</p>
 
   <div class="listing">
     <header>aggregator-hub.tsl <span>· the whole top-level file</span></header>
     <div class="ln"><div class="code"><span class="k">var</span> is_hub = 1</div><div class="why">Declares the site a hub. <span class="mono">hub</span> declares it too, but an included file's frontmatter is skipped.</div></div>
-    <div class="ln"><div class="code"><span class="k">var</span> on_demand_idle = 0</div><div class="why">The worker never idles out, so the streams stay open.</div></div>
+    <div class="ln"><div class="code"><span class="k">var</span> on_demand_idle = 0</div><div class="why">The worker never idles out, so the fetches keep going.</div></div>
     <div class="ln"><div class="code"><span class="k">var</span> num_partitions = 1</div><div class="why">One instance holds every spoke.</div></div>
     <div class="ln"><div class="code"><span class="k">include</span> hub</div><div class="why">ELN's own composition of <span class="mono">aggregator</span> (firehose and PHP errors in) and <span class="mono">hub-control</span> (commands out) — both legs, below.</div></div>
     <div class="ln"><div class="code"><span class="k">secure</span></div><div class="why">Freezes the graph: no later command builds or removes a node. A Vault_Group still builds and retracts members on the fleet's Vault RELOAD after this — membership was declared before securing, and reload replays it rather than issuing a fresh <span class="mono">make_node</span>.</div></div>
@@ -42,8 +42,8 @@
     <div style="flex:1 1 0">
       <div class="listing">
         <header>aggregator.tsl <span>· the spokes Vault_Group leg, via <span class="mono">include hub</span></span></header>
-        <div class="ln"><div class="code"><span class="k">make_node</span> Vault_Group spokes <span class="v">Remote_Source spoke &lt;config:offsets_dir&gt;/&lt;topology&gt;.{id} &lt;config:deadletter_dir&gt;/&lt;topology&gt;.{id}</span></div><div class="why" style="flex:0 0 256px"><b>One line, every spoke:</b> a Remote_Source per id in group <span class="mono">spoke</span>, <span class="mono">{id}</span> substituted for each, holding ONE connection. Each stream's reader keeps its cursor under <span class="mono">&lt;topology&gt;.{id}/</span>, so two hubs stay off one offsetlog.</div></div>
-        <div class="ln"><div class="code"><span class="k">command_node</span> spokes:config add_source firehose.p{partition} remote-job-rewrite<br><span class="k">command_node</span> spokes:config add_source sources:php php-errors:partition</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Each source names a spoke log and where its lines go; the connection carries the spoke's firehose and its PHP error log, and the group replays both lines to every child.</div></div>
+        <div class="ln"><div class="code"><span class="k">make_node</span> Vault_Group spokes <span class="v">HTTP_Source spoke &lt;config:offsets_dir&gt;/&lt;topology&gt;.{id} &lt;config:deadletter_dir&gt;/&lt;topology&gt;.{id}</span></div><div class="why" style="flex:0 0 256px"><b>One line, every spoke:</b> an HTTP_Source per id in group <span class="mono">spoke</span>, <span class="mono">{id}</span> substituted for each, fetching over ONE command channel; <span class="mono">hub-sse</span> builds a Remote_Source, which streams over SSE. Each log's reader keeps its cursor under <span class="mono">&lt;topology&gt;.{id}/</span>, so two hubs stay off one offsetlog.</div></div>
+        <div class="ln"><div class="code"><span class="k">command_node</span> spokes:config add_source firehose.p{partition} remote-job-rewrite<br><span class="k">command_node</span> spokes:config add_source sources:php php-errors:partition</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Each source names a spoke log and where its lines go; the channel carries the spoke's firehose and its PHP error log, and the group replays both lines to every child.</div></div>
         <div class="ln"><div class="code"><span class="k">command_node</span> spokes:config assume_clean_shutdown true</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Replayed to every child, present now or built later, and fanned out to its readers: each record is durable in the hub's log before the worker stops, so a cooperative stop commits past the in-flight record instead of replaying it. Without it, every worker recycle delivers one record twice.</div></div>
         <div class="ln"><div class="code"><span class="k">command_node</span> spokes:config set_multi_writer true</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Every request process on a spoke appends to its log, so a request can still be writing a segment after the next opens. The verb asks the spoke's reader to hold the old segment for a grace period.</div></div>
         <div class="ln"><div class="code"><span class="k">make_node</span> File_Tail php-errors:tail <span class="v">sources:php …</span><br><span class="k">connect_node</span> php-errors:tail php-errors:partition</div><div class="why" style="flex:0 0 256px">The hub's own PHP error log joins every spoke's in <span class="mono">php-errors.p0</span>; a spoke's line keeps the FROM the spoke sent, so it names no spoke.</div></div>
@@ -63,12 +63,11 @@
 
     <div style="flex:0 0 386px">
       <div class="card">
-        <h3>What one child, <span class="mono">spokes:bend</span>, costs: eighteen names</h3>
-        <p style="margin-bottom:10px">The group builds one Remote_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">bend</span> here. Each child builds the rest of this tree itself on its first tick, a reader per stream with its own cursor and quarantine, and each takes a name in the worker's registry.</p>
+        <h3>What one child, <span class="mono">spokes:bend</span>, costs: seventeen names</h3>
+        <p style="margin-bottom:10px">The group builds one HTTP_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">bend</span> here. Each child builds the rest of this tree itself on its first tick, a reader per log with its own cursor and quarantine, and each takes a name in the worker's registry.</p>
         <div class="tree">
           <div><span style="font-weight:600">spokes:bend</span> <span class="t">· the broker</span></div>
           <div><span class="t">├─</span> spokes:bend:config <span class="t">· verbs</span></div>
-          <div><span class="t">├─</span> spokes:bend:sse-in <span class="t">· the stream, hidden</span></div>
           <div><span class="t">├─</span> <span class="own">spokes:bend:http-out</span> <span class="t">· commands, + :config</span></div>
           <div><span class="t">├─</span> <span class="own">spokes:bend:null</span> <span class="t">· unaddressed</span></div>
           <div><span class="t">├─</span> <span class="own">spokes:bend:firehose.p0</span> <span class="t">· reader</span></div>
@@ -76,17 +75,17 @@
           <div><span class="t">└─</span> <span class="own">spokes:bend:sources:php</span> <span class="t">· reader</span></div>
           <div><span class="t">&nbsp;&nbsp;&nbsp;└─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter <span class="t">· each + :config</span></div>
         </div>
-        <p style="margin:10px 0 0">The four in blue are the broker's sidecars: it patrons and names them, they open from the "…" on its card, and it rebuilds its transports when its credentials change. <span class="mono">:sse-in</span> is patroned too but hidden from every console surface, no <span class="mono">:config</span> is anyone's sidecar, and each reader's offsetlog and dead letters open from that reader's own "…".</p>
+        <p style="margin:10px 0 0">The four in blue are the broker's sidecars: it patrons and names them, they open from the "…" on its card, and it rebuilds its transports when its credentials change. No <span class="mono">:config</span> is anyone's sidecar, and each reader's offsetlog and dead letters open from that reader's own "…".</p>
       </div>
 
       <div class="card" style="margin-top:16px">
         <h3>What one spoke costs the registry</h3>
         <div class="math">
-          <div><div class="big">18</div><div class="cap2">the broker<br>and its readers</div></div>
+          <div><div class="big">17</div><div class="cap2">the broker<br>and its readers</div></div>
           <div class="op">+</div>
           <div><div class="big">2</div><div class="cap2">the settings link<br>and its interpreter</div></div>
           <div class="op">=</div>
-          <div><div class="big">20</div><div class="cap2">names per spoke, in<br>one worker process</div></div>
+          <div><div class="big">19</div><div class="cap2">names per spoke, in<br>one worker process</div></div>
         </div>
         <p style="font-size:12px;color:#50575E;line-height:1.5;margin:4px 0 0">Both counts are pinned by <span class="mono">HubTopologyTest</span>. Beside them sit the nodes every hub worker holds once, whatever its spoke count: the router, the fleet, the rewrite node, the firehose Topic, <span class="mono">php-errors.p0</span> and the hub's own error-log Tail, and the two Vault_Group nodes.</p>
       </div>

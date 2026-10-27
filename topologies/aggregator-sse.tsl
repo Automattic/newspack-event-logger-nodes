@@ -1,0 +1,36 @@
+# Aggregator topology (hub side), streaming each spoke over SSE.
+#
+#   spokes:<id> ─┬─ firehose.p<n> ─→ Remote_Job_Rewrite ─→ Topic (firehose:topic)
+#                └─ sources:php ──→ Partition (php-errors:partition)
+#   php-errors:tail (the hub's own error log) ─→ php-errors:partition
+#
+# `aggregator` with a Remote_Source per spoke in place of an HTTP_Source.
+# Each holds one SSE connection to its spoke that carries both logs, so
+# records arrive within a second of their write, at the cost of one of the
+# spoke's SSE slots and one of its PHP workers while it is open. Every other
+# line matches `aggregator`, whose comments explain it.
+#
+# `is_hub = 1` makes the site a hub where this file is activated on its own;
+# a topology including it declares its own.
+
+var is_hub = 1
+var on_demand_idle = 0
+
+include topic-probe
+
+make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id}
+command_node spokes:config add_source firehose.p{partition} remote-job-rewrite
+command_node spokes:config add_source sources:php php-errors:partition
+command_node spokes:config assume_clean_shutdown true
+command_node spokes:config set_multi_writer true
+
+make_node Remote_Job_Rewrite remote-job-rewrite
+make_node Topic     firehose:topic       <config:logs_dir>/firehose.p{partition}
+make_node File_Tail php-errors:tail      sources:php <config:offsets_dir>/<topology>.php-errors.tail <config:deadletter_dir>/<topology>.php-errors.tail
+make_node Partition php-errors:partition <config:logs_dir>/php-errors.p0
+
+connect_node php-errors:tail php-errors:partition
+command_node php-errors:partition:config void_warranty
+connect_node remote-job-rewrite firehose:topic
+
+secure

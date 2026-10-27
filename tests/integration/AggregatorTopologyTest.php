@@ -3,7 +3,7 @@
  * aggregator.tsl parse + mount wiring (the pull graph).
  *
  * The hub topology ships a `spokes` Vault_Group
- * over group `spoke` (one Remote_Source broker per spoke, following the Vault
+ * over group `spoke` (one HTTP_Source broker per spoke, following the Vault
  * on reload, each carrying the spoke's firehose and `sources:php` on one
  * connection), the Remote_Job_Rewrite_Node that flips aggregated `k:"job"`
  * lines to `k:"remote_job"` before the Topic write, the firehose Topic sink,
@@ -21,6 +21,7 @@ use Newspack_Event_Logger_Nodes\Remote_Job_Rewrite_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\HTTP_Source_Node;
 use Newspack_Nodes\Remote_Source_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Topic_Node;
@@ -28,6 +29,7 @@ use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Topology_Registry;
 use Newspack_Nodes\Vault;
 use Newspack_Nodes\Vault_Group_Node;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class AggregatorTopologyTest extends TestCase {
 
@@ -68,7 +70,19 @@ class AggregatorTopologyTest extends TestCase {
 		parent::tearDown();
 	}
 
-	private function load_aggregator( int $partition = 0 ): Command_Interpreter_Node {
+	/**
+	 * Each aggregator, with the broker it builds per spoke.
+	 *
+	 * @return array<string,array{string,class-string}>
+	 */
+	public static function aggregators(): array {
+		return [
+			'aggregator'     => [ 'aggregator', HTTP_Source_Node::class ],
+			'aggregator-sse' => [ 'aggregator-sse', Remote_Source_Node::class ],
+		];
+	}
+
+	private function load_aggregator( int $partition = 0, string $name = 'aggregator' ): Command_Interpreter_Node {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
@@ -76,7 +90,7 @@ class AggregatorTopologyTest extends TestCase {
 		$interpreter->name( '_command_interpreter' );
 		$interpreter->sink( $router );
 
-		Topology_Loader::load( 'aggregator', $partition, $interpreter );
+		Topology_Loader::load( $name, $partition, $interpreter );
 		return $interpreter;
 	}
 
@@ -213,17 +227,18 @@ class AggregatorTopologyTest extends TestCase {
 	 * A colliding id the group meets on reload escapes, and every other spoke
 	 * the group holds or gains stays built beside the node it collided with.
 	 */
-	public function test_a_vault_id_colliding_on_reload_escapes_and_keeps_the_other_children(): void {
+	#[DataProvider( 'aggregators' )]
+	public function test_a_vault_id_colliding_on_reload_escapes_and_keeps_the_other_children( string $aggregator, string $class ): void {
 		$this->seed_vault( 'tw7', [ 'url' => 'https://tw7.example', 'group' => 'spoke' ] );
-		$this->load_aggregator();
+		$this->load_aggregator( 0, $aggregator );
 		Vault::get_instance()->add( 'config', [ 'url' => 'https://config.example', 'group' => 'spoke' ] );
 		Vault::get_instance()->add( 'tw8', [ 'url' => 'https://tw8.example', 'group' => 'spoke' ] );
 
 		$caught = $this->caught( fn () => Core::node( 'spokes' )->update_graph(), 'a colliding Vault id must escape the reload' );
 		$this->assertStringContainsString( 'building Vault id config', $caught->getMessage() );
 
-		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'spokes:tw7' ) );
-		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'spokes:tw8' ) );
+		$this->assertInstanceOf( $class, Core::node( 'spokes:tw7' ) );
+		$this->assertInstanceOf( $class, Core::node( 'spokes:tw8' ) );
 		$this->assertInstanceOf( Command_Interpreter_Node::class, Core::node( 'spokes:config' ) );
 	}
 
