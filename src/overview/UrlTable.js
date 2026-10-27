@@ -145,6 +145,9 @@ const pct = ( part, total ) => {
 	return p > 0 ? `${ p }%` : '-';
 };
 
+/** Fits a nine-character timing, such as a timeout's `120,000ms`. */
+const TIMING_WIDTH = '76px';
+
 /**
  * The one column list; the header and every row are two renderings of it.
  *
@@ -206,17 +209,17 @@ const COLUMNS = [
 	{
 		field: 'avg_ms',
 		label: __( 'Avg', 'newspack-event-logger-nodes' ),
-		width: '55px',
+		width: TIMING_WIDTH,
 	},
 	{
 		field: 'min_ms',
 		label: __( 'Min', 'newspack-event-logger-nodes' ),
-		width: '55px',
+		width: TIMING_WIDTH,
 	},
 	{
 		field: 'max_ms',
 		label: __( 'Max', 'newspack-event-logger-nodes' ),
-		width: '55px',
+		width: TIMING_WIDTH,
 	},
 	{
 		field: 'avg_peak_mb',
