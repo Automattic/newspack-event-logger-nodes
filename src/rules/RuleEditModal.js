@@ -78,6 +78,30 @@ function toNumber( value, parse ) {
 }
 
 /**
+ * Why a pattern cannot group its paths, or '' when it can: the two refusals
+ * of PHP `Rule`'s constructor an operator meets first. The constructor's
+ * length cap is left to it, and the editor shows its refusal.
+ *
+ * @param {string} pattern The trimmed pattern.
+ * @return {string} The refusal to show, or ''.
+ */
+function groupingRefusal( pattern ) {
+	if ( pattern.includes( '?' ) ) {
+		return __(
+			'Group paths needs a prefix pattern, with no ?.',
+			'newspack-event-logger-nodes'
+		);
+	}
+	if ( '/' === pattern ) {
+		return __(
+			'Group paths cannot fold every path on the site into one page.',
+			'newspack-event-logger-nodes'
+		);
+	}
+	return '';
+}
+
+/**
  * A logging checkbox whose description is the native title of the checkbox
  * and its label. The input names the same text through `aria-describedby`,
  * so a screen reader reads it on focus.
@@ -232,13 +256,9 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
-		if ( isLog && groupPaths && trimmed.includes( '?' ) ) {
-			setError(
-				__(
-					'Group paths needs a prefix pattern, with no ?.',
-					'newspack-event-logger-nodes'
-				)
-			);
+		const groupRefusal = isLog && groupPaths && groupingRefusal( trimmed );
+		if ( groupRefusal ) {
+			setError( groupRefusal );
 			return;
 		}
 		// A skip rule carries no payload, so emit the log-only fields empty.

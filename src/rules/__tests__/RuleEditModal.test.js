@@ -571,6 +571,15 @@ describe( 'RuleEditModal — log rule fields', () => {
 			);
 		} );
 
+		test( 'the catch-all / cannot group its paths', () => {
+			mount( { ...LOG_RULE, pattern: '/', group_paths: true } );
+			click( saveButton() );
+			expect( onSave ).not.toHaveBeenCalled();
+			expect( document.body.textContent ).toContain(
+				'Group paths cannot fold every path on the site into one page.'
+			);
+		} );
+
 		test( 'a skip rule groups nothing', () => {
 			mount( { ...LOG_RULE, action: 'skip', group_paths: true } );
 			click( saveButton() );

@@ -152,7 +152,7 @@ hub syncs to spokes:
 | `log_cache` | bool | Write the close's `objectcache` row. Default false. |
 | `log_resources` | bool | Write a `resources` getrusage() sample at the open and at the close, which the gap findings' CPU bounds difference. Default false. |
 | `log_php_errors` | bool | Record PHP's warnings, notices and deprecations and WordPress's own deprecation and misuse notices: one `php (warning)`, `php (notice)` or `php (deprecated)` row for each distinct level, file and line, and a `php errors` count row at the close. Default false. |
-| `group_paths` | bool | Key every path under a prefix pattern with the rest of the path as its query, so it folds into the pattern's page as a URL of its own, as a query shape does, while its record's `request_url` keeps the URL it asked for. Refused on a pattern with a `?`. Default false. |
+| `group_paths` | bool | Key every path under a prefix pattern with the rest of the path as its query, so it folds into the pattern's page as a URL of its own, as a query shape does, while its record's `request_url` keeps the URL it asked for. Refused on a pattern with a `?`, on the catch-all `/` and on a pattern longer than `Rule::GROUP_PATTERN_MAX_BYTES` (512). Default false. |
 | `sample_rate` | float | The probability, from 0 to 1, that a log rule logs a request it governs; a request it leaves out is governed by a bare skip of the same rule. 0.1 logs roughly one in ten, and the stats count only the requests logged. Each request rolls once, so a rule save mid-request decides again by the same roll. Anything outside 0 to 1, or not a number, is refused. Default 1.0, every request. |
 
 ### `performance` — the omnibus dashboard CI

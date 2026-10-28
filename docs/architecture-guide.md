@@ -286,7 +286,7 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `log_cache` | `false` | Write the close's `objectcache` row |
 | `log_resources` | `false` | Write the `resources` getrusage() samples at the open and the close |
 | `log_php_errors` | `false` | Record PHP's warnings, notices and deprecations and WordPress's own deprecation and misuse notices, one `php (<level>)` row per distinct error and a `php errors` count row at the close; see [PHP errors](#php-errors) |
-| `group_paths` | `false` | Key every path under the prefix pattern with the rest of its path as its query, so it folds into the pattern's page as a URL of its own; refused on a pattern with a `?`; see [Request URLs](#request-urls) |
+| `group_paths` | `false` | Key every path under the prefix pattern with the rest of its path as its query, so it folds into the pattern's page as a URL of its own; refused on a pattern with a `?`, on `/` and on one longer than 512 bytes; see [Request URLs](#request-urls) |
 | `sample_rate` | `1.0` | The probability that a log rule logs a request it governs. `Log_Manager` rolls once per request, the first time a rule below 1 governs it, and governs a request whose roll is at or over the rate by a bare skip of the same rule; the stats count only the requests logged |
 
 The constructor throws when the pattern is empty, when `hooks` and `hooks_in` contradict each other — a null hook list means the pointer tier and a list means inline, with no third reading — and when `sample_rate` is not a probability from 0 to 1.
