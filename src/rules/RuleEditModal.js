@@ -155,6 +155,9 @@ export default function RuleEditModal( {
 	const [ autoProtect, setAutoProtect ] = useState(
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
+	const [ sampleRate, setSampleRate ] = useState(
+		String( rule?.sample_rate ?? 1 )
+	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
 	const [ logHttp, setLogHttp ] = useState( !! rule?.log_http );
 	const [ logPluginLoads, setLogPluginLoads ] = useState(
@@ -218,6 +221,16 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
+		const rate = '' === sampleRate.trim() ? NaN : Number( sampleRate );
+		if ( isLog && ! ( rate >= 0 && rate <= 1 ) ) {
+			setError(
+				__(
+					'Sample frequency must be a number from 0 to 1.',
+					'newspack-event-logger-nodes'
+				)
+			);
+			return;
+		}
 		// A skip rule carries no payload, so emit the log-only fields empty.
 		const draft = {
 			id: rule?.id ?? '',
@@ -249,6 +262,7 @@ export default function RuleEditModal( {
 				isLog && traceHooks
 					? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
 					: 0,
+			sample_rate: isLog ? rate : 1,
 		};
 		onSave( draft );
 	};
@@ -306,6 +320,25 @@ export default function RuleEditModal( {
 
 					{ isLog && (
 						<>
+							<TextControl
+								__next40pxDefaultSize
+								type="number"
+								min={ 0 }
+								max={ 1 }
+								step="any"
+								label={ __(
+									'Sample frequency',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'The share of matching requests this rule logs, from 0 to 1. 0.1 logs about 1 in 10; 1 logs every one.',
+									'newspack-event-logger-nodes'
+								) }
+								name="rule-sample-rate"
+								value={ sampleRate }
+								onChange={ setSampleRate }
+							/>
+
 							<div className="rule-edit-selectors">
 								<div className="rule-edit-hooks-field">
 									<BaseControl.VisualLabel className="rule-edit-field-label">

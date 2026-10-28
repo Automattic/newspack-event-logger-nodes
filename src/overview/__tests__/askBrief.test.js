@@ -348,6 +348,29 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	expect( md ).toContain( '**avg_ms:** 812.3' );
 } );
 
+test( 'a sampled rule says what share of requests the counts cover', () => {
+	const brief = ( rate ) =>
+		briefToMarkdown( {
+			subject: 'url',
+			url: '/kea-5108',
+			stats: { count: 31 },
+			rule: {
+				id: 'a1b2c3',
+				pattern: '/kea-5108',
+				action: 'log',
+				hook_count: 0,
+				sample_rate: rate,
+			},
+			findings: [],
+			caveat: 'c',
+		} );
+
+	expect( brief( 0.125 ) ).toContain(
+		'- **sampled:** 12.5% of requests, so the counts read at about that share'
+	);
+	expect( brief( 1 ) ).not.toContain( 'sampled' );
+} );
+
 test( 'a page brief renders the body a URL brief does, titled as its page', () => {
 	const md = briefToMarkdown( {
 		subject: 'page',

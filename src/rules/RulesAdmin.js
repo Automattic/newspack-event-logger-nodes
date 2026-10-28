@@ -24,6 +24,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
 import { BLANK_RULE } from './constants';
+import { samplePercent } from './sampleRate';
 
 /**
  * Render a rule's auto-tune thresholds as one line for the table cell.
@@ -156,6 +157,15 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 						? __( 'Log', 'newspack-event-logger-nodes' )
 						: __( 'Skip', 'newspack-event-logger-nodes' ) }
 				</span>
+				{ 'log' === rule.action && rule.sample_rate < 1 && (
+					<span className="newspack-nodes-status">
+						{ sprintf(
+							// translators: %s: the share of matching requests logged, as a percentage.
+							__( '%s sampled', 'newspack-event-logger-nodes' ),
+							samplePercent( rule.sample_rate )
+						) }
+					</span>
+				) }
 			</td>
 			<td>
 				{ 'log' === rule.action

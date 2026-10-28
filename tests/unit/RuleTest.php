@@ -47,6 +47,7 @@ final class RuleTest extends TestCase {
 			'log_cache'                   => true,
 			'log_resources'               => true,
 			'log_php_errors'              => true,
+			'sample_rate'                 => 0.25,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -79,6 +80,29 @@ final class RuleTest extends TestCase {
 			$this->assertTrue( $on->{$knob}, "{$knob} reads back set" );
 			$this->assertFalse( $on->with( [ $knob => false ] )->{$knob}, "with() clears {$knob}" );
 		}
+	}
+
+	/** A rule logs every request it governs unless it names a sample rate. */
+	public function test_sample_rate_is_a_probability_that_defaults_to_every_request(): void {
+		$this->assertSame( 1.0, Rule::from_array( [ 'id' => 's1', 'pattern' => '/kea-5108', 'action' => 'log' ] )->sample_rate );
+		$this->assertSame( 0.125, Rule::from_array( [ 'id' => 's2', 'pattern' => '/kea-5108', 'action' => 'log', 'sample_rate' => '0.125' ] )->sample_rate );
+		$this->assertSame( 0.0, Rule::from_array( [ 'id' => 's3', 'pattern' => '/kea-5108', 'action' => 'log', 'sample_rate' => 0 ] )->sample_rate );
+	}
+
+	/** @return array<string,array{mixed}> Sample rates that are not probabilities. */
+	public static function sample_rates_that_are_not_probabilities(): array {
+		return [
+			'below zero'  => [ -0.25 ],
+			'above one'   => [ 1.5 ],
+			'not numeric' => [ 'kea' ],
+			'a list'      => [ [ 0.5 ] ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'sample_rates_that_are_not_probabilities' )]
+	public function test_from_array_refuses_a_sample_rate_that_is_not_a_probability( mixed $rate ): void {
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 's4', 'pattern' => '/kea-5108', 'action' => 'log', 'sample_rate' => $rate ] );
 	}
 
 	/**

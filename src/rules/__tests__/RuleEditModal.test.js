@@ -534,6 +534,55 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
+	describe( 'sample frequency', () => {
+		test( 'a log rule round-trips its sample frequency', () => {
+			mount( { ...LOG_RULE, sample_rate: 0.25 } );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].sample_rate ).toBe( 0.25 );
+		} );
+
+		test( 'a rule that names none logs every request', () => {
+			mount( LOG_RULE );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].sample_rate ).toBe( 1 );
+		} );
+
+		test( 'editing it is reflected in the saved draft', () => {
+			mount( LOG_RULE );
+			setInput( inDialog( 'input[name="rule-sample-rate"]' ), '0.125' );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].sample_rate ).toBe( 0.125 );
+		} );
+
+		test( 'a value outside 0 to 1 is refused, naming the field', () => {
+			mount( LOG_RULE );
+			for ( const value of [ '1.5', '-0.25', '' ] ) {
+				setInput( inDialog( 'input[name="rule-sample-rate"]' ), value );
+				click( saveButton() );
+				expect( onSave ).not.toHaveBeenCalled();
+				expect( document.body.textContent ).toContain(
+					'Sample frequency must be a number from 0 to 1.'
+				);
+			}
+		} );
+
+		test( 'takes any rate the server does, at any precision', () => {
+			mount( LOG_RULE );
+			expect(
+				inDialog( 'input[name="rule-sample-rate"]' ).getAttribute(
+					'step'
+				)
+			).toBe( 'any' );
+		} );
+
+		test( 'a skip rule saves no sampling', () => {
+			mount( { ...LOG_RULE, action: 'skip', sample_rate: 0.25 } );
+			expect( inDialog( 'input[name="rule-sample-rate"]' ) ).toBeNull();
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].sample_rate ).toBe( 1 );
+		} );
+	} );
+
 	test( 'editing the backtrace count is reflected in the saved draft', () => {
 		// 7 is distinct from 0 (off) and from the 1 a stored `true` decodes to.
 		mount( { ...LOG_RULE, trace_hooks: true } );

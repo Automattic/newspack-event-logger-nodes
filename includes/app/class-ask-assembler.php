@@ -632,6 +632,8 @@ class Ask_Assembler {
 			'log_php_errors'     => $rule->log_php_errors,
 			'trace_hooks'        => $rule->trace_hooks,
 			'trace_callers'      => $rule->trace_callers,
+			// A sampled URL's counts cover about this share of its requests.
+			'sample_rate'        => $rule->sample_rate,
 		];
 	}
 

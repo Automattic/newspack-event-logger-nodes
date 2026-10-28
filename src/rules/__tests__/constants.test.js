@@ -29,6 +29,8 @@ describe( 'rules constants', () => {
 			log_cache: false,
 			log_resources: false,
 			log_php_errors: false,
+			// A blank rule logs every request it governs.
+			sample_rate: 1,
 		} );
 	} );
 } );

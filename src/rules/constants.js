@@ -54,4 +54,5 @@ export const BLANK_RULE = {
 	log_cache: false,
 	log_resources: false,
 	log_php_errors: false,
+	sample_rate: 1,
 };

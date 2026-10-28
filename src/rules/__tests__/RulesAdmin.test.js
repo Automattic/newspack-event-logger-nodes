@@ -216,6 +216,41 @@ describe( 'RulesAdmin', () => {
 		expect( row.textContent ).toContain( '2' );
 	} );
 
+	test( 'a sampled log rule shows its rate beside its action', () => {
+		setGraph( {
+			rules: [
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'k1',
+					pattern: '/kea-5108',
+					sample_rate: 0.125,
+				},
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'k2',
+					pattern: '/kea-5109',
+					sample_rate: 1,
+				},
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'k3',
+					pattern: '/kea-5110',
+					sample_rate: 0.0004,
+				},
+			],
+		} );
+		const { container } = mount();
+		expect(
+			container.querySelector( 'tr[data-rule-id="k1"]' ).textContent
+		).toContain( '12.5% sampled' );
+		expect(
+			container.querySelector( 'tr[data-rule-id="k2"]' ).textContent
+		).not.toContain( 'sampled' );
+		expect(
+			container.querySelector( 'tr[data-rule-id="k3"]' ).textContent
+		).toContain( '0.04% sampled' );
+	} );
+
 	test( 'shows the empty state when there are no rules', () => {
 		setGraph( { rules: [] } );
 		const { container } = mount();

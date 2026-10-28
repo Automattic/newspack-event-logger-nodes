@@ -152,6 +152,7 @@ hub syncs to spokes:
 | `log_cache` | bool | Write the close's `objectcache` row. Default false. |
 | `log_resources` | bool | Write a `resources` getrusage() sample at the open and at the close, which the gap findings' CPU bounds difference. Default false. |
 | `log_php_errors` | bool | Record PHP's warnings, notices and deprecations and WordPress's own deprecation and misuse notices: one `php (warning)`, `php (notice)` or `php (deprecated)` row for each distinct level, file and line, and a `php errors` count row at the close. Default false. |
+| `sample_rate` | float | The probability, from 0 to 1, that a log rule logs a request it governs; a request it leaves out is governed by a bare skip of the same rule. 0.1 logs roughly one in ten, and the stats count only the requests logged. Each request rolls once, so a rule save mid-request decides again by the same roll. Anything outside 0 to 1, or not a number, is refused. Default 1.0, every request. |
 
 ### `performance` — the omnibus dashboard CI
 
@@ -461,7 +462,7 @@ false.
 | `static thrown( \Throwable ): string` | A caught throwable as the firehose carries it: `stop` for a cooperative stop, else `Class: message`, a `PDOException`'s or `mysqli_sql_exception`'s message through the substrate's `Driver_Error::of()`, `[<code>] ` and the message cut at its first quote within 256 bytes, or `[<code>]` alone for a SIGNAL (1644, `45000`). Every span's close uses it. |
 | `static in_job_context(): bool` | Whether a job context is open, so the record being written is a job's rather than the web request's. |
 | `flush_plugin_loads(): void` | Write the profiler drop-in's `plugins` rows as span pairs under the rule's `log_plugin_loads`, and empty the list whatever the rule says, so they are written once. The deferred bootstrap calls it before it binds the rule. |
-| `governing_rule(): ?Rule` / `governing_rule_id(): string` | The rule admitting this request. The id rides `process (start)` as `rule`. |
+| `governing_rule(): ?Rule` / `governing_rule_id(): string` | The rule governing this request, which is a bare skip of the matched rule when sampling leaves the request out; and the id of the rule the request is logged under, or '' unless the request started and its current rule logs it. The id rides `process (start)` as `rule`, and nuclear-gyrobase hands it to the gyrobase engine, so the engine reads no rule for a render its current rule skips. |
 | `matches_url_filter( string ): bool` | Resolve and keep the governing rule for a URL. |
 | `static reload_rules(): void` | The `Newspack_Nodes\Config::RESET_ACTION` listener, at priority 11: every open context, suspended ones included, re-resolves its governing rule from the saved ruleset, so a running worker's own record follows a rule save from its next line. A context that built no matcher stays inert. |
 | `get_request_id(): string` | An empty rid means an unlogged request. |

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A log rule can sample the requests it governs.** A rule's `sample_rate`, the editor's "Sample frequency", is the probability from 0 to 1 that it logs a request; 0.1 logs roughly one in ten, and the default of 1 logs every one. A request the rule does not log is governed as a skip of the same rule. Each request rolls once, the first time a sampled rule governs it; a rule save mid-request keeps the roll and decides again against the saved rate. The stats count only the requests logged, so a sampled URL's counts read at about its rate. The rules list shows a sampled rule's rate beside its action. A rate outside 0 to 1 is refused on save.
+
+### Changed
+- **`Log_Manager::governing_rule_id()` names a rule only when the request started and its current rule logs it.** It answers '' for a skip rule and for a request that never started, as it does for no match. Nuclear-gyrobase then hands the gyrobase engine `-`, so the engine reads no rule for a render its current rule skips. The Ask brief names a sampled rule's share of requests.
+
 ## [0.159.4] - 2026-10-27
 
 ### Fixed
