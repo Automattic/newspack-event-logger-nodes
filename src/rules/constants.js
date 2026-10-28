@@ -55,4 +55,5 @@ export const BLANK_RULE = {
 	log_resources: false,
 	log_php_errors: false,
 	sample_rate: 1,
+	group_paths: false,
 };

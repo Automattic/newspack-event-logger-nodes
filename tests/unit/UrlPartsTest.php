@@ -148,6 +148,25 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( Log_Manager::url_hash( $identity ), Url_Parts::hash( $url ), 'the hash its row is stored under' );
 	}
 
+	/**
+	 * A URL under a grouping path is filed under that path, as though the
+	 * rest were part of its query, and keeps its own query keys. A URL whose
+	 * path does not start with it is left as it is.
+	 */
+	public function test_a_url_under_a_grouping_path_is_filed_under_it(): void {
+		$this->assertSame( 'https://kea.test/author/sociales', Url_Parts::grouped( 'https://kea.test/author/sociales/page/12345', '/author/sociales' ) );
+		$this->assertSame( 'https://kea.test/author/sociales?moa=7', Url_Parts::grouped( 'https://kea.test/Author/Sociales/page/2?moa=7', '/author/sociales' ) );
+		$this->assertSame( 'https://kea.test/author/sociales', Url_Parts::grouped( 'https://kea.test/author/sociales', '/author/sociales' ) );
+		$this->assertSame( 'https://kea.test/author/takahe/page/3', Url_Parts::grouped( 'https://kea.test/author/takahe/page/3', '/author/sociales' ) );
+	}
+
+	/** A path that only begins with the pattern's characters is a sibling, not under it. */
+	public function test_a_sibling_path_is_not_under_the_grouping_path(): void {
+		$this->assertSame( 'https://kea.test/author/sociales-mundo/page/3', Url_Parts::grouped( 'https://kea.test/author/sociales-mundo/page/3', '/author/sociales' ) );
+		$this->assertSame( 'https://kea.test/author/socialesx', Url_Parts::grouped( 'https://kea.test/author/socialesx', '/author/sociales' ) );
+		$this->assertSame( 'https://kea.test/author/', Url_Parts::grouped( 'https://kea.test/author/sociales/2', '/author/' ) );
+	}
+
 	/** A trimmed line may cut its last parameter mid-name or mid-value, so that one keys nothing. */
 	public function test_a_trimmed_lines_last_parameter_keys_nothing(): void {
 		$this->assertSame( 'https://kea.test/moa?aa=?', Url_Parts::key( 'https://kea.test/moa?aa=1&rest_ro', true ) );

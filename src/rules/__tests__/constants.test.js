@@ -31,6 +31,7 @@ describe( 'rules constants', () => {
 			log_php_errors: false,
 			// A blank rule logs every request it governs.
 			sample_rate: 1,
+			group_paths: false,
 		} );
 	} );
 } );

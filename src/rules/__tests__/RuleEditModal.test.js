@@ -534,6 +534,36 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
+	describe( 'group paths', () => {
+		test( 'a log rule round-trips it', () => {
+			mount( { ...LOG_RULE, group_paths: true } );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].group_paths ).toBe( true );
+		} );
+
+		test( 'ticking it is reflected in the saved draft', () => {
+			mount( LOG_RULE );
+			toggle( inDialog( 'input[name="rule-group-paths"]' ) );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].group_paths ).toBe( true );
+		} );
+
+		test( 'a pattern with a ? cannot group its paths', () => {
+			mount( { ...LOG_RULE, pattern: '/kea-5108?', group_paths: true } );
+			click( saveButton() );
+			expect( onSave ).not.toHaveBeenCalled();
+			expect( document.body.textContent ).toContain(
+				'Group paths needs a prefix pattern, with no ?.'
+			);
+		} );
+
+		test( 'a skip rule groups nothing', () => {
+			mount( { ...LOG_RULE, action: 'skip', group_paths: true } );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ].group_paths ).toBe( false );
+		} );
+	} );
+
 	describe( 'sample frequency', () => {
 		test( 'a log rule round-trips its sample frequency', () => {
 			mount( { ...LOG_RULE, sample_rate: 0.25 } );
@@ -651,7 +681,7 @@ describe( 'RuleEditModal — log rule fields', () => {
 				'[role="dialog"] input[type="checkbox"]'
 			),
 		];
-		expect( boxes.length ).toBe( 10 );
+		expect( boxes.length ).toBe( 11 );
 		for ( const box of boxes ) {
 			const control = box.closest( '.components-base-control' );
 			expect(

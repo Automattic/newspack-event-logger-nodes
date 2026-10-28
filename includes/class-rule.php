@@ -66,8 +66,9 @@ final class Rule {
 	 * @param bool          $log_resources               Write the two `resources` getrusage() samples, at the open and at the close, which the CPU-time findings difference.
 	 * @param bool          $log_php_errors              Record PHP's warnings, notices and deprecations, and WordPress's own deprecations and misuse, one row per distinct error and a count of the repeats at the close. Off unless set; off, the request installs no error handler.
 	 * @param float         $sample_rate                 The probability, from 0 to 1, that a log rule logs a request it governs; 1.0 logs every one, and 0.1 roughly one in ten.
+	 * @param bool          $group_paths                 File every path under a prefix pattern under the pattern itself, as though the rest of the path were part of its query; off unless set.
 	 *
-	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, or the sample rate is not a probability.
+	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, the sample rate is not a probability, or a pattern with a `?` groups its paths.
 	 */
 	public function __construct(
 		public readonly string $id,
@@ -90,13 +91,17 @@ final class Rule {
 		public readonly bool $log_cache = false,
 		public readonly bool $log_resources = false,
 		public readonly bool $log_php_errors = false,
-		public readonly float $sample_rate = 1.0
+		public readonly float $sample_rate = 1.0,
+		public readonly bool $group_paths = false
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
 		}
 		if ( ! ( $sample_rate >= 0.0 && $sample_rate <= 1.0 ) ) {
 			throw new \InvalidArgumentException( 'rule sample_rate must be a probability from 0 to 1' );
+		}
+		if ( $group_paths && ! self::is_prefix_pattern( $pattern ) ) {
+			throw new \InvalidArgumentException( 'rule group_paths needs a prefix pattern, with no ?' );
 		}
 		if ( ( null === $hooks ) !== ( self::HOOKS_MC === $hooks_in ) ) {
 			throw new \InvalidArgumentException( 'rule hooks contradict hooks_in: null hooks means the mc tier, a list means inline' );
@@ -175,6 +180,7 @@ final class Rule {
 			'log_resources'               => $this->log_resources,
 			'log_php_errors'              => $this->log_php_errors,
 			'sample_rate'                 => $this->sample_rate,
+			'group_paths'                 => $this->group_paths,
 		];
 	}
 
@@ -189,7 +195,7 @@ final class Rule {
 	 *
 	 * @param array<string,mixed> $a Stored rule shape, as produced by to_array().
 	 * @return self
-	 * @throws \InvalidArgumentException When the map carries no pattern, a contradictory hooks/hooks_in pair, or a sample rate that is not a probability.
+	 * @throws \InvalidArgumentException When the map carries no pattern, a contradictory hooks/hooks_in pair, a sample rate that is not a probability, or grouped paths on a pattern with a `?`.
 	 */
 	public static function from_array( array $a ): self {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;
@@ -215,7 +221,8 @@ final class Rule {
 			! empty( $a['log_cache'] ),
 			! empty( $a['log_resources'] ),
 			! empty( $a['log_php_errors'] ),
-			Core::num_float( $a['sample_rate'] ?? 1.0, \NAN )
+			Core::num_float( $a['sample_rate'] ?? 1.0, \NAN ),
+			! empty( $a['group_paths'] )
 		);
 	}
 
@@ -274,6 +281,16 @@ final class Rule {
 			Flame_Tree::HTTP_STATE => 'log_http',
 			default                => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
 		};
+	}
+
+	/**
+	 * Whether a pattern is a prefix: one with no `?`, which matches every
+	 * path that begins with it and so has paths under it to group.
+	 *
+	 * @param string $pattern A rule pattern, or a `group` a request line names.
+	 */
+	public static function is_prefix_pattern( string $pattern ): bool {
+		return ! \str_contains( $pattern, '?' );
 	}
 
 	/**

@@ -158,6 +158,7 @@ export default function RuleEditModal( {
 	const [ sampleRate, setSampleRate ] = useState(
 		String( rule?.sample_rate ?? 1 )
 	);
+	const [ groupPaths, setGroupPaths ] = useState( !! rule?.group_paths );
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
 	const [ logHttp, setLogHttp ] = useState( !! rule?.log_http );
 	const [ logPluginLoads, setLogPluginLoads ] = useState(
@@ -231,6 +232,15 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
+		if ( isLog && groupPaths && trimmed.includes( '?' ) ) {
+			setError(
+				__(
+					'Group paths needs a prefix pattern, with no ?.',
+					'newspack-event-logger-nodes'
+				)
+			);
+			return;
+		}
 		// A skip rule carries no payload, so emit the log-only fields empty.
 		const draft = {
 			id: rule?.id ?? '',
@@ -263,6 +273,7 @@ export default function RuleEditModal( {
 					? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
 					: 0,
 			sample_rate: isLog ? rate : 1,
+			group_paths: isLog && groupPaths,
 		};
 		onSave( draft );
 	};
@@ -337,6 +348,20 @@ export default function RuleEditModal( {
 								name="rule-sample-rate"
 								value={ sampleRate }
 								onChange={ setSampleRate }
+							/>
+
+							<RuleSwitch
+								name="rule-group-paths"
+								label={ __(
+									'Group paths',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'Counts every path under this prefix as the prefix itself, as though the rest of the path were its query, so /author/sociales/page/2 counts as /author/sociales. Prefix patterns only.',
+									'newspack-event-logger-nodes'
+								) }
+								checked={ groupPaths }
+								onChange={ setGroupPaths }
 							/>
 
 							<div className="rule-edit-selectors">

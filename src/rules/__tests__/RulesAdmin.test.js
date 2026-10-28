@@ -251,6 +251,22 @@ describe( 'RulesAdmin', () => {
 		).toContain( '0.04% sampled' );
 	} );
 
+	test( 'a grouping log rule says so beside its action', () => {
+		setGraph( {
+			rules: [
+				{ ...SAMPLE_RULES[ 0 ], id: 'g1', group_paths: true },
+				{ ...SAMPLE_RULES[ 0 ], id: 'g2', pattern: '/kea-5109' },
+			],
+		} );
+		const { container } = mount();
+		expect(
+			container.querySelector( 'tr[data-rule-id="g1"]' ).textContent
+		).toContain( 'groups paths' );
+		expect(
+			container.querySelector( 'tr[data-rule-id="g2"]' ).textContent
+		).not.toContain( 'groups paths' );
+	} );
+
 	test( 'shows the empty state when there are no rules', () => {
 		setGraph( { rules: [] } );
 		const { container } = mount();

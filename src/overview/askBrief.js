@@ -259,6 +259,12 @@ function ruleLines( rule ) {
 				: '',
 		],
 		[
+			'groups paths',
+			'log' === rule.action && rule.group_paths
+				? `the rule files every path under \`${ rule.pattern }\` there; rows from before it grouped keep their own paths`
+				: '',
+		],
+		[
 			'traces',
 			[
 				rule.trace_hooks && 'hooks',

@@ -1675,7 +1675,12 @@ class Log_Manager {
 	 * producers write it under its origin. A line `fit_data()` trimmed to fit
 	 * the entry still parses, so a visitor cannot hide a request behind a
 	 * long URL: its entry carries `truncated`, and its `request_url` and
-	 * `url` are read from the trimmed prefix.
+	 * `url` are read from the trimmed prefix. A line a grouping rule wrote
+	 * names its pattern as `group`, and `url` files the request under that
+	 * path through `Url_Parts::grouped()`, while `request_url` keeps the URL
+	 * it asked for. A `group` that is not a site path of a prefix pattern, or
+	 * one the path is not under, keys the line by its own path, and nothing
+	 * here throws.
 	 *
 	 * @param array<array-key,mixed> $entry The `REQUEST_LINE` entry, whose `truncated` says `fit_data()` trimmed it.
 	 * @return array{0:string,1:string,2:string}|null [ request_method, request_url, url ], or null when `m` is not a request line.
@@ -1685,7 +1690,15 @@ class Log_Manager {
 		if ( ! \is_string( $message ) || 1 !== \preg_match( '~^(\S+) ([a-z][a-z\d+.-]*://.+)$~Di', $message, $m ) ) {
 			return null;
 		}
-		return [ $m[1], $m[2], Url_Parts::key( $m[2], ! empty( $entry['truncated'] ) ) ];
+		$group = $entry['group'] ?? null;
+		$url   = $m[2];
+		if ( \is_string( $group ) && \str_starts_with( $group, '/' ) && Rule::is_prefix_pattern( $group ) ) {
+			try {
+				$url = Url_Parts::grouped( $url, $group );
+			} catch ( \InvalidArgumentException ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement.DetectedCatch -- a hostless URL keys ungrouped; the intake refuses it.
+			}
+		}
+		return [ $m[1], $m[2], Url_Parts::key( $url, ! empty( $entry['truncated'] ) ) ];
 	}
 
 	/**
@@ -1851,7 +1864,11 @@ class Log_Manager {
 		$method = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \preg_replace( self::CONTROL_CHARS, '', $_SERVER['REQUEST_METHOD'] ) ?? '' : '';
 		$method = \strtr( $method, ' &?', '___' );
 		$method = '' === $method ? 'CLI' : \substr( $method, 0, self::REQUEST_METHOD_MAX );
-		$this->message( self::REQUEST_LINE, [ 'm' => "{$method} {$origin}{$this->request_url}" ] );
+		$line = [ 'm' => "{$method} {$origin}{$this->request_url}" ];
+		if ( true === $this->matched_rule?->group_paths ) {
+			$line['group'] = $this->matched_rule->pattern;
+		}
+		$this->message( self::REQUEST_LINE, $line );
 
 		// The record that caused this request; ID seeks onto the log.
 		$job_message = self::job_message();
