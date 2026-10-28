@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.160.1] - 2026-10-28
+
 ### Fixed
 - **The rules list spaces a rule's action badge from its "sampled" and "groups paths" labels.** The three sat flush against each other in the Action column; they now share one row with an 8px gap, wrapping to a line each when the column is narrow.
 

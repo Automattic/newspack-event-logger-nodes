@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.160.0\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.160.1\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-28T03:49:16+00:00\n"
+"POT-Creation-Date: 2026-10-28T04:14:37+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -468,7 +468,7 @@ msgid "Events by Category"
 msgstr ""
 
 #: src/overview/CategoryTimeChart.js:74
-#: src/rules/RulesAdmin.js:372
+#: src/rules/RulesAdmin.js:380
 msgid "Events"
 msgstr ""
 
@@ -1393,17 +1393,17 @@ msgid "A prefix like /blog, or an exact match ending in ? (e.g. /about?)."
 msgstr ""
 
 #: src/rules/RuleEditModal.js:310
-#: src/rules/RulesAdmin.js:366
+#: src/rules/RulesAdmin.js:374
 msgid "Action"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:315
-#: src/rules/RulesAdmin.js:157
+#: src/rules/RulesAdmin.js:158
 msgid "Log"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:322
-#: src/rules/RulesAdmin.js:158
+#: src/rules/RulesAdmin.js:159
 msgid "Skip"
 msgstr ""
 
@@ -1424,7 +1424,7 @@ msgid "Counts every path under this prefix as the prefix itself, as though the r
 msgstr ""
 
 #: src/rules/RuleEditModal.js:370
-#: src/rules/RulesAdmin.js:369
+#: src/rules/RulesAdmin.js:377
 msgid "Hooks"
 msgstr ""
 
@@ -1435,7 +1435,7 @@ msgstr ""
 #. translators: %d: number of selected hooks.
 #. translators: %d: number of hooks on the rule.
 #: src/rules/RuleEditModal.js:388
-#: src/rules/RulesAdmin.js:179
+#: src/rules/RulesAdmin.js:187
 #, js-format
 msgid "%d hook"
 msgid_plural "%d hooks"
@@ -1453,7 +1453,7 @@ msgstr ""
 #. translators: %d: number of selected custom events.
 #. translators: %d: number of custom events on the rule.
 #: src/rules/RuleEditModal.js:421
-#: src/rules/RulesAdmin.js:193
+#: src/rules/RulesAdmin.js:201
 #, js-format
 msgid "%d event"
 msgid_plural "%d events"
@@ -1590,7 +1590,7 @@ msgid "Confirm delete"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:706
-#: src/rules/RulesAdmin.js:395
+#: src/rules/RulesAdmin.js:403
 msgid "Delete rule"
 msgstr ""
 
@@ -1616,68 +1616,68 @@ msgid "protect @%sms"
 msgstr ""
 
 #. translators: %s: the share of matching requests logged, as a percentage.
-#: src/rules/RulesAdmin.js:164
+#: src/rules/RulesAdmin.js:165
 #, js-format
 msgid "%s sampled"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:171
+#: src/rules/RulesAdmin.js:175
 msgid "groups paths"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:210
+#: src/rules/RulesAdmin.js:218
 msgid "Edit"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:217
-#: src/rules/RulesAdmin.js:404
+#: src/rules/RulesAdmin.js:225
+#: src/rules/RulesAdmin.js:412
 msgid "Delete"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:293
+#: src/rules/RulesAdmin.js:301
 msgid "Loading rules…"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:316
+#: src/rules/RulesAdmin.js:324
 msgid "No rules configured."
 msgstr ""
 
-#: src/rules/RulesAdmin.js:339
+#: src/rules/RulesAdmin.js:347
 msgid "+ Add Rule"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:345
-#: src/rules/RulesAdmin.js:349
+#: src/rules/RulesAdmin.js:353
+#: src/rules/RulesAdmin.js:357
 msgid "Reset rules to defaults"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:363
+#: src/rules/RulesAdmin.js:371
 msgid "Pattern"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:375
+#: src/rules/RulesAdmin.js:383
 msgid "Auto-tune"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:378
+#: src/rules/RulesAdmin.js:386
 msgid "Actions"
 msgstr ""
 
 #. translators: %s: the rule's URL pattern.
-#: src/rules/RulesAdmin.js:398
+#: src/rules/RulesAdmin.js:406
 #, js-format
 msgid "Are you sure you want to delete the rule for %s?"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:415
+#: src/rules/RulesAdmin.js:423
 msgid "Reset rules"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:416
+#: src/rules/RulesAdmin.js:424
 msgid "Are you sure you want to discard every rule you have configured and go back to the shipped defaults? This cannot be undone."
 msgstr ""
 
-#: src/rules/RulesAdmin.js:420
+#: src/rules/RulesAdmin.js:428
 msgid "Reset"
 msgstr ""
 
