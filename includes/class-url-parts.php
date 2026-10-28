@@ -150,6 +150,29 @@ final class Url_Parts {
 	}
 
 	/**
+	 * The URL a request is filed under when its rule groups every path under
+	 * `$path`: its origin, that path and its own query, as though the rest of
+	 * its path were part of the query, which `key()` then masks. A path is
+	 * under `$path` when it starts with it, compared without case as a rule
+	 * matches, at a segment's end: `$path` ends in `/`, or the path goes on
+	 * with a `/`, a `?` or not at all, so `/author/sociales-mundo` is a sibling of
+	 * `/author/sociales`. Any other URL comes back as it is.
+	 *
+	 * @param string $url  The request's absolute URL, query and all.
+	 * @param string $path The grouping rule's pattern, a site path.
+	 * @throws \InvalidArgumentException When the URL has no host.
+	 */
+	public static function grouped( string $url, string $path ): string {
+		$after = \array_sum( self::authority( $url ) );
+		$next  = \substr( $url, $after + \strlen( $path ), 1 );
+		if ( 0 !== \strncasecmp( \substr( $url, $after ), $path, \strlen( $path ) ) || ! ( \str_ends_with( $path, '/' ) || \in_array( $next, [ '', '/', '?' ], true ) ) ) {
+			return $url;
+		}
+		$query = \strpos( $url, '?', $after );
+		return \substr( $url, 0, $after ) . $path . ( false === $query ? '' : \substr( $url, $query ) );
+	}
+
+	/**
 	 * The site path a rule matches a stored URL by: its path alone, with no
 	 * scheme or host. A rule matches the URI a request sent, and the stored
 	 * query is not that: `key()` masked its values, and the builder may have

@@ -371,6 +371,45 @@ test( 'a sampled rule says what share of requests the counts cover', () => {
 	expect( brief( 1 ) ).not.toContain( 'sampled' );
 } );
 
+test( 'a grouping rule says its paths are filed under its pattern', () => {
+	const brief = ( groups ) =>
+		briefToMarkdown( {
+			subject: 'url',
+			url: '/author/sociales',
+			stats: { count: 31 },
+			rule: {
+				id: 'a1b2c3',
+				pattern: '/author/sociales',
+				action: 'log',
+				hook_count: 0,
+				group_paths: groups,
+			},
+			findings: [],
+			caveat: 'c',
+		} );
+
+	expect( brief( true ) ).toContain(
+		'- **groups paths:** the rule files every path under `/author/sociales` there; rows from before it grouped keep their own paths'
+	);
+	expect( brief( false ) ).not.toContain( 'groups paths' );
+	expect(
+		briefToMarkdown( {
+			subject: 'url',
+			url: '/author/sociales',
+			stats: { count: 31 },
+			rule: {
+				id: 'a1b2c3',
+				pattern: '/author/sociales',
+				action: 'skip',
+				hook_count: 0,
+				group_paths: true,
+			},
+			findings: [],
+			caveat: 'c',
+		} )
+	).not.toContain( 'groups paths' );
+} );
+
 test( 'a page brief renders the body a URL brief does, titled as its page', () => {
 	const md = briefToMarkdown( {
 		subject: 'page',

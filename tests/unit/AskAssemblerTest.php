@@ -641,6 +641,7 @@ class AskAssemblerTest extends TestCase {
 				'log_resources'    => true,
 				'log_php_errors'   => true,
 				'sample_rate'      => 0.125,
+				'group_paths'      => true,
 			]
 		);
 		$shape = Ask_Assembler::for_request( $this->record(), $rule )['rule'];
@@ -658,6 +659,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertTrue( $shape['log_php_errors'] );
 		// A sampled URL's counts read at about its rate.
 		$this->assertSame( 0.125, $shape['sample_rate'] );
+		$this->assertTrue( $shape['group_paths'] );
 	}
 
 	/** The entry list is capped, so the record's own address rides along. */

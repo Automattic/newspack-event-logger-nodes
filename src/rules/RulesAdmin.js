@@ -166,6 +166,11 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 						) }
 					</span>
 				) }
+				{ 'log' === rule.action && rule.group_paths && (
+					<span className="newspack-nodes-status">
+						{ __( 'groups paths', 'newspack-event-logger-nodes' ) }
+					</span>
+				) }
 			</td>
 			<td>
 				{ 'log' === rule.action

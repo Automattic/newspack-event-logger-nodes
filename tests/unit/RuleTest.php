@@ -48,6 +48,7 @@ final class RuleTest extends TestCase {
 			'log_resources'               => true,
 			'log_php_errors'              => true,
 			'sample_rate'                 => 0.25,
+			'group_paths'                 => true,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -87,6 +88,24 @@ final class RuleTest extends TestCase {
 		$this->assertSame( 1.0, Rule::from_array( [ 'id' => 's1', 'pattern' => '/kea-5108', 'action' => 'log' ] )->sample_rate );
 		$this->assertSame( 0.125, Rule::from_array( [ 'id' => 's2', 'pattern' => '/kea-5108', 'action' => 'log', 'sample_rate' => '0.125' ] )->sample_rate );
 		$this->assertSame( 0.0, Rule::from_array( [ 'id' => 's3', 'pattern' => '/kea-5108', 'action' => 'log', 'sample_rate' => 0 ] )->sample_rate );
+	}
+
+	/** A prefix rule may group every path under its own; it groups none unless set. */
+	public function test_group_paths_is_off_unless_a_prefix_rule_sets_it(): void {
+		$this->assertFalse( Rule::from_array( [ 'id' => 'g1', 'pattern' => '/kea-5108', 'action' => 'log' ] )->group_paths );
+		$this->assertTrue( Rule::from_array( [ 'id' => 'g2', 'pattern' => '/kea-5108', 'action' => 'log', 'group_paths' => true ] )->group_paths );
+	}
+
+	/** An exact pattern has no paths under it, so grouping them is refused. */
+	public function test_group_paths_is_refused_on_an_exact_or_query_pattern(): void {
+		foreach ( [ '/kea-5108?', '/kea-5108?moa=1' ] as $pattern ) {
+			try {
+				Rule::from_array( [ 'id' => 'g3', 'pattern' => $pattern, 'action' => 'log', 'group_paths' => true ] );
+				$this->fail( "{$pattern} grouped its paths" );
+			} catch ( \InvalidArgumentException $e ) {
+				$this->assertStringContainsString( 'group_paths', $e->getMessage() );
+			}
+		}
 	}
 
 	/** @return array<string,array{mixed}> Sample rates that are not probabilities. */
