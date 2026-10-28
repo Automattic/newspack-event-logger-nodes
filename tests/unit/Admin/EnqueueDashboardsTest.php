@@ -61,12 +61,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 		/** Find the NewspackNodesData localize record for $handle. */
 		private function localized_for( string $handle ): ?array {
-			foreach ( $GLOBALS['_localized_scripts'] as $rec ) {
-				if ( ( $rec[0] ?? '' ) === $handle && 'NewspackNodesData' === ( $rec[1] ?? '' ) ) {
-					return \is_array( $rec[2] ?? null ) ? $rec[2] : [];
-				}
-			}
-			return null;
+			$rec = $GLOBALS['_localized_scripts'][ $handle ] ?? null;
+			return null !== $rec && 'NewspackNodesData' === $rec['object_name'] ? $rec['data'] : null;
 		}
 
 		/** Find the wp_enqueue_script record (positional stub) for $handle. */

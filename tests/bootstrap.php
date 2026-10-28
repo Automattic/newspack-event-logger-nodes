@@ -287,14 +287,6 @@ if ( ! function_exists( 'wp_enqueue_style' ) ) {
 	}
 }
 
-// Overrides shared shim: variadic append (shared keys by handle).
-if ( ! function_exists( 'wp_localize_script' ) ) {
-	function wp_localize_script( ...$args ): bool {
-		$GLOBALS['_localized_scripts'][] = $args;
-		return true;
-	}
-}
-
 if ( ! function_exists( 'get_bloginfo' ) ) {
 	/**
 	 * Seeded 9.9.9 — no WordPress release carries it, so a test that reads a
