@@ -9,6 +9,13 @@
 		gap: 10px;
 	}
 
+	.rules-admin__action {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 8px;
+	}
+
 	.rules-admin__badge {
 		display: inline-block;
 		padding: 2px 8px;

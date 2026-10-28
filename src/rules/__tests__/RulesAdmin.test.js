@@ -267,6 +267,26 @@ describe( 'RulesAdmin', () => {
 		).not.toContain( 'groups paths' );
 	} );
 
+	test( 'the action badge and its chips sit in one spaced row', () => {
+		setGraph( {
+			rules: [
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'a1',
+					sample_rate: 0.1,
+					group_paths: true,
+				},
+			],
+		} );
+		const { container } = mount();
+		const row = container.querySelector(
+			'tr[data-rule-id="a1"] .rules-admin__action'
+		);
+		expect(
+			[ ...row.children ].map( ( child ) => child.textContent )
+		).toEqual( [ 'Log', '10% sampled', 'groups paths' ] );
+	} );
+
 	test( 'shows the empty state when there are no rules', () => {
 		setGraph( { rules: [] } );
 		const { container } = mount();

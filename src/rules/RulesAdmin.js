@@ -150,27 +150,35 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 				<code>{ rule.pattern }</code>
 			</td>
 			<td>
-				<span
-					className={ `rules-admin__badge newspack-nodes-badge rules-admin__badge--${ rule.action }` }
-				>
-					{ 'log' === rule.action
-						? __( 'Log', 'newspack-event-logger-nodes' )
-						: __( 'Skip', 'newspack-event-logger-nodes' ) }
-				</span>
-				{ 'log' === rule.action && rule.sample_rate < 1 && (
-					<span className="newspack-nodes-status">
-						{ sprintf(
-							// translators: %s: the share of matching requests logged, as a percentage.
-							__( '%s sampled', 'newspack-event-logger-nodes' ),
-							samplePercent( rule.sample_rate )
-						) }
+				<div className="rules-admin__action">
+					<span
+						className={ `rules-admin__badge newspack-nodes-badge rules-admin__badge--${ rule.action }` }
+					>
+						{ 'log' === rule.action
+							? __( 'Log', 'newspack-event-logger-nodes' )
+							: __( 'Skip', 'newspack-event-logger-nodes' ) }
 					</span>
-				) }
-				{ 'log' === rule.action && rule.group_paths && (
-					<span className="newspack-nodes-status">
-						{ __( 'groups paths', 'newspack-event-logger-nodes' ) }
-					</span>
-				) }
+					{ 'log' === rule.action && rule.sample_rate < 1 && (
+						<span className="newspack-nodes-status">
+							{ sprintf(
+								// translators: %s: the share of matching requests logged, as a percentage.
+								__(
+									'%s sampled',
+									'newspack-event-logger-nodes'
+								),
+								samplePercent( rule.sample_rate )
+							) }
+						</span>
+					) }
+					{ 'log' === rule.action && rule.group_paths && (
+						<span className="newspack-nodes-status">
+							{ __(
+								'groups paths',
+								'newspack-event-logger-nodes'
+							) }
+						</span>
+					) }
+				</div>
 			</td>
 			<td>
 				{ 'log' === rule.action
