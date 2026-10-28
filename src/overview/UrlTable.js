@@ -57,6 +57,7 @@ import {
 	useQueryParamFlag,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { sameSubject, subjectDescriptor, subjectOfRow } from './detailSubject';
+import { requestedUrl } from '../log-table/urlIdentity';
 import {
 	DEFAULT_CHART_METRIC,
 	NO_PAGE_KEYS,
@@ -176,7 +177,7 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url ) => <code>{ url.url }</code>,
+		render: ( url ) => <code>{ requestedUrl( url.url ) }</code>,
 	},
 	{
 		field: 'count_2xx',

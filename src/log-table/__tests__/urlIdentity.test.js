@@ -6,7 +6,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
-import { serverName, urlHash } from '../urlIdentity';
+import { requestedUrl, rulePath, serverName, urlHash } from '../urlIdentity';
 
 const cases = JSON.parse(
 	readFileSync(
@@ -17,6 +17,43 @@ const cases = JSON.parse(
 
 test.each( cases )( '%s', ( _label, url, identity ) => {
 	expect( urlHash( url ) ).toBe( fnv1a( identity ) );
+} );
+
+const rulePaths = JSON.parse(
+	readFileSync(
+		join( __dirname, '../../../tests/fixtures/rule-paths.json' ),
+		'utf8'
+	)
+);
+
+test.each( rulePaths )( 'rule path: %s', ( _label, url, path ) => {
+	expect( rulePath( url ) ).toBe( path );
+} );
+
+test( 'a grouped key reads as the URL the request asked for', () => {
+	expect(
+		requestedUrl( 'https://kea.test/author/sociales?/page/2/&moa=?' )
+	).toBe( 'https://kea.test/author/sociales/page/2/?moa=?' );
+	expect(
+		requestedUrl( 'https://kea.test/author/sociales?/page/2/&cron.p0' )
+	).toBe( 'https://kea.test/author/sociales/page/2/?cron.p0' );
+	expect( requestedUrl( 'https://kea.test/author/sociales?/' ) ).toBe(
+		'https://kea.test/author/sociales/'
+	);
+	expect(
+		requestedUrl( 'https://kea.test/author/sociales?/x%2526y%26z' )
+	).toBe( 'https://kea.test/author/sociales/x%26y&z' );
+} );
+
+test( 'any other URL reads as it is stored', () => {
+	for ( const url of [
+		'https://kea.test/moa?v=?&rest_route=/wp/v2',
+		'https://kea.test/author/sociales',
+		'https://kea.test/jobs/kea?job-worker.p0',
+	] ) {
+		expect( requestedUrl( url ) ).toBe( url );
+	}
+	expect( requestedUrl( undefined ) ).toBe( '' );
 } );
 
 test( 'an absent URL hashes as the empty string', () => {

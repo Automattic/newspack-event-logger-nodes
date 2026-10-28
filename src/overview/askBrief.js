@@ -261,7 +261,7 @@ function ruleLines( rule ) {
 		[
 			'groups paths',
 			'log' === rule.action && rule.group_paths
-				? `the rule files every path under \`${ rule.pattern }\` there; rows from before it grouped keep their own paths`
+				? `every path under \`${ rule.pattern }\` is keyed with the rest of its path as its query, so it is a URL of its own in that page; URLs filed before it grouped keep their own rows`
 				: '',
 		],
 		[

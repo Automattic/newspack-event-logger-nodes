@@ -305,6 +305,22 @@ export default function RuleEditModal( {
 						onChange={ setPattern }
 					/>
 
+					{ isLog && (
+						<RuleSwitch
+							name="rule-group-paths"
+							label={ __(
+								'Group paths',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								"Lists every path under this prefix under the prefix's page, as though the rest of the path were its query string, so /author/sociales/page/2 is a shape of /author/sociales. Prefix patterns only.",
+								'newspack-event-logger-nodes'
+							) }
+							checked={ groupPaths }
+							onChange={ setGroupPaths }
+						/>
+					) }
+
 					<SelectControl
 						__next40pxDefaultSize
 						label={ __( 'Action', 'newspack-event-logger-nodes' ) }
@@ -348,20 +364,6 @@ export default function RuleEditModal( {
 								name="rule-sample-rate"
 								value={ sampleRate }
 								onChange={ setSampleRate }
-							/>
-
-							<RuleSwitch
-								name="rule-group-paths"
-								label={ __(
-									'Group paths',
-									'newspack-event-logger-nodes'
-								) }
-								help={ __(
-									'Counts every path under this prefix as the prefix itself, as though the rest of the path were its query, so /author/sociales/page/2 counts as /author/sociales. Prefix patterns only.',
-									'newspack-event-logger-nodes'
-								) }
-								checked={ groupPaths }
-								onChange={ setGroupPaths }
 							/>
 
 							<div className="rule-edit-selectors">

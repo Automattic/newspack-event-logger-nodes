@@ -170,6 +170,24 @@ test( 'shows the URL as sent and links by its identity', () => {
 	);
 } );
 
+test( 'shows a grouped key as the URL its request asked for, hashing the key', () => {
+	const v = makeView( 'error-log:view' );
+	const url = 'https://kea.test/author/sociales?/page/2/&moa=?';
+	v.fill(
+		envMsg( 'grouped-rid-5108', {
+			k: 'error',
+			m: 'grouped failure 5108',
+			method: 'GET',
+			url,
+		} )
+	);
+
+	expect( v.lines[ 0 ].url ).toBe(
+		'https://kea.test/author/sociales/page/2/?moa=?'
+	);
+	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( url ) );
+} );
+
 test( 'hashes the full request URL while clipping only its display value', () => {
 	const v = makeView( 'error-log:view' );
 	const url = `/long-error-url-731/${ 'x731'.repeat(

@@ -2891,11 +2891,12 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * A rule that groups its paths names its pattern on the request line,
-	 * and the line files the request under it while keeping the URL it
-	 * asked for. A rule that does not group names nothing.
+	 * A rule that groups its paths names its pattern on the request line, and
+	 * the line keys the request with the rest of its path as its query, so it
+	 * folds into the pattern's page as a URL of its own, while `request_url`
+	 * keeps the URL it asked for. A rule that does not group names nothing.
 	 */
-	public function test_a_grouping_rule_files_the_request_under_its_pattern(): void {
+	public function test_a_grouping_rule_keys_the_rest_of_the_path_as_its_query(): void {
 		$this->require_config_or_skip();
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		$_SERVER['SERVER_NAME']    = 'kea-5108.test';
@@ -2909,7 +2910,7 @@ class LogManagerTest extends TestCase {
 			$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ) );
 			$this->assertCount( 1, $requests );
 			$this->assertSame(
-				[ 'GET', 'https://kea-5108.test/author/sociales/page/12345?moa=7', $groups ? 'https://kea-5108.test/author/sociales?moa=?' : 'https://kea-5108.test/author/sociales/page/12345?moa=?' ],
+				[ 'GET', 'https://kea-5108.test/author/sociales/page/12345?moa=7', $groups ? 'https://kea-5108.test/author/sociales?/page/12345&moa=?' : 'https://kea-5108.test/author/sociales/page/12345?moa=?' ],
 				Log_Manager::parse_request_line( $requests[0] )
 			);
 			$this->assertSame( $groups ? '/author/sociales' : null, $requests[0]['group'] ?? null );
@@ -2917,8 +2918,9 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * The reader trusts a `group` only when it is a prefix pattern the URL's
-	 * path is under, and never throws: any other line keys by its own path.
+	 * The reader trusts a `group` only when it is a site path of a prefix
+	 * pattern the key's path is under, and never throws: any other line keys
+	 * by its own path.
 	 */
 	public function test_a_group_the_url_is_not_under_or_no_rule_could_write_keys_by_the_path(): void {
 		$line = static fn ( mixed $group, string $url, bool $truncated = false ): ?array => Log_Manager::parse_request_line(
@@ -2927,7 +2929,7 @@ class LogManagerTest extends TestCase {
 		foreach ( [ 7, 'author/sociales', '/author/sociales?moa', '/author/takahe' ] as $group ) {
 			$this->assertSame( 'https://kea.test/author/sociales/page/2?moa=?', $line( $group, 'https://kea.test/author/sociales/page/2?moa=7' )[2], \var_export( $group, true ) );
 		}
-		$this->assertSame( 'https://kea.test/author/sociales?moa=?', $line( '/author/sociales', 'https://kea.test/author/sociales/page/2?moa=7&take', true )[2], 'a trimmed line drops its last parameter' );
+		$this->assertSame( 'https://kea.test/author/sociales?/page/2&moa=?', $line( '/author/sociales', 'https://kea.test/author/sociales/page/2?moa=7&take', true )[2], 'a trimmed line drops its last parameter' );
 		$this->assertSame( 'https:///author/sociales/2', $line( '/author/sociales', 'https:///author/sociales/2' )[2], 'a hostless line keys as it did' );
 	}
 

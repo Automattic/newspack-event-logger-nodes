@@ -39,6 +39,7 @@ import { AskButton } from './AskPanel';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import HeadlineStats from './HeadlineStats';
+import { requestedUrl } from '../../log-table/urlIdentity';
 
 /**
  * Overview Section component.
@@ -282,7 +283,8 @@ export default function OverviewSection( {
 												{ result.method }
 											</span>
 											<span className="event-logger-search-result-url">
-												{ result.url || result.rid }
+												{ requestedUrl( result.url ) ||
+													result.rid }
 											</span>
 											<span className="event-logger-search-result-count newspack-nodes-status">
 												{ sprintf(

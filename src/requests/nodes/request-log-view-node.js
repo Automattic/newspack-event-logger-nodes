@@ -15,7 +15,7 @@ import {
 	ID,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
-import { urlHash } from '../../log-table/urlIdentity';
+import { requestedUrl, urlHash } from '../../log-table/urlIdentity';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
 /** Rows the ring holds until a caller assigns `maxLines` of its own. */
@@ -57,16 +57,14 @@ export class RequestLogViewNode extends LogStreamViewNode {
 	/**
 	 * Ingest gate: the toolbar promises "Filter by URL…", so only the URL is
 	 * searched — never the base's `content`, which would widen the scope the
-	 * placeholder advertises.
+	 * placeholder advertises — and as the table shows it, `requestedUrl()`.
 	 *
 	 * @param {Object} fields      Shaped row fields.
 	 * @param {string} filterLower The active filter, already lowercased.
 	 * @return {boolean} True to admit the row.
 	 */
 	matchesFilter( fields, filterLower ) {
-		return String( fields.url ?? '' )
-			.toLowerCase()
-			.includes( filterLower );
+		return requestedUrl( fields.url ).toLowerCase().includes( filterLower );
 	}
 
 	/**

@@ -206,6 +206,22 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'shows a grouped shape as the path its requests asked for', () => {
+		const { container, unmount } = mount( {
+			urls: [
+				{
+					...asPage( { hash: 'c0ffee72', path: '/author/sociales' } ),
+					url: 'https://kea.example/author/sociales?/page/2/',
+				},
+			],
+		} );
+		expect( container.textContent ).toContain(
+			'https://kea.example/author/sociales/page/2/'
+		);
+		expect( container.textContent ).not.toContain( 'sociales?/' );
+		unmount();
+	} );
+
 	it( 'renders no overflow row', () => {
 		// Every row is one page the server counted exactly; a one-shape page
 		// flagged as an aggregate is still its URL, opened and asked about.

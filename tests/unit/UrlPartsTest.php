@@ -74,21 +74,25 @@ class UrlPartsTest extends TestCase {
 	 * nor the worker mark is anything a request sent. An authority with no
 	 * path has an empty one, so the host never swallows the query.
 	 */
-	public function test_a_rule_path_is_the_path_alone(): void {
-		$this->assertSame(
-			[ '/', '/wp-cron.php', '/jobs/kea', '/moa/kiwi', '', '' ],
-			\array_map(
-				[ Url_Parts::class, 'rule_path' ],
-				[
-					'https://alpha.test/?_embed=?&rest_route=/wp/v2/posts',
-					'https://alpha.test/wp-cron.php?doing_wp_cron=?&cron',
-					'https://alpha.test/jobs/kea?job-worker.p0',
-					'https://alpha.test/moa/kiwi',
-					'https://alpha.test?page=?&weka.p2',
-					'https://alpha.test',
-				]
-			)
-		);
+	/**
+	 * A stored URL's rule path, held to `rulePath()` in JS by the one case
+	 * list: its path alone, and for a grouped key the path the request asked
+	 * for, read back from its query.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function rule_paths(): array {
+		$cases = \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/rule-paths.json' ), true, 512, \JSON_THROW_ON_ERROR );
+		$out   = [];
+		foreach ( $cases as [ $label, $url, $path ] ) {
+			$out[ $label ] = [ $url, $path ];
+		}
+		return $out;
+	}
+
+	#[DataProvider( 'rule_paths' )]
+	public function test_a_rule_path_is_the_path_the_request_asked_for( string $url, string $path ): void {
+		$this->assertSame( $path, Url_Parts::rule_path( $url ) );
 	}
 
 	/**
@@ -149,22 +153,50 @@ class UrlPartsTest extends TestCase {
 	}
 
 	/**
-	 * A URL under a grouping path is filed under that path, as though the
-	 * rest were part of its query, and keeps its own query keys. A URL whose
-	 * path does not start with it is left as it is.
+	 * A key under a grouping path moves the rest of its path into its query,
+	 * ahead of its own query keys, so its page is the grouping path's and each
+	 * path under it stays a URL of its own. A key not under it is left alone.
 	 */
-	public function test_a_url_under_a_grouping_path_is_filed_under_it(): void {
-		$this->assertSame( 'https://kea.test/author/sociales', Url_Parts::grouped( 'https://kea.test/author/sociales/page/12345', '/author/sociales' ) );
-		$this->assertSame( 'https://kea.test/author/sociales?moa=7', Url_Parts::grouped( 'https://kea.test/Author/Sociales/page/2?moa=7', '/author/sociales' ) );
-		$this->assertSame( 'https://kea.test/author/sociales', Url_Parts::grouped( 'https://kea.test/author/sociales', '/author/sociales' ) );
-		$this->assertSame( 'https://kea.test/author/takahe/page/3', Url_Parts::grouped( 'https://kea.test/author/takahe/page/3', '/author/sociales' ) );
+	public function test_a_key_under_a_grouping_path_carries_the_rest_as_its_query(): void {
+		$cases = [
+			'https://kea.test/author/sociales/page/12345'      => 'https://kea.test/author/sociales?/page/12345',
+			'https://kea.test/Author/Sociales/page/2/?moa=?'   => 'https://kea.test/author/sociales?/page/2/&moa=?',
+			'https://kea.test/author/sociales/'                => 'https://kea.test/author/sociales?/',
+			'https://kea.test/author/sociales'                 => 'https://kea.test/author/sociales',
+			'https://kea.test/author/sociales?moa=?'           => 'https://kea.test/author/sociales?moa=?',
+			'https://kea.test/author/takahe/page/3'            => 'https://kea.test/author/takahe/page/3',
+			'https://kea.test/author/sociales/x&action=foo'    => 'https://kea.test/author/sociales?/x%26action%3Dfoo',
+		];
+		foreach ( $cases as $key => $grouped ) {
+			$this->assertSame( $grouped, Url_Parts::grouped( $key, '/author/sociales' ), $key );
+		}
+		$this->assertSame( 'kea.test/author/sociales', Url_Parts::page( Url_Parts::grouped( 'https://kea.test/author/sociales/page/2/?moa=?', '/author/sociales' ) ) );
+	}
+
+	/**
+	 * A moved path always opens with `/`, a slash-ended pattern's included,
+	 * and carries its `&` and `=` encoded, so it can never spell a query key
+	 * or the bare worker mark `resolved_request_url()` appends.
+	 */
+	public function test_a_moved_path_cannot_spell_a_key_or_a_worker_mark(): void {
+		$this->assertSame( 'https://kea.test/author/?/sociales/2', Url_Parts::grouped( 'https://kea.test/author/sociales/2', '/author/' ) );
+		$this->assertSame( 'https://kea.test/author/?/cron.p0', Url_Parts::grouped( 'https://kea.test/author/cron.p0', '/author/' ) );
+		$this->assertNotSame(
+			Url_Parts::grouped( 'https://kea.test/author/sociales/x&action=foo', '/author/sociales' ),
+			Url_Parts::grouped( 'https://kea.test/author/sociales/x?action=?', '/author/sociales' )
+		);
+		$this->assertNotSame(
+			Url_Parts::grouped( 'https://kea.test/author/sociales/x&y', '/author/sociales' ),
+			Url_Parts::grouped( 'https://kea.test/author/sociales/x%26y', '/author/sociales' ),
+			'a literal & and an escaped one are two paths'
+		);
+		$this->assertSame( 'https://kea.test/author/sociales?/p%C3%A1gina', Url_Parts::grouped( 'https://kea.test/author/sociales/p%C3%A1gina', '/author/sociales' ), 'any other escape reads as sent' );
 	}
 
 	/** A path that only begins with the pattern's characters is a sibling, not under it. */
 	public function test_a_sibling_path_is_not_under_the_grouping_path(): void {
 		$this->assertSame( 'https://kea.test/author/sociales-mundo/page/3', Url_Parts::grouped( 'https://kea.test/author/sociales-mundo/page/3', '/author/sociales' ) );
 		$this->assertSame( 'https://kea.test/author/socialesx', Url_Parts::grouped( 'https://kea.test/author/socialesx', '/author/sociales' ) );
-		$this->assertSame( 'https://kea.test/author/', Url_Parts::grouped( 'https://kea.test/author/sociales/2', '/author/' ) );
 	}
 
 	/** A trimmed line may cut its last parameter mid-name or mid-value, so that one keys nothing. */

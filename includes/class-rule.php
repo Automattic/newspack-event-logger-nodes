@@ -66,7 +66,7 @@ final class Rule {
 	 * @param bool          $log_resources               Write the two `resources` getrusage() samples, at the open and at the close, which the CPU-time findings difference.
 	 * @param bool          $log_php_errors              Record PHP's warnings, notices and deprecations, and WordPress's own deprecations and misuse, one row per distinct error and a count of the repeats at the close. Off unless set; off, the request installs no error handler.
 	 * @param float         $sample_rate                 The probability, from 0 to 1, that a log rule logs a request it governs; 1.0 logs every one, and 0.1 roughly one in ten.
-	 * @param bool          $group_paths                 File every path under a prefix pattern under the pattern itself, as though the rest of the path were part of its query; off unless set.
+	 * @param bool          $group_paths                 Key every path under a prefix pattern with the rest of the path as its query, so it is a URL of its own in the pattern's page; off unless set.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, the sample rate is not a probability, or a pattern with a `?` groups its paths.
 	 */

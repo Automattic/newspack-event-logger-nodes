@@ -634,7 +634,7 @@ class Ask_Assembler {
 			'trace_callers'      => $rule->trace_callers,
 			// A sampled URL's counts cover about this share of its requests.
 			'sample_rate'        => $rule->sample_rate,
-			// A grouping rule files every path under its pattern there.
+			// A grouping rule folds every path under its pattern into its page.
 			'group_paths'        => $rule->group_paths,
 		];
 	}

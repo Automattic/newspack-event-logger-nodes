@@ -756,6 +756,28 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'shows a grouped result as the URL its request asked for', () => {
+		const { container, unmount } = mount(
+			{},
+			{
+				searchResults: [
+					{
+						rid: 'r5108',
+						url: 'https://kea.test/author/sociales?/page/2/',
+						method: 'GET',
+						match_count: 1,
+					},
+				],
+				onSelectResult: jest.fn(),
+			}
+		);
+		expect(
+			container.querySelector( '.event-logger-search-result-url' )
+				.textContent
+		).toBe( 'https://kea.test/author/sociales/page/2/' );
+		unmount();
+	} );
+
 	it( 'shows a truncation note when the result set is capped', () => {
 		const { container, unmount } = mount(
 			{},
