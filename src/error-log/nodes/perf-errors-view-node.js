@@ -16,7 +16,7 @@ import {
 	ID,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
-import { urlHash } from '../../log-table/urlIdentity';
+import { requestedUrl, urlHash } from '../../log-table/urlIdentity';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
 /** Rows the ring holds when the graph passes no cap of its own. */
@@ -137,7 +137,8 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		const k = value.k || '';
 		const method = 'string' === typeof value.method ? value.method : '';
 		const rawUrl = 'string' === typeof value.url ? value.url : '';
-		const url = clip( rawUrl, MAX_URL_LENGTH );
+		// Read back before the clip, which could cut a moved path's escape.
+		const url = clip( requestedUrl( rawUrl ), MAX_URL_LENGTH );
 		const row = {
 			rid,
 			ts: value.ts || 0,

@@ -92,7 +92,7 @@ import {
 	useQueryParamState,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
-import { serverName } from '../log-table/urlIdentity';
+import { requestedUrl, rulePath, serverName } from '../log-table/urlIdentity';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import { useDismissable } from '@newspack-nodes/shared/hooks/useDismissable';
 import OverviewSection from './components/OverviewSection';
@@ -1072,12 +1072,8 @@ export default function PerformanceDashboard( {
 			? urlDetail?.stats?.url
 			: undefined );
 	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
-	// The path alone, as Url_Parts::rule_path() reads it; '?' marks it exact.
-	const exactPattern = `${
-		( ruleUrl ?? '' )
-			.replace( /^[a-z][a-z\d+.-]*:\/\/[^/?#]+/i, '' )
-			.split( '?' )[ 0 ]
-	}?`;
+	// The path a rule matches it by; '?' marks it exact.
+	const exactPattern = `${ rulePath( ruleUrl ) }?`;
 
 	/**
 	 * Read the whole ruleset. A retried READ, and `existingRule` is DERIVED from
@@ -1357,7 +1353,7 @@ export default function PerformanceDashboard( {
 									),
 									selectedRequest
 							  )
-							: ruleUrl
+							: requestedUrl( ruleUrl )
 					}
 					onRequestClose={ () => {
 						// Keep URL modal open while the nested editor is open.

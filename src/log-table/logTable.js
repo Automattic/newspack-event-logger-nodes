@@ -22,6 +22,7 @@ import {
 	getDurationClass,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
+import { requestedUrl } from './urlIdentity';
 
 /**
  * The columns more than one dashboard declares. A dashboard merges its own
@@ -127,7 +128,8 @@ export const ridCell = ( rid, key ) => (
 );
 
 /**
- * Method and URL, the URL linked to its stats by the hash it is given.
+ * Method and URL, the URL linked to its stats by the hash it is given and
+ * shown as the request asked for it (`requestedUrl()`).
  *
  * Draws nothing when the entry carried no URL — an error can be logged
  * outside a request.
@@ -139,7 +141,7 @@ export const ridCell = ( rid, key ) => (
  * @return {import('react').ReactElement} The cell.
  */
 export const urlCell = ( method, url, urlHash, key ) => (
-	<Cell key={ key } mod="entry-url" title={ url }>
+	<Cell key={ key } mod="entry-url" title={ requestedUrl( url ) }>
 		{ url && (
 			<>
 				<span className="entry-method">{ method }</span>{ ' ' }
@@ -151,7 +153,7 @@ export const urlCell = ( method, url, urlHash, key ) => (
 						'newspack-event-logger-nodes'
 					) }
 				>
-					{ url }
+					{ requestedUrl( url ) }
 				</a>
 			</>
 		) }

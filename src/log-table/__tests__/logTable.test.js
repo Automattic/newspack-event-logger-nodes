@@ -106,6 +106,24 @@ describe( 'log table cells', () => {
 		expect( link.getAttribute( 'title' ) ).toBe( 'View URL stats' );
 	} );
 
+	test( 'urlCell shows a grouped key as the URL its request asked for', () => {
+		const cell = draw(
+			urlCell(
+				'GET',
+				'https://kea.test/author/sociales?/page/2/&moa=?',
+				'hash-5108'
+			)
+		);
+		const asked = 'https://kea.test/author/sociales/page/2/?moa=?';
+		expect( cell.getAttribute( 'title' ) ).toBe( asked );
+		expect( cell.querySelector( 'a.entry-url-link' ).textContent ).toBe(
+			asked
+		);
+		expect(
+			cell.querySelector( 'a.entry-url-link' ).getAttribute( 'href' )
+		).toBe( 'admin.php?page=event-logger-overview&url=hash-5108' );
+	} );
+
 	it( 'leaves the url cell empty when the entry carried no url', () => {
 		const cell = draw( urlCell( 'PATCH', undefined, 'hash-8842' ) );
 		expect( cell.textContent ).toBe( '' );

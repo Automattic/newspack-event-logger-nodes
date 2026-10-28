@@ -458,6 +458,14 @@ describe( 'request-log:view — nodeSchema', () => {
 } );
 
 describe( 'ingest filter', () => {
+	it( 'matches a grouped row by the URL it shows', () => {
+		const v = new RequestLogViewNode();
+		const url = 'https://kea.test/author/sociales?/page/2/';
+		expect( v.matchesFilter( { url }, '/author/sociales/page/2' ) ).toBe(
+			true
+		);
+	} );
+
 	it( 'matches the fields the toolbar placeholder promises', () => {
 		const v = new RequestLogViewNode();
 

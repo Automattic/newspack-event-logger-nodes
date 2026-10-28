@@ -535,6 +535,20 @@ describe( 'RuleEditModal — log rule fields', () => {
 	} );
 
 	describe( 'group paths', () => {
+		test( 'sits directly below the URL pattern', () => {
+			mount( LOG_RULE );
+			const fields = [
+				...document.querySelectorAll(
+					'[role="dialog"] input[name="rule-pattern"], [role="dialog"] input[name="rule-group-paths"], [role="dialog"] select[name="rule-action"]'
+				),
+			].map( ( el ) => el.name );
+			expect( fields ).toEqual( [
+				'rule-pattern',
+				'rule-group-paths',
+				'rule-action',
+			] );
+		} );
+
 		test( 'a log rule round-trips it', () => {
 			mount( { ...LOG_RULE, group_paths: true } );
 			click( saveButton() );

@@ -1,0 +1,16 @@
+[
+  ["a routing query", "https://alpha.test/?_embed=?&rest_route=/wp/v2/posts", "/"],
+  ["a worker mark", "https://alpha.test/wp-cron.php?doing_wp_cron=?&cron", "/wp-cron.php"],
+  ["a bare worker mark", "https://alpha.test/jobs/kea?job-worker.p0", "/jobs/kea"],
+  ["no query", "https://alpha.test/moa/kiwi", "/moa/kiwi"],
+  ["no path", "https://alpha.test?page=?&weka.p2", ""],
+  ["nothing past the host", "https://alpha.test", ""],
+  ["a grouped key reads its moved path back", "https://kea.test/author/sociales?/page/2/&moa=?", "/author/sociales/page/2/"],
+  ["a grouped key with a worker mark", "https://kea.test/author/sociales?/page/2/&cron.p0", "/author/sociales/page/2/"],
+  ["a grouped slash", "https://kea.test/author/sociales?/", "/author/sociales/"],
+  ["a moved path's separators decode", "https://kea.test/author/sociales?/x%26action%3Dfoo", "/author/sociales/x&action=foo"],
+  ["a slash-ended pattern's moved path", "https://kea.test/author/?/sociales/2", "/author/sociales/2"],
+  ["an escaped separator in the path reads back escaped", "https://kea.test/author/sociales?/x%2526y%253Dz", "/author/sociales/x%26y%3Dz"],
+  ["an escaped percent reads back", "https://kea.test/author/sociales?/x%2525y", "/author/sociales/x%25y"],
+  ["another escape is left alone", "https://kea.test/author/sociales?/p%C3%A1gina", "/author/sociales/p%C3%A1gina"]
+]

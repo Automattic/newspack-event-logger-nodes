@@ -7,5 +7,6 @@
   ["a worker mark folds with the key", "https://kea.test/wp-cron.php?doing_wp_cron=?&Cron.p0", "https://kea.test/wp-cron.php?doing_wp_cron=?&cron.p0"],
   ["a routing value folds", "https://kea.test/wp-admin/admin-ajax.php?_nonce=?&action=HeartBeat", "https://kea.test/wp-admin/admin-ajax.php?_nonce=?&action=heartbeat"],
   ["an escape's hex folds", "https://kea.test/?action=a%26b%3Dc", "https://kea.test/?action=a%26b%3dc"],
-  ["only ASCII folds", "https://kea.test/Ärger-4402", "https://kea.test/Ärger-4402"]
+  ["only ASCII folds", "https://kea.test/Ärger-4402", "https://kea.test/Ärger-4402"],
+  ["a grouped key folds with its moved path", "https://Kea.Test/Author/Sociales?/Page/2/&moa=?", "https://kea.test/author/sociales?/page/2/&moa=?"]
 ]

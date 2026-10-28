@@ -69,6 +69,24 @@ final class Url_Parts {
 	];
 
 	/**
+	 * What `grouped()` encodes in a moved path, so it can never read as a
+	 * query separator, and `rule_path()` decodes when it reads the path back.
+	 * The escapes a path already carries for those three are escaped again,
+	 * so the mapping reverses; every other `%XX` reads as sent. `strtr()`
+	 * applies each map in one pass, longest match first.
+	 *
+	 * @var array<string,string>
+	 */
+	private const MOVED_PATH_ESCAPES = [
+		'%25' => '%2525',
+		'%26' => '%2526',
+		'%3D' => '%253D',
+		'%3d' => '%253d',
+		'&'   => '%26',
+		'='   => '%3D',
+	];
+
+	/**
 	 * The server a URL was logged by: its host, which the producer writes
 	 * from the server name it serves under, as `server_name()` spells it.
 	 *
@@ -150,40 +168,61 @@ final class Url_Parts {
 	}
 
 	/**
-	 * The URL a request is filed under when its rule groups every path under
-	 * `$path`: its origin, that path and its own query, as though the rest of
-	 * its path were part of the query, which `key()` then masks. A path is
-	 * under `$path` when it starts with it, compared without case as a rule
+	 * The key a request is filed under when its rule groups every path under
+	 * `$path`: its origin and that path, then the rest of its path as though
+	 * it were its query, ahead of the key's own query keys. So `page()`, which
+	 * stops at the `?`, is the grouping path's page, and each path under it
+	 * stays a URL of its own there, as a query shape does. A path is under
+	 * `$path` when it starts with it, compared without case as a rule
 	 * matches, at a segment's end: `$path` ends in `/`, or the path goes on
-	 * with a `/`, a `?` or not at all, so `/author/sociales-mundo` is a sibling of
-	 * `/author/sociales`. Any other URL comes back as it is.
+	 * with a `/` or not at all, so `/author/sociales-mundo` is a sibling of
+	 * `/author/sociales`. Any other key comes back as it is. The moved path
+	 * always opens with `/`, a slash-ended pattern's included, and carries
+	 * its `&` and `=` encoded through `MOVED_PATH_ESCAPES`, so it never
+	 * spells a query key, which `key()` encodes whole, or a worker mark.
 	 *
-	 * @param string $url  The request's absolute URL, query and all.
+	 * @param string $key  A `key()`, query keys masked.
 	 * @param string $path The grouping rule's pattern, a site path.
-	 * @throws \InvalidArgumentException When the URL has no host.
+	 * @throws \InvalidArgumentException When the key has no host.
 	 */
-	public static function grouped( string $url, string $path ): string {
-		$after = \array_sum( self::authority( $url ) );
-		$next  = \substr( $url, $after + \strlen( $path ), 1 );
-		if ( 0 !== \strncasecmp( \substr( $url, $after ), $path, \strlen( $path ) ) || ! ( \str_ends_with( $path, '/' ) || \in_array( $next, [ '', '/', '?' ], true ) ) ) {
-			return $url;
+	public static function grouped( string $key, string $path ): string {
+		$after = \array_sum( self::authority( $key ) );
+		$here  = self::path_from( $key, $after );
+		$rest  = \substr( $here, \strlen( $path ) );
+		if ( 0 !== \strncasecmp( $here, $path, \strlen( $path ) ) || ! ( \str_ends_with( $path, '/' ) || '' === $rest || '/' === $rest[0] ) ) {
+			return $key;
 		}
-		$query = \strpos( $url, '?', $after );
-		return \substr( $url, 0, $after ) . $path . ( false === $query ? '' : \substr( $url, $query ) );
+		if ( '' !== $rest && \str_ends_with( $path, '/' ) ) {
+			$rest = "/{$rest}";
+		}
+		$rest  = \strtr( $rest, self::MOVED_PATH_ESCAPES );
+		$query = \substr( $key, $after + \strlen( $here ) + 1 );
+		$tail  = $rest . ( '' !== $rest && '' !== $query ? '&' : '' ) . $query;
+		return \substr( $key, 0, $after ) . $path . ( '' === $tail ? '' : "?{$tail}" );
 	}
 
 	/**
-	 * The site path a rule matches a stored URL by: its path alone, with no
-	 * scheme or host. A rule matches the URI a request sent, and the stored
-	 * query is not that: `key()` masked its values, and the builder may have
-	 * appended a worker mark. The authority ends at whichever delimiter comes
-	 * first, so a host never swallows a query.
+	 * The site path a rule matches a stored URL by: the path the request
+	 * asked for, with no scheme or host. A rule matches the URI a request
+	 * sent, and the stored query is not that: `key()` masked its values, and
+	 * the builder may have appended a worker mark. A grouped key's query opens
+	 * with the path `grouped()` moved there, which no query key or worker mark
+	 * can, so that path is read back. The authority ends at whichever
+	 * delimiter comes first, so a host never swallows a query. JS `rulePath()`
+	 * is its twin.
 	 *
 	 * @param string $url A stored URL, which carries its host.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function rule_path( string $url ): string {
-		return self::path_from( $url, \array_sum( self::authority( $url ) ) );
+		$after = \array_sum( self::authority( $url ) );
+		$path  = self::path_from( $url, $after );
+		$query = \substr( $url, $after + \strlen( $path ) + 1 );
+		if ( ! \str_starts_with( $query, '/' ) ) {
+			return $path;
+		}
+		$moved = \strtr( \explode( '&', $query, 2 )[0], \array_flip( self::MOVED_PATH_ESCAPES ) );
+		return $path . ( \str_ends_with( $path, '/' ) ? \substr( $moved, 1 ) : $moved );
 	}
 
 	/**

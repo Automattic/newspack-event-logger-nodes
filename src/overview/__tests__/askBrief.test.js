@@ -371,7 +371,7 @@ test( 'a sampled rule says what share of requests the counts cover', () => {
 	expect( brief( 1 ) ).not.toContain( 'sampled' );
 } );
 
-test( 'a grouping rule says its paths are filed under its pattern', () => {
+test( 'a grouping rule says its paths are URLs of their own in its page', () => {
 	const brief = ( groups ) =>
 		briefToMarkdown( {
 			subject: 'url',
@@ -389,7 +389,7 @@ test( 'a grouping rule says its paths are filed under its pattern', () => {
 		} );
 
 	expect( brief( true ) ).toContain(
-		'- **groups paths:** the rule files every path under `/author/sociales` there; rows from before it grouped keep their own paths'
+		'- **groups paths:** every path under `/author/sociales` is keyed with the rest of its path as its query, so it is a URL of its own in that page; URLs filed before it grouped keep their own rows'
 	);
 	expect( brief( false ) ).not.toContain( 'groups paths' );
 	expect(
