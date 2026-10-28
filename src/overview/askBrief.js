@@ -14,6 +14,7 @@
  */
 import { escapeLt } from './pageFacts';
 import { bucketSpan } from './chartSlots';
+import { samplePercent } from '../rules/sampleRate';
 
 const PROMPT_MAX = 6000;
 
@@ -248,6 +249,14 @@ function ruleLines( rule ) {
 			]
 				.filter( Boolean )
 				.join( ', ' ) || 'hooks only',
+		],
+		[
+			'sampled',
+			rule.sample_rate < 1
+				? `${ samplePercent(
+						rule.sample_rate
+				  ) } of requests, so the counts read at about that share`
+				: '',
 		],
 		[
 			'traces',

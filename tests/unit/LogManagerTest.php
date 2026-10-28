@@ -67,6 +67,7 @@ class LogManagerTest extends TestCase {
 	protected function tearDown(): void {
 		Log_Manager::reset();
 		Log_Manager::$last_error = null;
+		Log_Manager::$random     = null;
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
@@ -1482,6 +1483,92 @@ class LogManagerTest extends TestCase {
 		$lm = $this->fresh_log_manager();
 		$this->assertFalse( $lm->is_started() );
 		$this->assertTrue( $lm->governing_rule()->is_skip() );
+		$this->assertSame( '', $lm->governing_rule_id(), 'a request no rule logs names no rule' );
+	}
+
+	/**
+	 * A sampled rule logs a request whose one roll falls under its rate. Any
+	 * other request is governed by a bare skip of the same rule, carrying none
+	 * of its payload, and its id names no rule. A rule logging every request
+	 * never rolls.
+	 */
+	public function test_a_sampled_rule_logs_a_request_whose_roll_falls_under_its_rate(): void {
+		$this->require_config_or_skip();
+		$rolls               = 0;
+		Log_Manager::$random = static function () use ( &$rolls ): float {
+			++$rolls;
+			return 0.375;
+		};
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.5 ] ] );
+		$_SERVER['REQUEST_URI'] = '/kea-5108/cart';
+		$in = $this->fresh_log_manager();
+		$this->assertTrue( $in->is_started() );
+		$this->assertSame( 'kea', $in->governing_rule_id() );
+		$in->finish();
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.25 ] ] );
+		$out = $this->fresh_log_manager();
+		$this->assertFalse( $out->is_started() );
+		$this->assertTrue( $out->governing_rule()->is_skip() );
+		$this->assertSame( 'kea', $out->governing_rule()->id );
+		$this->assertSame( '', $out->governing_rule_id() );
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.375, 'custom_events' => [ 'kea_6631' ], 'hooks' => [ 'wp' ] ] ] );
+		$at = $this->fresh_log_manager();
+		$this->assertFalse( $at->is_started(), 'a roll equal to the rate is over it' );
+		$this->assertSame( [], $at->governing_rule()->custom_events );
+		$this->assertSame( [], $at->governing_rule()->hooks );
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0 ] ] );
+		Log_Manager::$random = static function () use ( &$rolls ): float {
+			++$rolls;
+			return 0.0;
+		};
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), 'a rate of 0 logs nothing' );
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log' ] ] );
+		$this->assertTrue( $this->fresh_log_manager()->is_started() );
+		$this->assertSame( 4, $rolls, 'a rule logging every request never rolls' );
+	}
+
+	/**
+	 * A reload that raises the rate over a request's roll governs it with the
+	 * log rule, but the request never started, so its id names no rule.
+	 */
+	public function test_a_request_that_never_started_names_no_rule(): void {
+		$this->require_config_or_skip();
+		Log_Manager::$random = static fn (): float => 0.375;
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.25 ] ] );
+		$_SERVER['REQUEST_URI'] = '/kea-5108/cart';
+		$lm = $this->fresh_log_manager();
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.5 ] ] );
+		Log_Manager::reload_rules();
+		$this->assertTrue( $lm->governing_rule()->is_log() );
+		$this->assertFalse( $lm->is_started() );
+		$this->assertSame( '', $lm->governing_rule_id() );
+	}
+
+	/** A reload re-resolves the rule but keeps the request's one roll. */
+	public function test_a_reload_keeps_the_requests_roll(): void {
+		$this->require_config_or_skip();
+		$rolls               = 0;
+		Log_Manager::$random = static function () use ( &$rolls ): float {
+			++$rolls;
+			return 0.375;
+		};
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.5 ] ] );
+		$_SERVER['REQUEST_URI'] = '/kea-5108/cart';
+		$lm = $this->fresh_log_manager();
+
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.25 ] ] );
+		Log_Manager::reload_rules();
+		$this->assertTrue( $lm->governing_rule()->is_skip(), 'the same roll is over the new rate' );
+		$this->set_rules_option( [ [ 'id' => 'kea', 'pattern' => '/kea-5108/', 'action' => 'log', 'sample_rate' => 0.5 ] ] );
+		Log_Manager::reload_rules();
+		$this->assertTrue( $lm->governing_rule()->is_log() );
+		$this->assertSame( 1, $rolls );
+		$lm->finish();
 	}
 
 	public function test_no_matching_rule_disables_logging_with_null_governing_rule(): void {

@@ -65,8 +65,9 @@ final class Rule {
 	 * @param bool          $log_cache                   Write the close's `objectcache` row: what the request asked of the object cache.
 	 * @param bool          $log_resources               Write the two `resources` getrusage() samples, at the open and at the close, which the CPU-time findings difference.
 	 * @param bool          $log_php_errors              Record PHP's warnings, notices and deprecations, and WordPress's own deprecations and misuse, one row per distinct error and a count of the repeats at the close. Off unless set; off, the request installs no error handler.
+	 * @param float         $sample_rate                 The probability, from 0 to 1, that a log rule logs a request it governs; 1.0 logs every one, and 0.1 roughly one in ten.
 	 *
-	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
+	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, or the sample rate is not a probability.
 	 */
 	public function __construct(
 		public readonly string $id,
@@ -88,10 +89,14 @@ final class Rule {
 		public readonly bool $log_context = false,
 		public readonly bool $log_cache = false,
 		public readonly bool $log_resources = false,
-		public readonly bool $log_php_errors = false
+		public readonly bool $log_php_errors = false,
+		public readonly float $sample_rate = 1.0
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
+		}
+		if ( ! ( $sample_rate >= 0.0 && $sample_rate <= 1.0 ) ) {
+			throw new \InvalidArgumentException( 'rule sample_rate must be a probability from 0 to 1' );
 		}
 		if ( ( null === $hooks ) !== ( self::HOOKS_MC === $hooks_in ) ) {
 			throw new \InvalidArgumentException( 'rule hooks contradict hooks_in: null hooks means the mc tier, a list means inline' );
@@ -169,6 +174,7 @@ final class Rule {
 			'log_cache'                   => $this->log_cache,
 			'log_resources'               => $this->log_resources,
 			'log_php_errors'              => $this->log_php_errors,
+			'sample_rate'                 => $this->sample_rate,
 		];
 	}
 
@@ -183,7 +189,7 @@ final class Rule {
 	 *
 	 * @param array<string,mixed> $a Stored rule shape, as produced by to_array().
 	 * @return self
-	 * @throws \InvalidArgumentException When the map carries no pattern, or a contradictory hooks/hooks_in pair.
+	 * @throws \InvalidArgumentException When the map carries no pattern, a contradictory hooks/hooks_in pair, or a sample rate that is not a probability.
 	 */
 	public static function from_array( array $a ): self {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;
@@ -208,7 +214,8 @@ final class Rule {
 			! empty( $a['log_context'] ),
 			! empty( $a['log_cache'] ),
 			! empty( $a['log_resources'] ),
-			! empty( $a['log_php_errors'] )
+			! empty( $a['log_php_errors'] ),
+			Core::num_float( $a['sample_rate'] ?? 1.0, \NAN )
 		);
 	}
 

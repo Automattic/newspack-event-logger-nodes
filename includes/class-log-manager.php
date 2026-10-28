@@ -244,6 +244,15 @@ class Log_Manager {
 	 */
 	public static ?\Closure $last_error = null;
 
+	/**
+	 * Sampling seam: replaces the request's one roll against a sampled rule,
+	 * a uniform float from 0 up to 1, made with `mt_rand()`. Tests reassign it.
+	 * Signature: `function (): float`.
+	 *
+	 * @var (\Closure(): float)|null
+	 */
+	public static ?\Closure $random = null;
+
 	/** The firehose's name; each partition is the directory `<name>.p<N>`. */
 	private const FIREHOSE = 'firehose';
 
@@ -331,6 +340,9 @@ class Log_Manager {
 
 	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
 	private ?Rule_Matcher $matcher = null;
+
+	/** @var float|null The request's one roll, taken when a sampled rule first governs it. */
+	private ?float $sample_roll = null;
 	/** @var int Firehose partition this request's id hashes to. */
 	private $partition_idx = 0;
 	/** @var string This request's id — the KEY every Message carries. */
@@ -1502,14 +1514,26 @@ class Log_Manager {
 	 * Resolve the rule governing a URL and keep it as this request's.
 	 *
 	 * No match means skip: there is no log-all baseline, so a deployment that
-	 * wants everything logged declares a `/` rule.
+	 * wants everything logged declares a `/` rule. A log rule with a sample
+	 * rate below 1 logs the request when its one roll falls under the rate.
+	 * Otherwise a bare skip of the same rule governs it, carrying none of the
+	 * rule's payload. The roll is taken once, so a reload that re-resolves the
+	 * rule decides again by the same roll.
 	 *
 	 * @param string $url URL to check.
-	 * @return bool True when a rule matched and it says `log`.
+	 * @return bool True when a rule matched and it logs this request.
 	 */
 	public function matches_url_filter( string $url ): bool {
-		$this->matched_rule = $this->matcher?->match( $url );
-		return null !== $this->matched_rule && $this->matched_rule->is_log();
+		$rule = $this->matcher?->match( $url );
+		if ( null !== $rule && $rule->is_log() && $rule->sample_rate < 1.0 ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.rand_mt_rand -- wp_rand() loads after plugins; a sample needs no CSPRNG.
+			$this->sample_roll ??= ( self::$random ?? static fn (): float => \mt_rand() / ( \mt_getrandmax() + 1 ) )();
+			if ( $this->sample_roll >= $rule->sample_rate ) {
+				$rule = new Rule( $rule->id, $rule->pattern, Rule::ACTION_SKIP );
+			}
+		}
+		$this->matched_rule = $rule;
+		return null !== $rule && $rule->is_log();
 	}
 
 	/**
@@ -2169,12 +2193,14 @@ class Log_Manager {
 	}
 
 	/**
-	 * The governing rule's id, or '' when nothing matched. Rides the
-	 * `process (start)` line as `rule`, which is how a reader attributes a
-	 * request to the rule that admitted it.
+	 * The id of the rule this request is logged under, or '' unless the
+	 * request started and its current rule logs it. Rides the `process
+	 * (start)` line as `rule`, which is how a reader attributes a request to
+	 * the rule that admitted it. It also names the rule the gyrobase engine
+	 * reads, so the engine reads no rule for a render its current rule skips.
 	 */
 	public function governing_rule_id(): string {
-		return $this->matched_rule->id ?? '';
+		return $this->started && true === $this->matched_rule?->is_log() ? $this->matched_rule->id : '';
 	}
 
 }
