@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.160.2] - 2026-10-28
+
 ### Changed
 - **Group paths refuses the catch-all `/` and a pattern longer than 512 bytes.** On `/`, it would fold every path on the site into the homepage's page. The logger writes a grouping pattern on every request line it governs, beside a URL that already holds it, so a pattern past `Rule::GROUP_PATTERN_MAX_BYTES` would crowd the URL out of a trimmed line. The server refuses a rule that sets either, as it refuses a `?` pattern that groups, and the editor shows that refusal; it also refuses `/` itself before it saves.
 
