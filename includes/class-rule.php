@@ -32,6 +32,13 @@ final class Rule {
 	/** Verdict: log nothing. Every action but ACTION_LOG reads as this one. */
 	public const ACTION_SKIP = 'skip';
 
+	/**
+	 * Longest pattern a rule may group its paths under, in bytes. The logger
+	 * writes it on every request line it governs, beside a URL that already
+	 * holds it, so a longer one would crowd the URL out of the line.
+	 */
+	public const GROUP_PATTERN_MAX_BYTES = 512;
+
 	/** Hook tier: the list rides in `hooks`, inside the autoloaded ruleset. */
 	public const HOOKS_INLINE = 'inline';
 
@@ -68,7 +75,7 @@ final class Rule {
 	 * @param float         $sample_rate                 The probability, from 0 to 1, that a log rule logs a request it governs; 1.0 logs every one, and 0.1 roughly one in ten.
 	 * @param bool          $group_paths                 Key every path under a prefix pattern with the rest of the path as its query, so it is a URL of its own in the pattern's page; off unless set.
 	 *
-	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, the sample rate is not a probability, or a pattern with a `?` groups its paths.
+	 * @throws \InvalidArgumentException When the pattern is empty, hooks and hooks_in contradict, the sample rate is not a probability, or a pattern with a `?`, the catch-all `/` or one longer than GROUP_PATTERN_MAX_BYTES groups its paths.
 	 */
 	public function __construct(
 		public readonly string $id,
@@ -102,6 +109,12 @@ final class Rule {
 		}
 		if ( $group_paths && ! self::is_prefix_pattern( $pattern ) ) {
 			throw new \InvalidArgumentException( 'rule group_paths needs a prefix pattern, with no ?' );
+		}
+		if ( $group_paths && '/' === $pattern ) {
+			throw new \InvalidArgumentException( 'rule group_paths cannot fold every path on the site into one page: the pattern is /' );
+		}
+		if ( $group_paths && \strlen( $pattern ) > self::GROUP_PATTERN_MAX_BYTES ) {
+			throw new \InvalidArgumentException( 'rule group_paths needs a pattern of at most ' . self::GROUP_PATTERN_MAX_BYTES . ' bytes' );
 		}
 		if ( ( null === $hooks ) !== ( self::HOOKS_MC === $hooks_in ) ) {
 			throw new \InvalidArgumentException( 'rule hooks contradict hooks_in: null hooks means the mc tier, a list means inline' );
@@ -195,7 +208,7 @@ final class Rule {
 	 *
 	 * @param array<string,mixed> $a Stored rule shape, as produced by to_array().
 	 * @return self
-	 * @throws \InvalidArgumentException When the map carries no pattern, a contradictory hooks/hooks_in pair, a sample rate that is not a probability, or grouped paths on a pattern with a `?`.
+	 * @throws \InvalidArgumentException When the map carries no pattern, a contradictory hooks/hooks_in pair, a sample rate that is not a probability, or grouped paths on a pattern with a `?`, on `/` or on one longer than GROUP_PATTERN_MAX_BYTES.
 	 */
 	public static function from_array( array $a ): self {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;

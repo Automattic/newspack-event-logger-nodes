@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Group paths refuses the catch-all `/` and a pattern longer than 512 bytes.** On `/`, it would fold every path on the site into the homepage's page. The logger writes a grouping pattern on every request line it governs, beside a URL that already holds it, so a pattern past `Rule::GROUP_PATTERN_MAX_BYTES` would crowd the URL out of a trimmed line. The server refuses a rule that sets either, as it refuses a `?` pattern that groups, and the editor shows that refusal; it also refuses `/` itself before it saves.
+
 ### Fixed
 - **Group paths keeps each path under the pattern as a URL of its own, folded into the pattern's page.** 0.160.0 replaced a grouped request's URL with the rule's pattern, so every path under it became one URL with nothing to unfold. Each path now carries the rest of its path as its query instead, ahead of its own query keys: under `/author/sociales`, a request to `/author/sociales/page/12345/` keys `/author/sociales?/page/12345/`. Its page is the pattern's, so the `/author/sociales` page row lists every path under it as a shape, behind its chevron, as a page lists its query shapes. The moved path always opens with `/` and carries its `&` and `=` encoded, so it never reads as a query key or a worker mark, and `Url_Parts::rule_path()` and its new JS twin `rulePath()` read it back, so "Log this URL" on a subpath's row proposes that subpath's own exact rule. The URL table and the URL window's title show each shape as the URL its requests asked for, `/author/sociales/page/12345/`, through `requestedUrl()`, while the stored key stays the row's identity. Requests 0.160.x filed under the bare pattern share its row with requests for the page itself until they leave the window.
 

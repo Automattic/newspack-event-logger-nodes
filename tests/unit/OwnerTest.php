@@ -85,8 +85,8 @@ class OwnerTest extends TestCase {
 
 	/** PHP names a file with every symlink resolved, the content dir's included. */
 	public function test_a_release_through_a_symlinked_content_dir_is_its_plugin(): void {
-		$real = \sys_get_temp_dir() . '/eln-owner-real-' . \getmypid();
-		$link = \sys_get_temp_dir() . '/eln-owner-link-' . \getmypid();
+		$real = self::temp_path( 'real' );
+		$link = self::temp_path( 'link' );
 		\mkdir( $real . '/plugin-releases', 0777, true );
 		\symlink( $real, $link );
 		try {
@@ -104,7 +104,7 @@ class OwnerTest extends TestCase {
 	 * elsewhere, and PHP names its files there; each answers its link's slug.
 	 */
 	public function test_a_linked_plugin_mu_plugin_or_theme_is_its_links(): void {
-		$base  = \sys_get_temp_dir() . '/eln-owner-linked-' . \getmypid();
+		$base  = self::temp_path( 'linked' );
 		$repos = $base . '/repos-4471';
 		foreach ( [ 'wp-content/plugins', 'wp-content/mu-plugins', 'wp-content/themes', 'repos-4471/weka-src/includes', 'repos-4471/ruru-src', 'repos-4471/themes/pukeko-src/inc' ] as $dir ) {
 			\mkdir( "{$base}/{$dir}", 0777, true );
@@ -142,7 +142,7 @@ class OwnerTest extends TestCase {
 	 * file linked loose into a theme root is no theme, as a file there is not.
 	 */
 	public function test_the_innermost_link_owns_and_a_loose_theme_file_link_is_no_theme(): void {
-		$base  = \sys_get_temp_dir() . '/eln-owner-nested-' . \getmypid();
+		$base  = self::temp_path( 'nested' );
 		$repos = $base . '/repos-8813';
 		foreach ( [ 'wp-content/plugins', 'wp-content/themes', 'repos-8813/kotare/kotare-child' ] as $dir ) {
 			\mkdir( "{$base}/{$dir}", 0777, true );
@@ -176,7 +176,7 @@ class OwnerTest extends TestCase {
 	 * narrower roots answer before a link does.
 	 */
 	public function test_a_link_into_a_managed_root_keeps_its_managed_owner(): void {
-		$base = \sys_get_temp_dir() . '/eln-owner-managed-' . \getmypid();
+		$base = self::temp_path( 'managed' );
 		foreach ( [ 'wp-content/mu-plugins', 'managed-4402/plugins/wpcomsh-7/2.6.1' ] as $dir ) {
 			\mkdir( "{$base}/{$dir}", 0777, true );
 		}
@@ -203,7 +203,7 @@ class OwnerTest extends TestCase {
 	 * plugins root answers its link's slug.
 	 */
 	public function test_a_root_that_names_no_owner_yields_to_a_later_one(): void {
-		$base = \sys_get_temp_dir() . '/eln-owner-unversioned-' . \getmypid();
+		$base = self::temp_path( 'unversioned' );
 		foreach ( [ 'wp-content/plugins', 'managed-5531/plugins/nuc-5531' ] as $dir ) {
 			\mkdir( "{$base}/{$dir}", 0777, true );
 		}
@@ -228,7 +228,7 @@ class OwnerTest extends TestCase {
 
 	/** A root's links are read once a process; a theme-only rebuild keeps them. */
 	public function test_a_roots_links_are_read_once(): void {
-		$base = \sys_get_temp_dir() . '/eln-owner-once-' . \getmypid();
+		$base = self::temp_path( 'once' );
 		foreach ( [ 'wp-content/plugins', 'repos-3390/toroa-src' ] as $dir ) {
 			\mkdir( "{$base}/{$dir}", 0777, true );
 		}
@@ -259,8 +259,8 @@ class OwnerTest extends TestCase {
 	 * core's files classify through the resolved `ABSPATH`.
 	 */
 	public function test_core_through_a_symlinked_abspath_is_core(): void {
-		$real = \sys_get_temp_dir() . '/eln-owner-core-' . \getmypid() . '/core/7.1.3';
-		$link = \sys_get_temp_dir() . '/eln-owner-wp-' . \getmypid();
+		$real = self::temp_path( 'core' ) . '/core/7.1.3';
+		$link = self::temp_path( 'wp' );
 		\mkdir( $real . '/wp-includes', 0777, true );
 		\symlink( $real, $link );
 		try {
@@ -326,6 +326,16 @@ class OwnerTest extends TestCase {
 		$this->assertSame( 'platform', Owner::of( '/wordpress/mu-plugins/edge-cache/edge-cache.php' ) );
 		$this->assertSame( 'platform', Owner::of( '/scripts/object-cache.memcached.php' ) );
 		$this->assertSame( 'theme:newspack-theme', Owner::of( '/wordpress/themes/newspack-theme/2.28.1/functions.php' ) );
+	}
+
+	/**
+	 * A fresh temp path for one test, unique to the run, so a killed run's
+	 * leftovers never meet a later one.
+	 *
+	 * @param string $name What the path holds.
+	 */
+	private static function temp_path( string $name ): string {
+		return \sys_get_temp_dir() . "/eln-owner-{$name}-" . \bin2hex( \random_bytes( 4 ) );
 	}
 
 	/** The roots map the seam answers: every root but the themes. */

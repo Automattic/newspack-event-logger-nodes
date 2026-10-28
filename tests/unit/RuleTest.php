@@ -98,7 +98,7 @@ final class RuleTest extends TestCase {
 
 	/** An exact pattern has no paths under it, so grouping them is refused. */
 	public function test_group_paths_is_refused_on_an_exact_or_query_pattern(): void {
-		foreach ( [ '/kea-5108?', '/kea-5108?moa=1' ] as $pattern ) {
+		foreach ( [ '/kea-5108?', '/kea-5108?moa=1', '/', '/' . \str_repeat( 'k', Rule::GROUP_PATTERN_MAX_BYTES ) ] as $pattern ) {
 			try {
 				Rule::from_array( [ 'id' => 'g3', 'pattern' => $pattern, 'action' => 'log', 'group_paths' => true ] );
 				$this->fail( "{$pattern} grouped its paths" );
@@ -106,6 +106,12 @@ final class RuleTest extends TestCase {
 				$this->assertStringContainsString( 'group_paths', $e->getMessage() );
 			}
 		}
+	}
+
+	/** A grouping pattern exactly at the cap still groups its paths. */
+	public function test_a_grouping_pattern_at_the_cap_groups(): void {
+		$pattern = '/' . \str_repeat( 'k', Rule::GROUP_PATTERN_MAX_BYTES - 1 );
+		$this->assertTrue( Rule::from_array( [ 'id' => 'g4', 'pattern' => $pattern, 'action' => 'log', 'group_paths' => true ] )->group_paths );
 	}
 
 	/** @return array<string,array{mixed}> Sample rates that are not probabilities. */
