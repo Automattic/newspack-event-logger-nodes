@@ -62,6 +62,24 @@ final class UninstallCleanupTest extends TestCase {
 		$this->assertSame( 'https://example.test', $GLOBALS['_wp_options']['siteurl'] );
 	}
 
+	public function test_uninstall_cleanup_sweeps_a_single_site_install(): void {
+		$GLOBALS['_wp_options'] = [
+			'newspack_event_logger_nodes_retention_days' => 41,
+			'unrelated_option_729'                       => 'keep',
+		];
+		$GLOBALS['_wp_test_is_multisite'] = false;
+		$wpdb                             = $GLOBALS['wpdb'] ?? null;
+		$GLOBALS['wpdb']                  = $this->wpdb();
+		try {
+			\Newspack_Event_Logger_Nodes\uninstall_cleanup( 'newspack_event_logger_nodes_' );
+		} finally {
+			$GLOBALS['wpdb'] = $wpdb;
+			unset( $GLOBALS['_wp_test_is_multisite'] );
+		}
+
+		$this->assertSame( [ 'unrelated_option_729' => 'keep' ], $GLOBALS['_wp_options'] );
+	}
+
 	public function test_returns_zero_when_nothing_matches(): void {
 		$GLOBALS['_wp_options'] = [ 'siteurl' => 'https://example.test' ];
 

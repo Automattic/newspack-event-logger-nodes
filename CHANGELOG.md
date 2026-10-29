@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The Rules page's confirm dialog keeps keyboard focus inside it.** It now renders through the substrate's shared `Modal`, so Tab stays in the dialog, ESC cancels it, and focus returns to the Delete or Reset button that opened it.
+
 ## [0.160.3] - 2026-10-28
 
 ### Fixed

@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
+import Modal from '@newspack-nodes/shared/components/Modal';
 import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
 import { BLANK_RULE } from './constants';
@@ -64,16 +65,14 @@ function autoTuneSummary( rule ) {
  * Confirm a destructive action — deleting one rule, or resetting the whole set.
  *
  * The confirm button takes focus on mount, so the keyboard answer is the one
- * being asked about. Cancel and a press on the backdrop are the dismissals,
- * and the backdrop takes mousedown rather than click: a click fires on the
- * nearest common ancestor, so a text selection dragged out of the dialog and
- * released on the backdrop would close it.
+ * being asked about. The shared `Modal` adds ESC and a press outside the box
+ * as dismissals, keeps Tab inside it, and hands focus back on close.
  *
  * @param {Object}     props              Component props.
  * @param {string}     props.label        Accessible name for the dialog.
  * @param {string}     props.question     The question put to the operator.
  * @param {string}     props.confirmLabel Text of the destructive button.
- * @param {() => void} props.onCancel     Dismiss handler (Cancel, or the backdrop).
+ * @param {() => void} props.onCancel     Dismiss handler (Cancel, ESC, or the backdrop).
  * @param {() => void} props.onConfirm    Called when the operator confirms.
  * @return {import('react').ReactElement} The dialog.
  */
@@ -90,41 +89,26 @@ function ConfirmModal( {
 	}, [] );
 
 	return (
-		<div
-			className="rules-admin__confirm-backdrop"
-			role="presentation"
-			onMouseDown={ ( e ) => {
-				if ( e.target === e.currentTarget ) {
-					onCancel();
-				}
-			} }
+		<Modal
+			ariaLabel={ label }
+			onClose={ onCancel }
+			className="rules-admin__confirm"
 		>
-			<div
-				className="rules-admin__confirm newspack-nodes-modal"
-				role="dialog"
-				aria-modal="true"
-				aria-label={ label }
-			>
-				<p>{ question }</p>
-				<div className="rules-admin__confirm-actions">
-					<button
-						type="button"
-						className="button"
-						onClick={ onCancel }
-					>
-						{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
-					</button>
-					<button
-						ref={ confirmRef }
-						type="button"
-						className="button button-link-delete"
-						onClick={ onConfirm }
-					>
-						{ confirmLabel }
-					</button>
-				</div>
+			<p>{ question }</p>
+			<div className="rules-admin__confirm-actions">
+				<button type="button" className="button" onClick={ onCancel }>
+					{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
+				</button>
+				<button
+					ref={ confirmRef }
+					type="button"
+					className="button button-link-delete"
+					onClick={ onConfirm }
+				>
+					{ confirmLabel }
+				</button>
 			</div>
-		</div>
+		</Modal>
 	);
 }
 
