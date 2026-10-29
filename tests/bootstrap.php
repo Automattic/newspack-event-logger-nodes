@@ -66,18 +66,6 @@ if ( ! function_exists( 'plugin_dir_url' ) ) {
 	}
 }
 
-// The substrate's copies of these sit inside its `do_action` guard, which this
-// file wins, so they would never be defined at all — and Bootstrap::fleet_gate()
-// would silently pass on every multisite test.
-if ( ! function_exists( 'is_multisite' ) ) {
-	function is_multisite(): bool {
-		return (bool) ( $GLOBALS['_wp_test_is_multisite'] ?? false );
-	}
-	function is_main_site(): bool {
-		return (bool) ( $GLOBALS['_wp_test_is_main_site'] ?? true );
-	}
-}
-
 // Overrides shared shim: add_filter records _wp_test_filters by priority.
 if ( ! function_exists( 'do_action' ) ) {
 	$GLOBALS['_wp_actions']      = [];
@@ -517,12 +505,6 @@ if ( ! function_exists( 'set_transient' ) ) {
 	function delete_transient( string $key ): bool {
 		unset( $GLOBALS['_wp_transients'][ $key ] );
 		return true;
-	}
-}
-
-if ( ! function_exists( 'wp_generate_uuid4' ) ) {
-	function wp_generate_uuid4(): string {
-		return \bin2hex( \random_bytes( 16 ) );
 	}
 }
 

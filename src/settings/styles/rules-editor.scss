@@ -33,16 +33,6 @@
 	}
 }
 
-.rules-admin__confirm-backdrop {
-	position: fixed;
-	inset: 0;
-	z-index: 100000;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: rgba(0, 0, 0, 0.5);
-}
-
 .rules-admin__confirm {
 	max-width: 420px;
 	padding: 20px 24px;

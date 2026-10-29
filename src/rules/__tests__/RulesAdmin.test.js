@@ -421,6 +421,30 @@ describe( 'RulesAdmin', () => {
 		).not.toBeNull();
 	} );
 
+	test( 'Tab stays inside the confirm dialog', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		click(
+			Array.from( row.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.trim() === 'Delete'
+			)
+		);
+		const dialog = document.querySelector( '.rules-admin__confirm' );
+		const last = Array.from( dialog.querySelectorAll( 'button' ) ).pop();
+		last.focus();
+
+		act( () => {
+			last.dispatchEvent(
+				new window.KeyboardEvent( 'keydown', {
+					key: 'Tab',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( dialog.contains( document.activeElement ) ).toBe( true );
+		expect( document.activeElement ).not.toBe( last );
+	} );
+
 	// The backdrop is a dismiss target; the dialog body inside it is not.
 	test( 'clicking the confirm backdrop cancels, clicking the dialog does not', () => {
 		const { container } = mount();
@@ -431,7 +455,7 @@ describe( 'RulesAdmin', () => {
 			)
 		);
 		const backdrop = document.querySelector(
-			'.rules-admin__confirm-backdrop'
+			'.newspack-nodes-modal__backdrop'
 		);
 		const down = ( target ) =>
 			act( () => {
@@ -664,6 +688,6 @@ describe( 'RulesAdmin', () => {
 		click( del );
 		expect(
 			document.querySelector( '.rules-admin__confirm' ).className
-		).toBe( 'rules-admin__confirm newspack-nodes-modal' );
+		).toBe( 'newspack-nodes-modal rules-admin__confirm' );
 	} );
 } );
