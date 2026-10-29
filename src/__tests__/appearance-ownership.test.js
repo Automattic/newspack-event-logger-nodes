@@ -128,7 +128,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table',
 		'newspack-nodes-table--undivided',
 		'newspack-nodes-badge',
-		'newspack-nodes-modal',
 	],
 	// The frame class rides with the shared chrome; each picker keeps the
 	// canonical roles of what IT renders.
