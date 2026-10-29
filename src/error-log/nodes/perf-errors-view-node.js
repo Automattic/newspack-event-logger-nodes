@@ -29,13 +29,6 @@ const MAX_M_LENGTH = 1000;
 const MAX_URL_LENGTH = 2000;
 
 /**
- * Longest debug-mode `raw` JSON a row keeps — twice the 4096-byte record
- * `Line_Fitter` fits an error entry into, so it clips nothing a partition wrote
- * and still bounds a row against anything else the stream hands this view.
- */
-const MAX_RAW_LENGTH = 8192;
-
-/**
  * Clip a string at `max`, appending an ellipsis.
  *
  * @param {*}      value Candidate string; anything else yields ''.
@@ -146,7 +139,7 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 			m,
 			msgId: 'string' === typeof message[ ID ] ? message[ ID ] : '',
 			key: 'string' === typeof rid ? rid : '',
-			raw: clip( JSON.stringify( value ), MAX_RAW_LENGTH ),
+			raw: JSON.stringify( value ),
 			struct: true,
 			content: `${ rid } ${ k } ${ m }${ url ? ' ' + url : '' }`,
 		};

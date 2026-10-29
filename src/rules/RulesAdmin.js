@@ -333,7 +333,7 @@ export default function RulesAdmin() {
 	return (
 		<div className="rules-admin">
 			{ ( error || mutationError ) && (
-				<div className="notice notice-error">
+				<div className="notice notice-error" role="alert">
 					<p>{ error || mutationError }</p>
 				</div>
 			) }

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A sample rate just under 1 never reads as 100%.** The Rules table widened a rate's precision only to 15 significant digits, so a rate of `0.9999999999999999` still read `100%`; it widens to 17, enough for any double.
+- **The Error Log's debug view keeps an entry's raw JSON whole.** It clipped `raw` at 8192 characters, leaving text that no longer parsed beside a row marked structured; the Request Log already keeps its raw whole, and a partition writes no error entry past 4096 bytes.
+- **The Request Log drops a row whose URL is not a string**, as the Error Log does, rather than throwing while it hashes the URL.
+- **A screen reader announces a failed rule change.** The Rules page's error banner carries `role="alert"`.
+
 ## [0.160.2] - 2026-10-28
 
 ### Changed

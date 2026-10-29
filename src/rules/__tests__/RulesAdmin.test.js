@@ -414,6 +414,9 @@ describe( 'RulesAdmin', () => {
 
 		expect( container.textContent ).toContain( 'gone' );
 		expect(
+			container.querySelector( '.notice-error' ).getAttribute( 'role' )
+		).toBe( 'alert' );
+		expect(
 			document.querySelector( '.rules-admin__confirm' )
 		).not.toBeNull();
 	} );

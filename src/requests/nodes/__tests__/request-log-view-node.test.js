@@ -190,10 +190,16 @@ test( 'keeps the debug raw JSON whole and parseable', () => {
 			row( { rid: 'r-raw', url: '/raw', user_agent: 'u'.repeat( 9000 ) } )
 		)
 	);
-	// Parsing proves it was not cut mid-JSON, which the 8192 clip guaranteed.
+	// Parsing proves the row carries the whole JSON, long fields included.
 	expect( JSON.parse( v.lines[ 0 ].raw ).user_agent ).toBe(
 		'u'.repeat( 9000 )
 	);
+} );
+
+test( 'drops a row whose url is not a string', () => {
+	const v = makeView( 'request-log:view' );
+	v.fill( rowMsg( row( { rid: 'r-num-563', url: 563 } ) ) );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'exposes a decaying lps rate on the node instance', () => {

@@ -10,7 +10,7 @@
 export function samplePercent( rate ) {
 	let digits = 3;
 	let shown = parseFloat( ( rate * 100 ).toPrecision( digits ) );
-	while ( rate < 1 && shown >= 100 && digits < 15 ) {
+	while ( rate < 1 && shown >= 100 && digits < 17 ) {
 		digits++;
 		shown = parseFloat( ( rate * 100 ).toPrecision( digits ) );
 	}
