@@ -95,7 +95,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 		if ( ! req || 'object' !== typeof req || Array.isArray( req ) ) {
 			return null;
 		}
-		if ( ! req.url ) {
+		if ( 'string' !== typeof req.url || ! req.url ) {
 			return null;
 		}
 		const rid = 'string' === typeof message[ KEY ] ? message[ KEY ] : '';

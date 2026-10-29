@@ -222,11 +222,10 @@ test( 'clips long m at 1000 chars with ellipsis', () => {
 	expect( v.lines[ 0 ].m.endsWith( '...' ) ).toBe( true );
 } );
 
-test( 'clips the debug raw JSON at 8192 chars + ellipsis', () => {
+test( 'keeps the debug raw JSON whole and parseable', () => {
 	const v = makeView( 'error-log:view' );
 	v.fill( envMsg( 'rid-raw', { ts: 1, k: 'X', m: 'y'.repeat( 9000 ) } ) );
-	expect( v.lines[ 0 ].raw.length ).toBe( 8195 );
-	expect( v.lines[ 0 ].raw.endsWith( '...' ) ).toBe( true );
+	expect( JSON.parse( v.lines[ 0 ].raw ).m ).toBe( 'y'.repeat( 9000 ) );
 } );
 
 test( 'drops envelopes with no rid (KEY empty)', () => {
