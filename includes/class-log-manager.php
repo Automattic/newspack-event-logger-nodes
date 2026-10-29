@@ -314,8 +314,6 @@ class Log_Manager {
 	 */
 	private static array $job_stack = [];
 
-	/** @var array<string,mixed> Cached config (loaded once at construction). */
-	private $config = [];
 	/** @var bool finish() has run; nothing more will be written. */
 	private $finished = false;
 
@@ -434,10 +432,9 @@ class Log_Manager {
 	 * and starts eagerly when the governing rule says `log`.
 	 */
 	public function __construct() {
-		// Assign self FIRST: load_config() re-enters instance(); null recurses.
+		// Set self first: a config read re-enters instance().
 		self::$instance = $this;
-		$this->config = Config::load_config();
-		if ( empty( $this->config['enable_logging'] ) ) {
+		if ( ! Config::bool( 'enable_logging' ) ) {
 			return;
 		}
 		if ( \function_exists( 'posix_geteuid' ) && 0 === \posix_geteuid() ) {

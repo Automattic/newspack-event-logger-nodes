@@ -269,6 +269,44 @@ class LogManagerTest extends TestCase {
 		$this->assertFalse( $lm->is_started() );
 	}
 
+	/**
+	 * Construct a Log_Manager over a config file naming `enable_logging` as given.
+	 *
+	 * @param mixed $stored The `enable_logging` value the file holds.
+	 */
+	private function log_manager_with_enable_logging( mixed $stored ): Log_Manager {
+		$config_path = self::test_dir() . '/enable-logging-config.php';
+		\file_put_contents(
+			$config_path,
+			'<?php return ' . \var_export(
+				[
+					'base_directory'   => self::test_dir(),
+					'num_partitions'   => 1,
+					'enable_logging'   => $stored,
+					'memcache_servers' => [],
+					'allowed_users'    => [],
+				],
+				true
+			) . ';'
+		);
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $config_path );
+		Config::reset();
+		return Log_Manager::instance();
+	}
+
+	public function test_constructor_reads_the_word_off_as_logging_off(): void {
+		$this->require_config_or_skip();
+		$this->assertFalse( $this->log_manager_with_enable_logging( 'off' )->is_started() );
+	}
+
+	public function test_constructor_refuses_an_enable_logging_that_is_not_a_bool(): void {
+		$this->require_config_or_skip();
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( "config key 'enable_logging' must be a bool" );
+		$this->log_manager_with_enable_logging( null );
+	}
+
 	// ── Request ID ─────────────────────────────────────────────────────────
 
 	public function test_generate_request_id_format(): void {

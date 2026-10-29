@@ -198,6 +198,34 @@ class Config {
 	}
 
 	/**
+	 * Read a declared `bool` key as a bool.
+	 *
+	 * A bool or an int 0 or 1 passes, a stored blank is off, and any other string reads as one
+	 * of the substrate's bool words. Anything else throws naming the key, so
+	 * a malformed value never chooses a setting by a cast.
+	 *
+	 * @api
+	 * @param string $key Config key.
+	 * @return bool The key as a bool.
+	 * @throws \RuntimeException When the key is undeclared or does not hold a bool word.
+	 */
+	public static function bool( string $key ): bool {
+		$value = self::value( $key );
+		if ( \is_bool( $value ) ) {
+			return $value;
+		}
+		// A saved checkbox reads back from the options cache as int 1 or 0.
+		if ( 0 === $value || 1 === $value ) {
+			return 1 === $value;
+		}
+		$parsed = \is_string( $value ) ? ( '' === $value ? false : \Newspack_Nodes\Command_Args::typed( $value, 'bool' ) ) : null;
+		if ( null === $parsed ) {
+			throw new \RuntimeException( \sprintf( "config key '%s' must be a bool", \esc_html( $key ) ) );
+		}
+		return true === $parsed;
+	}
+
+	/**
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config
