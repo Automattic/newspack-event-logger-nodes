@@ -166,6 +166,58 @@ class ConfigTest extends TestCase {
 		$this->assertFalse( Config::value( 'enable_logging' ) );
 	}
 
+	/**
+	 * @return list<array{mixed, bool|null}> Stored value, and what it reads as; null means it throws.
+	 */
+	public static function bool_cases(): array {
+		return [
+			[ true, true ],
+			[ false, false ],
+			[ 1, true ],
+			[ 0, false ],
+			[ '1', true ],
+			[ '0', false ],
+			[ '', false ],
+			[ 'on', true ],
+			[ 'off', false ],
+			[ 'false', false ],
+			[ 'no', false ],
+			[ ' ', null ],
+			[ "\n", null ],
+			[ 'maybe-7731', null ],
+			[ 2, null ],
+			[ null, null ],
+			[ [], null ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'bool_cases' )]
+	public function test_bool_reads_the_substrate_bool_words_and_refuses_the_rest( mixed $stored, ?bool $expected ): void {
+		$conf = $this->temp_dir . '/bool-case.php';
+		\file_put_contents( $conf, '<?php return ' . \var_export( [ 'enable_logging' => $stored ], true ) . ';' );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
+		Config::reset();
+		if ( null === $expected ) {
+			$this->expectException( \RuntimeException::class );
+			$this->expectExceptionMessage( "config key 'enable_logging' must be a bool" );
+		}
+		$this->assertSame( $expected, Config::bool( 'enable_logging' ) );
+	}
+
+	/**
+	 * A settings save stores `absint()` of the checkbox, and WordPress's options
+	 * cache hands that int back: it must read as the setting, not throw.
+	 */
+	public function test_bool_reads_a_saved_checkbox_back_through_the_options_cache(): void {
+		foreach ( [ '1' => true, '0' => false ] as $posted => $expected ) {
+			\update_option( 'newspack_event_logger_nodes_enable_logging', \absint( $posted ) );
+			Config::reset();
+			$this->assertSame( $expected, Config::bool( 'enable_logging' ), "posted {$posted}" );
+		}
+		\delete_option( 'newspack_event_logger_nodes_enable_logging' );
+		Config::reset();
+	}
+
 	public function test_plugin_file_hooks_declaration_onto_the_substrate_pull(): void {
 		// In production this hook is the ONLY thing that declares this plugin's keys,
 		// and the plugin file must name the action with a LITERAL (this plugin sorts
