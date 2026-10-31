@@ -195,7 +195,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	private const CLAIM_SLOT = 6;
 
-	/** The request's own frame, every stack's bottom: unowned, nothing inside yet. */
+	/**
+	 * The request's own frame, every stack's bottom: unowned, nothing inside
+	 * yet. A job's takes the owner its `process (start)` label names.
+	 */
 	private const REQUEST_FRAME = [ Log_Manager::REQUEST_LABEL, '', Owner::UNOWNED, 0.0, false, false, null ];
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
@@ -1150,8 +1153,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$s = [];
 
 		$s[ Log_Manager::REQUEST_START ] = function ( \stdClass $request, array $entry ): void {
+			$owner                = Owner::of_label( Core::as_string( $entry['l'] ?? '' ) );
 			$request->timestamp   = Core::num_float( $entry['ts'] ?? null, Core::$now );
-			$request->stack       = [ self::REQUEST_FRAME ];
+			$request->stack       = [ '' === $owner ? self::REQUEST_FRAME : \array_replace( self::REQUEST_FRAME, [ self::OWNER_SLOT => $owner ] ) ];
 			$request->profiles    = [];
 			$request->owners      = [];
 			$request->entries     = [];

@@ -16,6 +16,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Core;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\Fixtures\Kea_7746_Caller;
@@ -27,6 +28,7 @@ require_once \dirname( __DIR__ ) . '/fixtures/owners/abspath/wp-includes/kea-774
 require_once \dirname( __DIR__ ) . '/fixtures/owners/plugins/kea-7746/class-kea-7746-caller.php';
 
 #[CoversClass( Core::class )]
+#[CoversClass( Owner::class )]
 class AppCoreTest extends TestCase {
 
 	protected function setUp(): void {
@@ -1027,10 +1029,10 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * `short_name()` as `wrap_callbacks()` calls it, with the reflection
-	 * `reflect()` built for the callback.
+	 * `Owner::reflect()` built for the callback.
 	 */
 	private static function short_name_of( mixed $function ): string {
-		$reflected = ( new \ReflectionMethod( Core::class, 'reflect' ) )->invoke( null, $function );
+		$reflected = Owner::reflect( $function );
 		return ( new \ReflectionMethod( Core::class, 'short_name' ) )->invoke( null, $function, $reflected[0] ?? null );
 	}
 
@@ -2549,7 +2551,7 @@ class AppCoreTest extends TestCase {
 	 * parameter: one it cannot reflect it wraps.
 	 */
 	private static function has_ref_param( mixed $function ): bool {
-		$reflected = ( new \ReflectionMethod( Core::class, 'reflect' ) )->invoke( null, $function );
+		$reflected = Owner::reflect( $function );
 		return null !== $reflected && ( new \ReflectionMethod( Core::class, 'callback_has_ref_param' ) )->invoke( null, $reflected[0] );
 	}
 

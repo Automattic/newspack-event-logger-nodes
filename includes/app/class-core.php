@@ -842,7 +842,7 @@ class Core {
 				if ( isset( $this->by_ref[ $key ] ) ) {
 					continue;
 				}
-				$reflected = self::reflect( $original );
+				$reflected = Owner::reflect( $original );
 				if ( null !== $reflected && self::callback_has_ref_param( $reflected[0] ) ) {
 					$this->by_ref[ $key ] = true;
 					continue;
@@ -925,58 +925,6 @@ class Core {
 			}
 		}
 		return false;
-	}
-
-	/**
-	 * A callback's reflection and the file that owns it, built once a wrap:
-	 * the one answers whether the callback takes a reference, the other who
-	 * owns it. A method is owned by the class it is hooked as, which may be a
-	 * plugin's subclass of the core class declaring it.
-	 *
-	 * A `\ReflectionException` answers null, so an uninspectable callback is
-	 * wrapped under its bare name, and anything else the reflection raises
-	 * propagates.
-	 *
-	 * @param mixed $function Callback (string|array|Closure|invokable object).
-	 * @return array{\ReflectionFunctionAbstract, string}|null
-	 */
-	private static function reflect( $function ): ?array {
-		try {
-			if ( \is_array( $function ) && \count( $function ) === 2 ) {
-				$target = $function[0];
-				$method = $function[1];
-				if ( ( ! \is_object( $target ) && ! ( \is_string( $target ) && \class_exists( $target ) ) ) || ! \is_string( $method ) ) {
-					return null;
-				}
-				return [ new \ReflectionMethod( $target, $method ), self::class_file( $target ) ];
-			}
-			if ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
-				[ $class, $method ] = \explode( '::', $function, 2 );
-				if ( ! \class_exists( $class ) ) {
-					return null;
-				}
-				return [ new \ReflectionMethod( $class, $method ), self::class_file( $class ) ];
-			}
-			if ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
-				return [ new \ReflectionMethod( $function, '__invoke' ), self::class_file( $function ) ];
-			}
-			if ( $function instanceof \Closure || \is_string( $function ) ) {
-				$ref = new \ReflectionFunction( $function );
-				return [ $ref, (string) $ref->getFileName() ];
-			}
-		} catch ( \ReflectionException $e ) {
-			return null;
-		}
-		return null;
-	}
-
-	/**
-	 * The file declaring a class, or '' for an internal one.
-	 *
-	 * @param object|class-string $class An instance or a class name.
-	 */
-	private static function class_file( object|string $class ): string {
-		return (string) ( new \ReflectionClass( $class ) )->getFileName();
 	}
 
 	/**

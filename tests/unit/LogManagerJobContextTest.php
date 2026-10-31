@@ -3,7 +3,12 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Tests\Fixtures\Kea_7746_Caller;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Message;
+
+require_once \dirname( __DIR__ ) . '/fixtures/owners/abspath/wp-includes/kea-7746-core-api.php';
+require_once \dirname( __DIR__ ) . '/fixtures/owners/plugins/kea-7746/class-kea-7746-caller.php';
 
 /**
  * Job request-context glue on Log_Manager, which the substrate's Job_Worker_Node
@@ -531,5 +536,126 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 
 		$this->assertSame( [], self::entries_of( self::firehose_entries( self::test_dir() ), 'process (aborted)' ) );
+	}
+
+	/**
+	 * A job's `process (start)` names the plugin whose handler it runs, so
+	 * every span the job leaves unlabelled is that plugin's time.
+	 */
+	public function test_a_jobs_process_start_names_its_handlers_owner(): void {
+		$this->arrange_logging();
+		self::own_the_owner_fixtures();
+		\add_filter( 'newspack_nodes/job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-sweep' => [ Kea_7746_Caller::class, 'filter_the_content' ] ] );
+
+		Log_Manager::begin_job_context_filter( true, 'kea-7746-sweep', 'run-7746', self::job_message_of( 'job' ) );
+		Log_Manager::instance();
+		Log_Manager::end_job_context();
+
+		$this->assertSame( [ '[kea-7746] kea-7746-sweep' ], self::process_labels() );
+	}
+
+	/** A `remote_job` names the owner of the handler the hub's map holds. */
+	public function test_a_remote_jobs_process_start_names_its_remote_handlers_owner(): void {
+		$this->arrange_logging();
+		self::own_the_owner_fixtures();
+		\add_filter( 'newspack_nodes/job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-relay' => 'strlen' ] );
+		\add_filter( 'newspack_nodes/remote_job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-relay' => [ Kea_7746_Caller::class, 'filter_the_content' ] ] );
+
+		Log_Manager::begin_job_context( 'kea-7746-relay', '', self::job_message_of( 'remote_job' ) );
+		Log_Manager::instance();
+		Log_Manager::end_job_context();
+
+		$this->assertSame( [ '[kea-7746] kea-7746-relay' ], self::process_labels() );
+	}
+
+	/** A web request's `process (start)` label is empty. */
+	public function test_a_web_requests_process_start_names_no_owner(): void {
+		$this->arrange_logging();
+		self::own_the_owner_fixtures();
+		Log_Manager::instance();
+		Log_Manager::reset();
+
+		$this->assertSame( [ '' ], self::process_labels() );
+	}
+
+	/**
+	 * A context whose handler neither map lists — a render nested in a job —
+	 * runs as the enclosing job's owner; outside any job its label is empty.
+	 */
+	public function test_an_unmapped_handler_takes_the_enclosing_jobs_owner(): void {
+		$this->arrange_logging();
+		self::own_the_owner_fixtures();
+		\add_filter( 'newspack_nodes/job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-outer' => [ Kea_7746_Caller::class, 'filter_the_content' ] ] );
+
+		Log_Manager::begin_job_context( 'kea-7746-outer', '', self::job_message_of( 'job' ) );
+		Log_Manager::instance();
+		Log_Manager::begin_job_context( 'Tools/Kea7746.html' );
+		Log_Manager::instance();
+		Log_Manager::end_job_context();
+		Log_Manager::end_job_context();
+		Log_Manager::begin_job_context( 'weka-7746-unmapped' );
+		Log_Manager::instance();
+		Log_Manager::end_job_context();
+
+		$this->assertSame( [ '[kea-7746] kea-7746-outer', '[kea-7746] Tools/Kea7746.html', '' ], self::process_labels() );
+	}
+
+	/** A context nested in a `remote_job` reads the remote map for its handler. */
+	public function test_a_context_nested_in_a_remote_job_reads_the_remote_map(): void {
+		$this->arrange_logging();
+		self::own_the_owner_fixtures();
+		\add_filter( 'newspack_nodes/job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-inner' => 'strlen' ] );
+		\add_filter( 'newspack_nodes/remote_job_handlers', static fn ( array $handlers ): array => $handlers + [ 'kea-7746-inner' => [ Kea_7746_Caller::class, 'filter_the_content' ] ] );
+
+		Log_Manager::begin_job_context( 'weka-7746-hub', '', self::job_message_of( 'remote_job' ) );
+		Log_Manager::begin_job_context( 'kea-7746-inner' );
+		Log_Manager::instance();
+		Log_Manager::end_job_context();
+		Log_Manager::end_job_context();
+
+		$this->assertSame( [ '[kea-7746] kea-7746-inner' ], self::process_labels() );
+	}
+
+	/** A worker asks the handler map once per handler, however many jobs run. */
+	public function test_a_handlers_owner_is_resolved_once(): void {
+		self::own_the_owner_fixtures();
+		$asked = 0;
+		\add_filter(
+			'newspack_nodes/job_handlers',
+			static function ( array $handlers ) use ( &$asked ): array {
+				++$asked;
+				return $handlers + [ 'kea-7746-tally' => [ Kea_7746_Caller::class, 'filter_the_content' ] ];
+			}
+		);
+
+		foreach ( [ 'run-1', 'run-2' ] as $id ) {
+			Log_Manager::begin_job_context_filter( true, 'kea-7746-tally', $id, self::job_message_of( 'job' ) );
+			Log_Manager::end_job_context();
+		}
+
+		$this->assertSame( 1, $asked );
+	}
+
+	/**
+	 * A job message as the substrate's worker hands it to `before_job`.
+	 *
+	 * @param string $kind The VALUE's `k`: `job` or `remote_job`.
+	 * @return array<int,mixed>
+	 */
+	private static function job_message_of( string $kind ): array {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::FROM ]  = 'jobs.p0';
+		$message[ Message::VALUE ] = [ 'k' => $kind ];
+		return $message;
+	}
+
+	/**
+	 * Every `process (start)` label the firehose holds, in order.
+	 *
+	 * @return list<mixed>
+	 */
+	private static function process_labels(): array {
+		return \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), Log_Manager::REQUEST_START ), 'l' );
 	}
 }
