@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.160.5] - 2026-10-31
+
 ### Changed
 - **`enable_logging` reads through `Config::bool()`.** `Log_Manager` read it with `empty()`, so the stored word `off` read as logging on. `Config::bool()` passes a bool or an int `0` or `1` (the `absint()` a saved checkbox reads back as from the options cache), reads `''` as off, reads any other string as one of the substrate's bool words (`1`, `true`, `yes`, `on`, `0`, `false`, `no`, `off`), and throws naming the key on a null, an integer, an array or any other string; the logger refuses to construct on such a value instead of choosing. `Log_Manager` no longer keeps the config array it cached at construction.
 
