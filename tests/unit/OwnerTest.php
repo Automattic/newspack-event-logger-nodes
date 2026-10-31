@@ -275,8 +275,8 @@ class OwnerTest extends TestCase {
 
 	/**
 	 * Core served from inside the managed tree stays core: `ABSPATH` is tried
-	 * before the managed root, and only what core names no owner for there
-	 * falls through to the platform.
+	 * before the managed root, and only a file core does not claim there falls
+	 * through to the platform.
 	 */
 	public function test_core_inside_the_managed_tree_is_core(): void {
 		self::own_files_under( [ 'abspath' => '/srv/managed-6620/core/7.1.3/' ] + self::ROOTS );
