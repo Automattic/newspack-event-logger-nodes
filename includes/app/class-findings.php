@@ -1404,13 +1404,14 @@ class Findings {
 
 	/**
 	 * Whether a node is the request's own frame, which holds all of every
-	 * request and so can never be the span that explains one.
+	 * request and so can never be the span that explains one. A job's names
+	 * its handler's owner in its label.
 	 *
 	 * @param Flame_Entry $node A flattened node.
 	 * @return bool
 	 */
 	private static function is_request_frame( array $node ): bool {
-		return 1 === $node['depth'] && Log_Manager::REQUEST_LABEL === $node['name'];
+		return 1 === $node['depth'] && Log_Manager::REQUEST_LABEL === Flame_Tree::base_name( $node['name'] );
 	}
 
 	/**

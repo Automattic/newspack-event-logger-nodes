@@ -124,7 +124,7 @@ class JobWorkerContextWiringTest extends TestCase {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- test observation.
 				$during  = $_SERVER['REQUEST_METHOD'] ?? '';
 				$stack   = ( new \ReflectionProperty( Log_Manager::class, 'job_stack' ) )->getValue();
-				$stashed = \end( $stack )[1];
+				$stashed = \end( $stack )['message'];
 			}
 		);
 

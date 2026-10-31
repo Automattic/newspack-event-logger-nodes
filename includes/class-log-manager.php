@@ -306,13 +306,22 @@ class Log_Manager {
 	private static ?self $instance = null;
 
 	/**
-	 * LIFO frames of begin/end_job_context: the $_SERVER snapshot to restore,
-	 * and the job message the context runs under, its enclosing job's when it
-	 * brought none.
+	 * LIFO frames of begin/end_job_context: the $_SERVER snapshot to restore;
+	 * the job message the context runs under, its enclosing job's when it
+	 * brought none; the owner of the code it runs, its enclosing job's when
+	 * no handler map names it; and its handler.
 	 *
-	 * @var list<array{0:array<string,mixed>,1:array<int,mixed>}>
+	 * @var list<array{server:array<string,mixed>,message:array<int,mixed>,owner:string,handler:string}>
 	 */
 	private static array $job_stack = [];
+
+	/**
+	 * Each handler map, by its filter, and the owner of each handler in it
+	 * a context has named, for the process.
+	 *
+	 * @var array<string,array{map:array<mixed>,owners:array<string,string>}>
+	 */
+	private static array $handler_owners = [];
 
 	/** @var bool finish() has run; nothing more will be written. */
 	private $finished = false;
@@ -1012,7 +1021,7 @@ class Log_Manager {
 			// The snapshot IS the pairing record; unpopped it strands jobs.
 			if ( ! empty( self::$job_stack ) ) {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
-				$_SERVER = \array_pop( self::$job_stack )[0];
+				$_SERVER = \array_pop( self::$job_stack )['server'];
 			}
 			\do_action( 'newspack_event_logger_nodes_scope_changed' );
 		}
@@ -1086,6 +1095,10 @@ class Log_Manager {
 	 * `newspack_event_logger_nodes_scope_changed` so `App\Core` rebinds its hook
 	 * instrumentation to whichever rule now governs.
 	 *
+	 * The context runs as the owner of its handler, which `process (start)`
+	 * names in its label; see handler_owner(). A handler that neither map
+	 * lists, such as a render nested in a job, runs as its enclosing job's owner.
+	 *
 	 * A handler running something other than a POST against /jobs/{handler} —
 	 * a template rendered as GET with its own URI and query string — passes
 	 * $server. Those keys are applied over the defaults BEFORE the action
@@ -1108,10 +1121,19 @@ class Log_Manager {
 		/** @var array<string,mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
 		$snapshot          = $_SERVER;
-		self::$job_stack[] = [ $snapshot, [] === $message ? self::job_message() : $message ];
+		self::$job_stack[] = [
+			'server'  => $snapshot,
+			'message' => [] === $message ? self::job_message() : $message,
+			'owner'   => self::job_top()['owner'] ?? '',
+			'handler' => $handler,
+		];
 
 		// self::suspend() pushes the parent context onto the context stack.
 		self::suspend();
+
+		$frame          = &self::$job_stack[ \array_key_last( self::$job_stack ) ];
+		$frame['owner'] = self::handler_owner( $handler, $frame['message'] ) ?: $frame['owner'];
+		unset( $frame );
 
 		$request_uri = '/jobs/' . \ltrim( $handler, '/' );
 		$id_path     = self::job_id_path( $id );
@@ -1153,6 +1175,33 @@ class Log_Manager {
 		}
 		$path = \wp_parse_url( $id, PHP_URL_PATH );
 		return \is_string( $path ) && '' !== \trim( $path, '/' ) ? $path : '';
+	}
+
+	/**
+	 * The owner of a job's handler: the owner of the file defining the
+	 * callable its handler map holds under its name, the remote map for a
+	 * `remote_job`, or '' when the map does not list the name. Each map is read
+	 * once a process and each handler in it reflected once, so a name that
+	 * neither map lists costs one lookup and stores nothing.
+	 *
+	 * @param string           $handler Job handler name.
+	 * @param array<int,mixed> $message The job message, whose VALUE `k` names the map.
+	 */
+	private static function handler_owner( string $handler, array $message ): string {
+		$value  = $message[ \Newspack_Nodes\Message::VALUE ] ?? null;
+		$filter = \is_array( $value ) && 'remote_job' === ( $value['k'] ?? null ) ? 'newspack_nodes/remote_job_handlers' : 'newspack_nodes/job_handlers';
+		if ( ! isset( self::$handler_owners[ $filter ] ) ) {
+			$map                             = \apply_filters( $filter, [] );
+			self::$handler_owners[ $filter ] = [
+				'map'    => \is_array( $map ) ? $map : [],
+				'owners' => [],
+			];
+		}
+		$callable = self::$handler_owners[ $filter ]['map'][ $handler ] ?? null;
+		if ( null === $callable ) {
+			return '';
+		}
+		return self::$handler_owners[ $filter ]['owners'][ $handler ] ??= Owner::of( Owner::reflect( $callable )[1] ?? '' );
 	}
 
 	/**
@@ -1591,7 +1640,8 @@ class Log_Manager {
 		if ( null !== self::$instance ) {
 			self::$instance->finish();
 		}
-		self::$instance = null;
+		self::$instance       = null;
+		self::$handler_owners = [];
 		App\Request_Context::template( '' );
 	}
 
@@ -1836,7 +1886,9 @@ class Log_Manager {
 
 	/**
 	 * Open the request: `process (start)`, `request`, environment, and the
-	 * resources sample a rule's `log_resources` asks for.
+	 * resources sample a rule's `log_resources` asks for. A job's
+	 * `process (start)` is labelled `[<owner>] <handler>`. A page's label is '',
+	 * and so is the label of a job whose handler has no owner.
 	 *
 	 * The `process` frame this pushes is the root of the timer stack — finish()
 	 * closes it last, and every orphaned frame above it drains first.
@@ -1845,7 +1897,11 @@ class Log_Manager {
 	 */
 	private function log_process( string $origin ): void {
 		$process_hr   = $this->request_time ?? \hrtime( true );
-		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname() . ', WordPress ' . \get_bloginfo( 'version' ), 'l' => '' ];
+		$job          = self::job_top();
+		$process_data = [
+			'm' => \getmypid() . ' on ' . \gethostname() . ', WordPress ' . \get_bloginfo( 'version' ),
+			'l' => '' === ( $job['owner'] ?? '' ) ? '' : Owner::label( $job['owner'], $job['handler'] ),
+		];
 
 		if ( null !== $this->request_ts ) {
 			$process_data['ts'] = $this->request_ts;
@@ -1956,7 +2012,16 @@ class Log_Manager {
 	 * @return array<int,mixed>
 	 */
 	private static function job_message(): array {
-		return [] === self::$job_stack ? [] : self::$job_stack[ \count( self::$job_stack ) - 1 ][1];
+		return self::job_top()['message'] ?? [];
+	}
+
+	/**
+	 * The innermost job context's frame; null outside one.
+	 *
+	 * @return array{server:array<string,mixed>,message:array<int,mixed>,owner:string,handler:string}|null
+	 */
+	private static function job_top(): ?array {
+		return [] === self::$job_stack ? null : self::$job_stack[ \array_key_last( self::$job_stack ) ];
 	}
 
 	/**

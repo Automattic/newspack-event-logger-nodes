@@ -1271,20 +1271,47 @@ class RequestBuilderTest extends TestCase {
 	 * Drive one request through a builder: its rows numbered from 3, between
 	 * the request line and a `process (complete)` of `$duration_ms`.
 	 *
-	 * @param list<array{0:string,1?:array<string,mixed>}> $rows Each row's keyword and its extra fields.
+	 * @param list<array{0:string,1?:array<string,mixed>}> $rows  Each row's keyword and its extra fields.
+	 * @param array<string,mixed>                          $start The `process (start)` row's extra fields.
 	 * @return array<string,mixed> The emitted record.
 	 */
-	private function record_after( array $rows, float $duration_ms ): array {
+	private function record_after( array $rows, float $duration_ms, array $start = [] ): array {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
-		$this->fill( $rb, 1, 'r-owner', 'process (start)' );
+		$this->fill( $rb, 1, 'r-owner', 'process (start)', $start );
 		$this->fill( $rb, 2, 'r-owner', 'request', [ 'm' => 'GET https://kea.test/owners' ] );
 		foreach ( $rows as $at => $row ) {
 			$this->fill( $rb, $at + 3, 'r-owner', $row[0], $row[1] ?? [] );
 		}
 		$this->fill( $rb, \count( $rows ) + 3, 'r-owner', 'process (complete)', [ 'duration_ms' => $duration_ms, 'status_code' => 200 ] );
 		return $this->captured_request( $capture );
+	}
+
+	/**
+	 * A job's `process (start)` names its handler's owner, so the spans it
+	 * leaves unlabelled — the gyrobase engine's among them — are that owner's
+	 * time and add no calls.
+	 */
+	public function test_a_jobs_unlabelled_spans_are_its_handlers_owners(): void {
+		$record = $this->record_after(
+			[
+				[ 'gyrobase init (start)' ],
+				[ 'gyrobase init (complete)', [ 'duration_ms' => 41.5 ] ],
+				[ 'gyrobase (start)' ],
+				[ 'gyrobase (complete)', [ 'duration_ms' => 3.75 ] ],
+			],
+			60.0,
+			[ 'l' => '[kea-7746] kea-7746-sweep' ]
+		);
+
+		$this->assertEquals(
+			[
+				'kea-7746'     => [ 45.25, 0 ],
+				'(unmeasured)' => [ 14.75, 0 ],
+			],
+			$record['owners']
+		);
 	}
 
 	/**

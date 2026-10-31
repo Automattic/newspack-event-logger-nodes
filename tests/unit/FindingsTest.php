@@ -500,6 +500,31 @@ class FindingsTest extends TestCase {
 		$this->assertArrayNotHasKey( 'shape', $found['metric'] );
 	}
 
+	/**
+	 * A job's request frame carries its owner in its label, and is still the
+	 * request's own frame: never a dominant span, never on a span's path.
+	 */
+	public function test_a_jobs_labelled_request_frame_is_still_the_requests_own(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[
+				'name'     => 'process: [kea-7746] kea-7746-sweep',
+				'value'    => 400.0,
+				'children' => [
+					[ 'name' => 'gyrobase init', 'value' => 160.0, 'children' => [] ],
+					[ 'name' => 'gyrobase', 'value' => 150.0, 'children' => [] ],
+				],
+			],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' ) );
+
+		$record['flame']['children'][0]['children'][0]['value'] = 370.0;
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'gyrobase init', $found['metric']['path'] ?? null );
+	}
+
 	public function test_a_dominant_query_span_names_the_statement_it_spent_most_on(): void {
 		$record                      = $this->healthy_record();
 		$record['flame']['children'] = [

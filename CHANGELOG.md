@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`enable_logging` reads through `Config::bool()`.** `Log_Manager` read it with `empty()`, so the stored word `off` read as logging on. `Config::bool()` passes a bool or an int `0` or `1` (the `absint()` a saved checkbox reads back as from the options cache), reads `''` as off, reads any other string as one of the substrate's bool words (`1`, `true`, `yes`, `on`, `0`, `false`, `no`, `off`), and throws naming the key on a null, an integer, an array or any other string; the logger refuses to construct on such a value instead of choosing. `Log_Manager` no longer keeps the config array it cached at construction.
 
+### Fixed
+- **A job's time belongs to the plugin whose handler it runs, not `(unowned)`.** Every record rooted its span stack at an unowned frame, so a span the job left unlabelled, such as the gyrobase engine's `gyrobase init` and `gyrobase`, inherited `(unowned)`: a 45.5-second `nuclear-cron` job credited 45.3 seconds there and 2.3 ms to `newspack-nuclear-gyrobase`. `begin_job_context()` now resolves the handler's owner from the `newspack_nodes/job_handlers` map, or `newspack_nodes/remote_job_handlers` for a `remote_job`, once per handler a process, and a context whose handler neither map lists takes its enclosing job's. A job's `process (start)` carries `[<owner>] <handler>` as its `l`, and the request builder roots the job's stack at that owner. A web request's `l` stays empty and its attribution is unchanged, and so does a job whose handler has no owner. The job's flame frame reads `process: [<owner>] <handler>`, and the Findings still treat it as the request's own frame. `App\Core::reflect()` moves to `Owner::reflect()`, which both callers share.
+
 ## [0.160.4] - 2026-10-29
 
 ### Fixed
