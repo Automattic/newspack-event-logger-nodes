@@ -71,8 +71,8 @@
 # pulling one spoke stream must not share one.
 #
 # Each broker patrons its own HTTP_Out and publishes a status snapshot under
-# the install-scoped cache key remote:<broker>:p{partition}, e.g.
-# remote:spokes:<id>:p0, with the same fields whichever broker built
+# the install-scoped cache key status:<broker>:p{partition}, e.g.
+# status:spokes:<id>:p0, with the same fields whichever broker built
 # it. SSL/HTTPS policy comes from the substrate vault_verify_ssl /
 # vault_require_ssl config — not a per-topology setter.
 #
