@@ -14,9 +14,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Stateless flame-tree construction, aggregation, and finalization.

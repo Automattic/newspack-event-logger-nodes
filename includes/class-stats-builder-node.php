@@ -61,9 +61,7 @@ use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Timer_Node;
 use Newspack_Nodes\Worker_Should_Stop;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Builds the flame-facts rows from the records completed requests' flames name.

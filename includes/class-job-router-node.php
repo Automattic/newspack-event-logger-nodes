@@ -44,9 +44,7 @@ use Newspack_Nodes\Job_Intake;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Normalizes job entries from the ingress logs onto jobs.log.

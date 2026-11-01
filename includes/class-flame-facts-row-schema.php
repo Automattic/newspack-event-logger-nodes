@@ -22,9 +22,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Buckets are `Bucket::id()`s and hours `Bucket::hour()`s. A key column

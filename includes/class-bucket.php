@@ -12,9 +12,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * A bucket id is `floor( epoch / 300 )` and an hour id `floor( epoch / 3600 )`.

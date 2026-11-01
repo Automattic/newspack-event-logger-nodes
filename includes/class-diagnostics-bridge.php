@@ -26,9 +26,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * The verb and span wrappers and the `newspack_nodes/stderr` listener. The

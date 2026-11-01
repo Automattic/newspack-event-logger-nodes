@@ -16,9 +16,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\Job_Intake;
 use Newspack_Nodes\Timer_Node;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Overview_Prefetch_Tick node — `make_node Overview_Prefetch_Tick <name> [interval_s]`.

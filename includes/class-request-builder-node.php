@@ -48,9 +48,7 @@ use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Shutdown_Sweeper;
 use Newspack_Nodes\Timer_Node;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Folds firehose lines into per-request envelopes and emits them when complete.

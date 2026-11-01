@@ -11,9 +11,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Nodes\Core as RuntimeCore;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * What `App\Core` binds on a scope whose rule says `log_php_errors`: an error

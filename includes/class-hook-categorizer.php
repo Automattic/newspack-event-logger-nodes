@@ -25,9 +25,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 // phpcs:disable WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Local file read.
 

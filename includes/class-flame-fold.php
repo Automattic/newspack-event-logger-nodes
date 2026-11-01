@@ -37,9 +37,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * One in-flight request's entries, merged by path as they arrive.

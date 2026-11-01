@@ -28,9 +28,7 @@ use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Applies auto-tune decisions to the per-URL logging ruleset.

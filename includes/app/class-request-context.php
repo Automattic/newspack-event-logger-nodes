@@ -12,9 +12,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Core as RuntimeCore;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Captures the final `template_include` and answers the `request_context`

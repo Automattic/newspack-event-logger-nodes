@@ -41,9 +41,7 @@ use Newspack_Nodes\Core as RuntimeCore;
 use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\Rate_Limit;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Times each bound hook — and each callback on a significant hook, each outbound

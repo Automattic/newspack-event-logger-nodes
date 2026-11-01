@@ -41,7 +41,7 @@ cd tests && ../vendor/bin/phpunit --enforce-time-limit
 tests/run-coverage.sh
 
 # Host-side gates. PHPStan cannot run through `docker exec`: /services is read-only there.
-npm run lint:php            # phpcs, comment gate
+npm run lint:php            # phpcs with the ABSPATH guard sniff, comment gate
 npm run lint:js             # eslint, comment gate, contract lint
 npm run lint:scss           # stylelint, appearance-ownership gate
 npm run lint:types          # tsc over the JSDoc types

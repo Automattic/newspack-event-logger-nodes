@@ -27,9 +27,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\Node_Names;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Log manager class.

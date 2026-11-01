@@ -29,9 +29,7 @@ use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Table_Unavailable;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * An absent status, country, agent, JA4 or From answers `Unknown`, as does a

@@ -37,9 +37,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Shutdown_Sweeper;
 use Newspack_Nodes\Timer_Node;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Builds flame trees from completed requests and runs auto-tune.

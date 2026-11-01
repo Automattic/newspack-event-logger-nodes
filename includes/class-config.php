@@ -32,9 +32,7 @@ use Newspack_Nodes\Config_Utils;
 use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Application configuration: schema defaults, the config files over them, the

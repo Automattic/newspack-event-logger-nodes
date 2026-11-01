@@ -12,9 +12,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Capabilities;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Emits `Server-Timing` where each kind of response sends its headers.

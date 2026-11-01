@@ -43,9 +43,7 @@ use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Table_Unavailable;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * A published snapshot, open for reading.
