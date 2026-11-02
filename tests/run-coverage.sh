@@ -45,11 +45,12 @@ export XDEBUG_MODE=coverage
 # prefix, so they age out the same way.
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'newspack-event-logger-nodes-test-*' -mmin +120 -exec rm -rf {} +
 
-# Run PHPUnit with coverage
+# Xdebug coverage runs several times slower, so a test gets 3 seconds here.
 "$PHPUNIT" --configuration phpunit.xml \
     --coverage-clover "${OUT}"/newspack-event-logger-nodes-coverage/clover.xml \
     --coverage-html "${OUT}"/newspack-event-logger-nodes-coverage \
 	--enforce-time-limit \
+	--default-time-limit=3 \
     "$@"
 
 echo ""
