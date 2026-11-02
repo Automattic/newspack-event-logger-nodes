@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.160.5\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.160.6\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-31T16:10:24+00:00\n"
+"POT-Creation-Date: 2026-11-02T20:51:46+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -201,7 +201,7 @@ msgid "Error timestamp"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:82
-#: src/overview/components/LogEntriesTable.js:1561
+#: src/overview/components/LogEntriesTable.js:1562
 msgid "Keyword"
 msgstr ""
 
@@ -210,7 +210,7 @@ msgid "Error/warning keyword"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:87
-#: src/overview/components/LogEntriesTable.js:1567
+#: src/overview/components/LogEntriesTable.js:1568
 msgid "Message"
 msgstr ""
 
@@ -256,53 +256,53 @@ msgstr ""
 msgid "Gyroscope"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:109
+#: src/gyroscope/Inflight.js:110
 msgid "State"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:110
+#: src/gyroscope/Inflight.js:111
 msgid "What the request is currently doing"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:117
+#: src/gyroscope/Inflight.js:118
 msgid "What"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:118
+#: src/gyroscope/Inflight.js:119
 msgid "Details: query text, template name, hook name, etc."
 msgstr ""
 
-#: src/gyroscope/Inflight.js:127
+#: src/gyroscope/Inflight.js:128
 msgid "Est"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:128
+#: src/gyroscope/Inflight.js:129
 msgid "Estimated request duration (accounts for display delay)"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:135
+#: src/gyroscope/Inflight.js:136
 msgid "Request duration from server logs only (ignores display delay)"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:142
+#: src/gyroscope/Inflight.js:143
 msgid "Age"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:143
+#: src/gyroscope/Inflight.js:144
 msgid "Display delay - how far behind real-time this view is"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:150
+#: src/gyroscope/Inflight.js:151
 msgid "Lag"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:151
+#: src/gyroscope/Inflight.js:152
 msgid "Server processing delay - high values mean the log processor is backed up"
 msgstr ""
 
 #. translators: %d: number of in-flight requests.
 #. translators: %d: number of rows the ring holds.
-#: src/gyroscope/Inflight.js:211
+#: src/gyroscope/Inflight.js:212
 #: src/requests/RequestStream.js:140
 #, js-format
 msgid "%d request"
@@ -311,35 +311,35 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: requests-per-second rate, formatted to one decimal place.
-#: src/gyroscope/Inflight.js:222
+#: src/gyroscope/Inflight.js:223
 #: src/requests/RequestStream.js:125
 #, js-format
 msgid "%s req/s"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:410
+#: src/gyroscope/Inflight.js:408
 msgid "Refresh interval"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:414
+#: src/gyroscope/Inflight.js:412
 msgid "Refresh interval (also press 0–9 keys)"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:432
+#: src/gyroscope/Inflight.js:430
 #: src/requests/RequestStream.js:300
 msgid "Select columns"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:437
+#: src/gyroscope/Inflight.js:435
 #: src/requests/RequestStream.js:305
 msgid "Cols"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:444
+#: src/gyroscope/Inflight.js:442
 msgid "Connection lost. Reconnecting…"
 msgstr ""
 
-#: src/gyroscope/Inflight.js:472
+#: src/gyroscope/Inflight.js:470
 msgid "No active requests."
 msgstr ""
 
@@ -354,7 +354,7 @@ msgstr ""
 #: src/log-table/logTable.js:36
 #: src/overview/CategoryTimeChart.js:69
 #: src/overview/components/BucketField.js:288
-#: src/overview/components/LogEntriesTable.js:1558
+#: src/overview/components/LogEntriesTable.js:1559
 #: src/overview/components/UrlDetailView.js:133
 #: src/overview/OwnerTable.js:74
 #: src/overview/RequestProfile.js:410
@@ -371,7 +371,7 @@ msgid "Unique request identifier - click to view its full trace"
 msgstr ""
 
 #: src/log-table/logTable.js:48
-#: src/overview/UrlTable.js:178
+#: src/overview/UrlTable.js:179
 msgid "URL"
 msgstr ""
 
@@ -752,13 +752,13 @@ msgid "The last %s in five-minute buckets, the current one so far."
 msgstr ""
 
 #. translators: 1: file:line the fatal was raised at, 2: plugin slug.
-#: src/overview/components/LogEntriesTable.js:373
+#: src/overview/components/LogEntriesTable.js:374
 #, js-format
 msgid "%1$s (plugin %2$s)"
 msgstr ""
 
 #. translators: %d: rows a query selected, or a write touched.
-#: src/overview/components/LogEntriesTable.js:1160
+#: src/overview/components/LogEntriesTable.js:1161
 #, js-format
 msgid "%d row"
 msgid_plural "%d rows"
@@ -766,51 +766,51 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %d: number of nested log entries hidden inside this collapsed pair.
-#: src/overview/components/LogEntriesTable.js:1250
+#: src/overview/components/LogEntriesTable.js:1251
 #, js-format
 msgid "[%d entry]"
 msgid_plural "[%d entries]"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1354
+#: src/overview/components/LogEntriesTable.js:1355
 #: src/overview/RequestProfile.js:279
 msgid "Show less"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1355
+#: src/overview/components/LogEntriesTable.js:1356
 msgid "Show more"
 msgstr ""
 
 #. translators: %d: number of log entries in the request.
-#: src/overview/components/LogEntriesTable.js:1439
+#: src/overview/components/LogEntriesTable.js:1440
 #, js-format
 msgid "Log Entries (%d)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1450
+#: src/overview/components/LogEntriesTable.js:1451
 msgid "Fold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1457
+#: src/overview/components/LogEntriesTable.js:1458
 msgid "Unfold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1464
+#: src/overview/components/LogEntriesTable.js:1465
 msgid "Search entries"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1468
+#: src/overview/components/LogEntriesTable.js:1469
 msgid "Search entries…"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1499
+#: src/overview/components/LogEntriesTable.js:1500
 msgid "No matches"
 msgstr ""
 
 #. translators: %d: number of entries matching the search query.
 #. translators: %d: number of matching lines in the request.
-#: src/overview/components/LogEntriesTable.js:1512
+#: src/overview/components/LogEntriesTable.js:1513
 #: src/overview/components/OverviewSection.js:292
 #, js-format
 msgid "%d match"
@@ -818,15 +818,15 @@ msgid_plural "%d matches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1526
+#: src/overview/components/LogEntriesTable.js:1527
 msgid "Previous match (p)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1538
+#: src/overview/components/LogEntriesTable.js:1539
 msgid "Next match (n)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1620
+#: src/overview/components/LogEntriesTable.js:1621
 msgid "Click to highlight pair"
 msgstr ""
 
@@ -939,7 +939,7 @@ msgid "Duration"
 msgstr ""
 
 #: src/overview/components/UrlDetailView.js:181
-#: src/overview/UrlTable.js:228
+#: src/overview/UrlTable.js:229
 msgid "Mem"
 msgstr ""
 
@@ -1238,45 +1238,45 @@ msgstr ""
 msgid "Response Times (Recent Requests)"
 msgstr ""
 
-#: src/overview/UrlTable.js:172
+#: src/overview/UrlTable.js:173
 msgid "Reqs"
 msgstr ""
 
-#: src/overview/UrlTable.js:212
+#: src/overview/UrlTable.js:213
 msgid "Avg"
 msgstr ""
 
-#: src/overview/UrlTable.js:217
+#: src/overview/UrlTable.js:218
 msgid "Min"
 msgstr ""
 
-#: src/overview/UrlTable.js:222
+#: src/overview/UrlTable.js:223
 msgid "Max"
 msgstr ""
 
-#: src/overview/UrlTable.js:235
+#: src/overview/UrlTable.js:236
 msgid "Last seen"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/UrlTable.js:360
-#: src/overview/UrlTable.js:603
+#: src/overview/UrlTable.js:361
+#: src/overview/UrlTable.js:604
 #, js-format
 msgid "Could not load URLs: %s"
 msgstr ""
 
-#: src/overview/UrlTable.js:365
-#: src/overview/UrlTable.js:606
+#: src/overview/UrlTable.js:366
+#: src/overview/UrlTable.js:607
 msgid "Loading URLs…"
 msgstr ""
 
 #. translators: %s: the URL search term.
-#: src/overview/UrlTable.js:370
+#: src/overview/UrlTable.js:371
 #, js-format
 msgid "No URLs match \"%s\""
 msgstr ""
 
-#: src/overview/UrlTable.js:373
+#: src/overview/UrlTable.js:374
 msgid "No URLs to display"
 msgstr ""
 
