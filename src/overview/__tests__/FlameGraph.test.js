@@ -380,7 +380,7 @@ describe( 'FlameGraph', () => {
 	} );
 
 	it( 'caps a huge message blob so the tooltip cannot outgrow the viewport', () => {
-		// A query frame carries the whole SQL as its message; Publication 15's run to
+		// A query frame carries the whole SQL as its message; one client's run to
 		// dozens of lines of JSON, taller than the window on either side of
 		// the cursor, so the top of it cannot be read at all.
 		const chain = require( 'd3' ).__chain;

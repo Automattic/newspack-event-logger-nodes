@@ -38,7 +38,7 @@ class RemoteSourceMakeNodeResolutionTest extends TestCase {
 		$interpreter->name( '_command_interpreter' );
 		$interpreter->sink( $router );
 
-		$node = $interpreter->make_node( 'Remote_Source', 'spoke-x', 'aspen', '/tmp/rs-off', '/tmp/rs-dl' );
+		$node = $interpreter->make_node( 'Remote_Source', 'spoke-x', 'kestrel', '/tmp/rs-off', '/tmp/rs-dl' );
 
 		$this->assertInstanceOf( Remote_Source_Node::class, $node );
 		$this->assertSame( 'Newspack_Nodes\\Remote_Source_Node', \get_class( $node ) );

@@ -2911,7 +2911,7 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * An Publication 15 request, shaped as stored: the request's own `process` frame
+	 * A client request, shaped as stored: the request's own `process` frame
 	 * under the root, holding thirty-five plugin loads and nothing else.
 	 *
 	 * @param float $load_ms Milliseconds each of the three named plugins took.

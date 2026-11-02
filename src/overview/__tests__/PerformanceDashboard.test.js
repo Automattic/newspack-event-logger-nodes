@@ -3930,14 +3930,14 @@ describe( 'PerformanceDashboard', () => {
 			act( () =>
 				globalThis.__urlTableProps.onSelect( {
 					hash: 'fac69dee1c14',
-					url: 'https://community.example/pub10/MovieTimes',
+					url: 'https://community.example/heron/MovieTimes',
 				} )
 			);
 			expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
 			expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
 				field: 'url',
 				hash: 'fac69dee1c14',
-				url: 'https://community.example/pub10/MovieTimes',
+				url: 'https://community.example/heron/MovieTimes',
 			} );
 			unmount();
 		} );
