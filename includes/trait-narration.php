@@ -74,26 +74,6 @@ trait Narration {
 	}
 
 	/**
-	 * One point line: `$line` builds the head and the counters it leads
-	 * with, given the tally, and runs only where a record is started.
-	 *
-	 * @param string                                                                                            $category A `Flame_Tree` narration name.
-	 * @param \Closure(array<string,int>): array{0: string, 1: array<string,int|float|bool>, 2?: list<string>} $line     The head, the counters it
-	 *                                                                                                                    leads with, and any it
-	 *                                                                                                                    tells even at zero.
-	 */
-	private function narrate( string $category, \Closure $line ): void {
-		$tally = $this->tally[ $category ] ?? [];
-		unset( $this->tally[ $category ] );
-		$lm = Log_Manager::started_instance();
-		if ( null === $lm ) {
-			return;
-		}
-		$said = $line( $tally );
-		$this->guarded( static fn () => $lm->message( $category, [ 'm' => self::told( $said[0], $said[1] + $tally, $said[2] ?? [] ), 'keep' => 1 ] ) );
-	}
-
-	/**
 	 * Run one step as a span, its `(complete)` `m` told as a line is, the
 	 * label's tally after the counters `$describe` leads with. Both halves are
 	 * kept, so a fold keeps the step, and each is guarded on its own, so a
@@ -158,6 +138,14 @@ trait Narration {
 	}
 
 	/**
+	 * Run work in a bracket of its own, raising what it held once the work is
+	 * done: `Deferred_Clean_Stop::deferring()`.
+	 *
+	 * @param \Closure $body The work, as `function(): void`.
+	 */
+	abstract protected function deferring( \Closure $body ): void;
+
+	/**
 	 * Tell a rollup line of `$name`: `$extra`, then the `$lead` counters, zero
 	 * where the tally holds none, then the rest of the tally. With nothing
 	 * tallied and every `$extra` zero, no line.
@@ -177,20 +165,24 @@ trait Narration {
 	}
 
 	/**
-	 * Run a downstream write, holding a stop it raises for the open bracket:
-	 * `Deferred_Clean_Stop::guarded()`.
+	 * One point line: `$line` builds the head and the counters it leads
+	 * with, given the tally, and runs only where a record is started.
 	 *
-	 * @param \Closure $forward The write, as `function(): void`.
+	 * @param string                                                                                            $category A `Flame_Tree` narration name.
+	 * @param \Closure(array<string,int>): array{0: string, 1: array<string,int|float|bool>, 2?: list<string>} $line     The head, the counters it
+	 *                                                                                                                    leads with, and any it
+	 *                                                                                                                    tells even at zero.
 	 */
-	abstract protected function guarded( \Closure $forward ): void;
-
-	/**
-	 * Run work in a bracket of its own, raising what it held once the work is
-	 * done: `Deferred_Clean_Stop::deferring()`.
-	 *
-	 * @param \Closure $body The work, as `function(): void`.
-	 */
-	abstract protected function deferring( \Closure $body ): void;
+	private function narrate( string $category, \Closure $line ): void {
+		$tally = $this->tally[ $category ] ?? [];
+		unset( $this->tally[ $category ] );
+		$lm = Log_Manager::started_instance();
+		if ( null === $lm ) {
+			return;
+		}
+		$said = $line( $tally );
+		$this->guarded( static fn () => $lm->message( $category, [ 'm' => self::told( $said[0], $said[1] + $tally, $said[2] ?? [] ), 'keep' => 1 ] ) );
+	}
 
 	/**
 	 * A narration `m`: the head, then each counter, zeros left out but for
@@ -215,4 +207,12 @@ trait Narration {
 		}
 		return \implode( ' · ', $told );
 	}
+
+	/**
+	 * Run a downstream write, holding a stop it raises for the open bracket:
+	 * `Deferred_Clean_Stop::guarded()`.
+	 *
+	 * @param \Closure $forward The write, as `function(): void`.
+	 */
+	abstract protected function guarded( \Closure $forward ): void;
 }
