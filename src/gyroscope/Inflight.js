@@ -42,6 +42,7 @@ import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
+import { isTypingTarget } from '@newspack-nodes/shared/utils/isTypingTarget';
 import {
 	Cell,
 	cellRenderer,
@@ -332,10 +333,7 @@ export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 			9: 10,
 		};
 		const handleKeyDown = ( e ) => {
-			if (
-				e.target.tagName === 'INPUT' ||
-				e.target.tagName === 'TEXTAREA'
-			) {
+			if ( isTypingTarget( e.target ) ) {
 				return;
 			}
 			const interval = keyMap[ e.key ];

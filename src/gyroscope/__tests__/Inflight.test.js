@@ -523,6 +523,28 @@ describe( 'Inflight', () => {
 		input.remove();
 	} );
 
+	it( 'ignores keyboard shortcuts when focus is in a select', () => {
+		registerViewFixture();
+		mount();
+		const select = document.createElement( 'select' );
+		document.body.appendChild( select );
+		const original = window.localStorage.getItem(
+			'event-logger-inflight-refresh'
+		);
+		act( () => {
+			const event = new KeyboardEvent( 'keydown', {
+				key: '9',
+				bubbles: true,
+			} );
+			Object.defineProperty( event, 'target', { value: select } );
+			window.dispatchEvent( event );
+		} );
+		expect(
+			window.localStorage.getItem( 'event-logger-inflight-refresh' )
+		).toBe( original );
+		select.remove();
+	} );
+
 	it( 'keeps the known columns of a saved selection naming a removed one', () => {
 		window.localStorage.setItem(
 			'event-logger-columns',

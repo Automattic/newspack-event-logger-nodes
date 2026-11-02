@@ -579,6 +579,27 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( "'/' typed in editable content leaves the search alone", () => {
+		const entries = makeEntries();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const input = container.querySelector( 'input' );
+		const focusSpy = jest.spyOn( input, 'focus' );
+		const editable = document.createElement( 'div' );
+		editable.setAttribute( 'contenteditable', 'true' );
+		document.body.appendChild( editable );
+		act( () => {
+			editable.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: '/', bubbles: true } )
+			);
+		} );
+		expect( focusSpy ).not.toHaveBeenCalled();
+		editable.remove();
+		focusSpy.mockRestore();
+		unmount();
+	} );
+
 	it( "'n' / 'p' navigate matches once a search is active", () => {
 		const entries = makeEntries();
 		jest.useFakeTimers();

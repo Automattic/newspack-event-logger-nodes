@@ -906,6 +906,26 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( '/ keyboard shortcut does not steal focus from a select', () => {
+		const { container, unmount } = mount();
+		const searchInput = container.querySelector( 'input[type="search"]' );
+		const focusSpy = jest.spyOn( searchInput, 'focus' );
+		const select = document.createElement( 'select' );
+		document.body.appendChild( select );
+		act( () => {
+			const event = new KeyboardEvent( 'keydown', {
+				key: '/',
+				bubbles: true,
+			} );
+			Object.defineProperty( event, 'target', { value: select } );
+			document.dispatchEvent( event );
+		} );
+		expect( focusSpy ).not.toHaveBeenCalled();
+		select.remove();
+		focusSpy.mockRestore();
+		unmount();
+	} );
+
 	it.each( [ 'avg', 'cumulative' ] )(
 		'draws no %s bar for a URL no timed request reached, and scales the rest without it',
 		( metric ) => {

@@ -33,6 +33,7 @@ import {
 	isCommandSpan,
 	spanBaseName,
 } from '@newspack-nodes/shared/utils/formatUtils';
+import { isTypingTarget } from '@newspack-nodes/shared/utils/isTypingTarget';
 import {
 	computeVisibleEntries,
 	formatDots,
@@ -616,8 +617,8 @@ export default function LogEntriesTable( {
 			}
 
 			// '/' focuses search input.
-			const tag = e.target.tagName;
-			if ( e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA' ) {
+			const typing = isTypingTarget( e.target );
+			if ( e.key === '/' && ! typing ) {
 				e.preventDefault();
 				e.stopPropagation();
 				const input =
@@ -629,7 +630,7 @@ export default function LogEntriesTable( {
 			}
 
 			// Skip n/p while typing in an input (Enter navigates).
-			if ( tag === 'INPUT' || tag === 'TEXTAREA' ) {
+			if ( typing ) {
 				return;
 			}
 

@@ -47,6 +47,7 @@ import { PAGE_CONTENT_CLASS } from '@newspack-nodes/shared/components/DashboardS
 import SortHeaderButton from './components/SortHeaderButton';
 import BucketField from './components/BucketField';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
+import { isTypingTarget } from '@newspack-nodes/shared/utils/isTypingTarget';
 import {
 	formatAge,
 	formatGroupedCount,
@@ -711,8 +712,7 @@ export default function UrlTable( {
 	useEffect( () => {
 		const handleKeyDown = ( e ) => {
 			if ( e.key === '/' ) {
-				const tag = e.target.tagName;
-				if ( tag === 'INPUT' || tag === 'TEXTAREA' ) {
+				if ( isTypingTarget( e.target ) ) {
 					return;
 				}
 				e.preventDefault();

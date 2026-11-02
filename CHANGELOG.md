@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The dashboards' key shortcuts leave every field alone through the substrate's `isTypingTarget()`.** The URL table's and the log entries' `/`, the log entries' `n` and `p`, and the in-flight view's refresh-interval digits now ignore a key typed in a select or in editable content, or inside any field, where each guarded only an input or a textarea the key landed on.
+
 ## [0.160.5] - 2026-10-31
 
 ### Changed
