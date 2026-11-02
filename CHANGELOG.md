@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The hooks now run the shared private-data gate, `scripts/lint-private-data.py`, because `scripts/pre-push.local` sets `PRIVATE_DATA_GATE=1`: `pre-commit` holds the staged diff's added lines and new paths, `commit-msg` the message, and `pre-push` each pushed commit's message, added lines and new paths, each ref's names and each annotated tag's message to the private pattern list.
+
 ## [0.160.6] - 2026-11-02
 
 ### Changed
