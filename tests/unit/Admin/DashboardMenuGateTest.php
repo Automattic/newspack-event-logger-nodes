@@ -113,7 +113,7 @@ class DashboardMenuGateTest extends TestCase {
 		// `manage_options` alone is not the gate the operator configured: the
 		// config comment says "restrict admin UI to these usernames", and the
 		// dashboards ARE the admin UI.
-		$this->restrict_to( 'shared-admin-3302', 'dispatch' );
+		$this->restrict_to( 'shared-admin-3302', 'operator-5517' );
 		$GLOBALS['_current_user_login'] = 'staff-admin-2209';
 
 		\newspack_event_logger_nodes_register_admin_menu();
@@ -129,8 +129,8 @@ class DashboardMenuGateTest extends TestCase {
 	}
 
 	public function test_an_admin_on_the_allowlist_still_gets_every_dashboard(): void {
-		$this->restrict_to( 'shared-admin-3302', 'dispatch' );
-		$GLOBALS['_current_user_login'] = 'dispatch';
+		$this->restrict_to( 'shared-admin-3302', 'operator-5517' );
+		$GLOBALS['_current_user_login'] = 'operator-5517';
 
 		\newspack_event_logger_nodes_register_admin_menu();
 

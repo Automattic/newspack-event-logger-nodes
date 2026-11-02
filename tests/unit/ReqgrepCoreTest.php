@@ -55,7 +55,7 @@ class ReqgrepCoreTest extends TestCase {
 		$completed = [];
 		$core      = $this->make_core( '/wp-admin/post.php', $completed );
 		$this->push( $core, 'reqU', 'process (start)', 'start', 1 );
-		$this->push( $core, 'reqU', 'request', 'GET https://www.client-133.example/wp-admin/post.php?post=867431', 2 );
+		$this->push( $core, 'reqU', 'request', 'GET https://www.gaceta.example/wp-admin/post.php?post=867431', 2 );
 		$this->push( $core, 'reqU', 'sql (start)', 'SELECT object_id FROM wp_yoast_indexable', 3 );
 		$this->push( $core, 'reqU', 'process (complete)', 'complete', 4 );
 

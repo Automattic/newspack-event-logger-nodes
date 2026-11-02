@@ -997,13 +997,13 @@ class AskAssemblerTest extends TestCase {
 					'core' => [ 'time' => 90.0, 'count' => 3.0, 'samples' => 90 ],
 				],
 			],
-			'www.client-133.example',
+			'www.gaceta.example',
 			[ 'search' => 'wp-admin', 'include_workers' => true ] + self::FILTERS
 		);
 
 		$this->assertSame( 'overview', $brief['subject'] );
 		$this->assertSame( 1792481007, $brief['as_of'], 'as old as what answered it' );
-		$this->assertSame( 'www.client-133.example', $brief['server'] );
+		$this->assertSame( 'www.gaceta.example', $brief['server'] );
 		$this->assertSame( 'wp-admin', $brief['filters']['search'] );
 		$this->assertTrue( $brief['filters']['include_workers'] );
 		$this->assertSame( 4210, $brief['stats']['requests'] );
@@ -1029,7 +1029,7 @@ class AskAssemblerTest extends TestCase {
 		// Every pointer carries the same scope, or widening leaves it.
 		$fetched = \array_column( $brief['fetch'], 'tool' );
 		$this->assertContains( 'performance_urls', $fetched );
-		$this->assertSame( 'www.client-133.example', $brief['fetch'][0]['arguments']['server'] );
+		$this->assertSame( 'www.gaceta.example', $brief['fetch'][0]['arguments']['server'] );
 	}
 
 	/**

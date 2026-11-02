@@ -124,9 +124,7 @@ test( 'a row shows its URL as sent and links by its identity', () => {
 		)
 	);
 
-	expect( v.lines[ 0 ].url ).toBe(
-		'http://Kea.Test/Metro/EventSearch?v=?'
-	);
+	expect( v.lines[ 0 ].url ).toBe( 'http://Kea.Test/Metro/EventSearch?v=?' );
 	expect( v.lines[ 0 ].urlHash ).toBe(
 		fnv1a( 'https://kea.test/metro/eventsearch?v=?' )
 	);

@@ -2,7 +2,7 @@
 
 The substrate's [hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md) chapter covers the connection itself: how a Remote_Source pulls one spoke's firehose over HTTPS, the Vault that holds each spoke's credentials, the hub user, and the reply gate. This chapter covers what the Event Logger runs over that connection.
 
-Every site writes its own firehose. One site, the hub, copies every other site's firehose into its own; the others are spokes. The live hub pulls from 24 of them, and no spoke knows about any other. The hub is the HTTPS client in both directions, firehose in and signed commands out, so a spoke opens no connection of its own. Two things ride the outbound direction, the logger's settings and a discovery probe, and one thing rides inbound that the hub must not treat as its own: a spoke's job entries.
+Every site writes its own firehose. One site, the hub, copies every other site's firehose into its own; the others are spokes. No spoke knows about any other. The hub is the HTTPS client in both directions, firehose in and signed commands out, so a spoke opens no connection of its own. Two things ride the outbound direction, the logger's settings and a discovery probe, and one thing rides inbound that the hub must not treat as its own: a spoke's job entries.
 
 ![Flow diagram of the hub's control plane: an option change reaching every spoke as a signed set command, the discovery collector's get and its TO=FROM reply, and the rewrite node relabeling inbound job entries, with a table of where each handler registration runs](img/d07c.png)
 

@@ -296,7 +296,7 @@ class RulesCITest extends TestCase {
 
 	/**
 	 * A rule selecting every hook the site has seen is a real edit, not a
-	 * runaway request: publication13's catalog carries 4,204 hooks, and the editor's
+	 * runaway request: a production site's catalog carries 4,204 hooks, and the editor's
 	 * "Select Hooks → all" sends them in one upsert well past 64 KB.
 	 */
 	public function test_upsert_accepts_a_rule_selecting_a_whole_hook_catalog(): void {

@@ -3870,7 +3870,7 @@ describe( 'PerformanceDashboard', () => {
 			mockNavState.selectedSubject = {
 				field: 'url',
 				hash: '905b81442680',
-				url: 'https://pub59.example/jobs/filmtimes/import-film-times',
+				url: 'https://weeklygazette.example/jobs/filmtimes/import-film-times',
 			};
 			mockNavState.selectedRequest = 'bki3lhqsa3bkfvp63qw1ws1k2qx9sxp0';
 			mockView = loadedView( {
@@ -3899,7 +3899,7 @@ describe( 'PerformanceDashboard', () => {
 			mockNavState.selectedSubject = {
 				field: 'url',
 				hash: '905b81442680',
-				url: 'https://pub59.example/jobs/filmtimes/import-film-times',
+				url: 'https://weeklygazette.example/jobs/filmtimes/import-film-times',
 			};
 			mockNavState.selectedRequest = null;
 			// A REFUSAL, distinct from the empty default: the URL pane must say

@@ -1019,7 +1019,7 @@ describe( 'computeIndentedEntries', () => {
 		const stored = [
 			{ n: 1, k: 'process (start)', ts: 1000 },
 			{ n: 1, k: 'gyrobase (start)', ts: 1000.01 },
-			{ n: 2, k: 'publication', ts: 1000.02, m: 'pub58' },
+			{ n: 2, k: 'publication', ts: 1000.02, m: 'harborweekly' },
 			{
 				n: 3,
 				k: 'entries (aggregated)',

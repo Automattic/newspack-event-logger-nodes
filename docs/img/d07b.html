@@ -63,16 +63,16 @@
 
     <div style="flex:0 0 386px">
       <div class="card">
-        <h3>What one child, <span class="mono">spokes:pub05</span>, costs: seventeen names</h3>
-        <p style="margin-bottom:10px">The group builds one HTTP_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">pub05</span> here. Each child builds the rest of this tree itself on its first tick, a reader per log with its own cursor and quarantine, and each takes a name in the worker's registry.</p>
+        <h3>What one child, <span class="mono">spokes:demo</span>, costs: seventeen names</h3>
+        <p style="margin-bottom:10px">The group builds one HTTP_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">demo</span> here. Each child builds the rest of this tree itself on its first tick, a reader per log with its own cursor and quarantine, and each takes a name in the worker's registry.</p>
         <div class="tree">
-          <div><span style="font-weight:600">spokes:pub05</span> <span class="t">· the broker</span></div>
-          <div><span class="t">├─</span> spokes:pub05:config <span class="t">· verbs</span></div>
-          <div><span class="t">├─</span> <span class="own">spokes:pub05:http-out</span> <span class="t">· commands, + :config</span></div>
-          <div><span class="t">├─</span> <span class="own">spokes:pub05:null</span> <span class="t">· unaddressed</span></div>
-          <div><span class="t">├─</span> <span class="own">spokes:pub05:firehose.p0</span> <span class="t">· reader</span></div>
+          <div><span style="font-weight:600">spokes:demo</span> <span class="t">· the broker</span></div>
+          <div><span class="t">├─</span> spokes:demo:config <span class="t">· verbs</span></div>
+          <div><span class="t">├─</span> <span class="own">spokes:demo:http-out</span> <span class="t">· commands, + :config</span></div>
+          <div><span class="t">├─</span> <span class="own">spokes:demo:null</span> <span class="t">· unaddressed</span></div>
+          <div><span class="t">├─</span> <span class="own">spokes:demo:firehose.p0</span> <span class="t">· reader</span></div>
           <div><span class="t">│&nbsp;&nbsp;├─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter <span class="t">· each + :config</span></div>
-          <div><span class="t">└─</span> <span class="own">spokes:pub05:sources:php</span> <span class="t">· reader</span></div>
+          <div><span class="t">└─</span> <span class="own">spokes:demo:sources:php</span> <span class="t">· reader</span></div>
           <div><span class="t">&nbsp;&nbsp;&nbsp;└─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter <span class="t">· each + :config</span></div>
         </div>
         <p style="margin:10px 0 0">The four in blue are the broker's sidecars: it patrons and names them, they open from the "…" on its card, and it rebuilds its transports when its credentials change. No <span class="mono">:config</span> is anyone's sidecar, and each reader's offsetlog and dead letters open from that reader's own "…".</p>

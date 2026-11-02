@@ -257,7 +257,7 @@ class RequestBuilderValidationTest extends TestCase {
 		// expected=5 and the parent's n=4 would trip a duplicate — this is what makes
 		// the stack pop load-bearing, not coincidentally contiguous.
 		$this->fill( $rb, 1, 'nuke', 'gyrobase (start)', [ 'l' => '' ] );
-		$this->fill( $rb, 2, 'nuke', 'publication', [ 'm' => 'pub05' ] );
+		$this->fill( $rb, 2, 'nuke', 'publication', [ 'm' => 'demo' ] );
 		$this->fill( $rb, 3, 'nuke', 'access', [ 'm' => 'allowed' ] );
 		$this->fill( $rb, 4, 'nuke', 'gyrobase (complete)', [ 'duration_ms' => 1015.0 ] );
 
@@ -288,7 +288,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->fill( $rb, 3, 'init_7731', 'gyrobase init (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 1, 'init_7731', 'gyrobase init (complete)', [ 'duration_ms' => 287.5 ] );
 		$this->fill( $rb, 2, 'init_7731', 'gyrobase (start)', [ 'l' => '' ] );
-		$this->fill( $rb, 3, 'init_7731', 'publication', [ 'm' => 'pub05' ] );
+		$this->fill( $rb, 3, 'init_7731', 'publication', [ 'm' => 'demo' ] );
 		$this->fill( $rb, 4, 'init_7731', 'access', [ 'm' => 'allowed' ] );
 		$this->fill( $rb, 5, 'init_7731', 'info', [ 'm' => 'nested tail' ] );
 		$this->fill( $rb, 6, 'init_7731', 'gyrobase (complete)', [ 'duration_ms' => 912.0 ] );
@@ -333,7 +333,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->fill( $rb, 1, 'init_7733', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
 		$this->fill( $rb, 2, 'init_7733', 'request', [ 'm' => 'GET https://kea.test/films/kea' ] );
 		$this->fill( $rb, 1, 'init_7733', 'gyrobase (start)', [ 'l' => '' ] );
-		$this->fill( $rb, 2, 'init_7733', 'publication', [ 'm' => 'pub05' ] );
+		$this->fill( $rb, 2, 'init_7733', 'publication', [ 'm' => 'demo' ] );
 		$this->fill( $rb, 3, 'init_7733', 'gyrobase (complete)', [ 'duration_ms' => 455.0 ] );
 		$this->fill( $rb, 3, 'init_7733', 'process (complete)', [ 'duration_ms' => 620.0, 'status_code' => 200 ] );
 
@@ -382,7 +382,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->fill( $rb, 3, 'die_7741', 'gyrobase init (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 1, 'die_7741', 'gyrobase init (complete)', [ 'duration_ms' => 211.0 ] );
 		$this->fill( $rb, 2, 'die_7741', 'gyrobase (start)', [ 'l' => '' ] );
-		$this->fill( $rb, 3, 'die_7741', 'publication', [ 'm' => 'pub05' ] );
+		$this->fill( $rb, 3, 'die_7741', 'publication', [ 'm' => 'demo' ] );
 		$this->fill( $rb, 4, 'die_7741', 'include (start)', [ 'l' => '/Macros/Global.html' ] );
 		$this->fill( $rb, 5, 'die_7741', 'info', [ 'm' => 'last child row' ] );
 		$this->fill( $rb, 4, 'die_7741', 'error', [ 'm' => 'exit code 255' ] );
@@ -467,7 +467,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->fill( $rb, 3, $rid, 'gyrobase init (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 1, $rid, 'gyrobase init (complete)', [ 'duration_ms' => 120.0 ] );
 		$this->fill( $rb, 2, $rid, 'gyrobase (start)', [ 'l' => '' ] );
-		$this->fill( $rb, 3, $rid, 'publication', [ 'm' => 'pub05' ] );
+		$this->fill( $rb, 3, $rid, 'publication', [ 'm' => 'demo' ] );
 		$this->fill( $rb, 4, $rid, 'access', [ 'm' => 'allowed' ] );
 		$this->fill( $rb, 5, $rid, 'gyrobase init (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 1, $rid, 'gyrobase init (complete)', [ 'duration_ms' => 95.0 ] );

@@ -2712,7 +2712,7 @@ class AppCoreTest extends TestCase {
 		$core = new Core();
 		$sql  = 'SELECT option_value FROM wp_options WHERE 1';
 
-		$annotated = $sql . ' /*  www.client-133.example/wp-admin/post.php?post=867431 request_id: 7b64b63f331de35af9cd8effa0fb48bc */';
+		$annotated = $sql . ' /*  www.gaceta.example/wp-admin/post.php?post=867431 request_id: 7b64b63f331de35af9cd8effa0fb48bc */';
 		$core->query_start( $annotated );
 		$core->query_end( null, $annotated, 0.002, 'caller', 1.0 );
 
