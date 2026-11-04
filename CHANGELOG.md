@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.160.8] - 2026-11-03
+
 ### Changed
 
 - **Refusals, MCP tool descriptions and log lines say their negative outright**, as in `home_url() has no host`. A test or caller matching the old wording must change with it.
