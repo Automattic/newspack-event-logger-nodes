@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The overview-prefetch tick fires on the substrate's grid.** It no longer computes the start of its interval itself: arming counts as a fire, so a fresh process waits for the next `interval_s` boundary, and the substrate's grid keeps every job on one. The floor rises to newspack-nodes 2.145.0, whose hitchhikers read the grid and whose debug overlay, which this plugin inlines, keeps its sampler under the new page global `__newspackNodesOverviewSamplerTimer`.
+
 ## [0.160.8] - 2026-11-03
 
 ### Changed

@@ -29,11 +29,10 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	protected int $interval_s = self::INTERVAL_S;
 
 	/**
-	 * Read the interval and ride the Router's tick, which throttles the
-	 * hitchhike to it. A fresh process paces from the start of the wall-clock
-	 * interval it starts in, as every fire does, so each job falls on an
-	 * interval's boundary: a respawn queues no second job inside the interval
-	 * its predecessor queued in, and queues at the next boundary. A respawn
+	 * Read the interval and ride the Router's tick, which fires the hitchhike
+	 * on the interval's wall-clock grid. A fresh process counts as having
+	 * fired on arming, so it waits for the next boundary: a respawn queues no
+	 * second job inside the interval its predecessor queued in. A respawn
 	 * whose gap straddles a boundary loses that one, which the snapshot's four
 	 * intervals span while each run publishes within two intervals of being
 	 * queued.
@@ -55,7 +54,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 		}
 		$this->assign_schema_args( $args, $values );
 		$this->set_timer( $this->interval_s * 1000 );
-		$this->last_fire_time = $this->interval_start();
+		$this->last_fire_time = Core::$now;
 		return $this->arguments;
 	}
 
@@ -67,7 +66,6 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
 	protected function fire(): void {
-		$this->last_fire_time = $this->interval_start();
 		// The line names no partition, so the source it asks about is empty.
 		if ( ! Core::owns( '', Core::bound_partition() ) ) {
 			return;
@@ -94,15 +92,6 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 				Log_Manager::end_job_context();
 			}
 		}
-	}
-
-	/**
-	 * The start of the wall-clock interval `Core::$now` falls in, the moment
-	 * the Timer's throttle paces the next job from, stepped by the line's
-	 * interval.
-	 */
-	private function interval_start(): float {
-		return \floor( Core::$now / $this->interval_s ) * $this->interval_s;
 	}
 
 	/**

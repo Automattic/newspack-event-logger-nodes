@@ -6,7 +6,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **This release needs newspack-nodes 2.132.0.** Below it the plugin goes
+- **This release needs newspack-nodes 2.145.0.** Below it the plugin goes
   dormant behind an admin notice naming both versions. Update the
   substrate first.
 - **`aggregator` and `hub` fetch each spoke over HTTP.** To keep streaming

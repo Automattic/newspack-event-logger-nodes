@@ -1476,13 +1476,24 @@ final class StatsBuilderTest extends TestCase {
 	}
 
 	public function test_the_router_tick_writes_at_the_flush_cadence(): void {
+		// A clock held on a flush boundary, so the next one is a whole interval on.
+		$t           = \Newspack_Nodes\Timer_Node::next_boundary( \microtime( true ), Stats_Builder_Node::FLUSH_INTERVAL_SEC * 1000 );
+		Core::$clock = static function () use ( &$t ): float {
+			return $t;
+		};
+		$tick        = static function ( int $seconds ) use ( &$t ): void {
+			$t += $seconds;
+			Core::right_now();
+			Core::node( \Newspack_Nodes\Node_Names::ROUTER )->fire_cb();
+		};
+		Core::right_now();
 		$sb = $this->armed_stats_builder();
 		$this->fill_flame( $sb, $this->completed_request( [ 'rid' => 'rid-hihi-1', 'duration_ms' => 17.0 ] ) );
-		$this->tick_router( 0 );
+		$tick( 0 );
 		$this->fill_flame( $sb, $this->completed_request( [ 'rid' => 'rid-hihi-2', 'duration_ms' => 19.0 ] ) );
-		$this->tick_router( Stats_Builder_Node::FLUSH_INTERVAL_SEC - 1 );
+		$tick( Stats_Builder_Node::FLUSH_INTERVAL_SEC - 1 );
 		$between = $this->facts( 'SELECT count(*) FROM requests' );
-		$this->tick_router( 1 );
+		$tick( 1 );
 
 		$this->assertSame( 5, Stats_Builder_Node::FLUSH_INTERVAL_SEC );
 		$this->assertSame( [ [ 1 ] ], $between, 'a tick inside the interval writes nothing' );
