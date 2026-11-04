@@ -113,7 +113,8 @@ class PerformanceCITest extends TestCase {
 	 * lets the write be an append without re-reading to find the end.
 	 *
 	 * @param string   $log       Log basename ('requests' | 'flames').
-	 * @param ?callable $format   `format_index_entry( array $message, array $position ): ?string`, or null for no index.
+	 * @param ?callable $format   `format_index_entry( array $message, array $position ): ?string`,
+	 *                            or null for a log that keeps no index.
 	 * @param array    $body      Record VALUE.
 	 * @param int      $partition Partition index.
 	 * @return array{segment:int, offset:int, length:int} The record's place.
@@ -154,8 +155,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Lines no lookup matches, appended to a flame index at the tick: enough
-	 * that a walk reading them all runs past MAX_SCAN_S on a stepping clock.
+	 * Lines that do not match any lookup, appended to a flame index at the
+	 * tick: enough that a walk reading them all runs past MAX_SCAN_S on a
+	 * stepping clock.
 	 */
 	private function pad_flame_index( int $partition = 0 ): void {
 		$index = $this->tmp . "/logs/flames.p{$partition}/0.idx";
@@ -510,7 +512,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertMatchesRegularExpression( '/^\d+ lines · cut$/', Core::as_string( $spans[1][2] ) );
 	}
 
-	/** A rid is looked up in its row; no index is walked. */
+	/** A rid is looked up in its row, without walking an index. */
 	public function test_search_requests_answers_from_the_row(): void {
 		$place = $this->write_record( [ 'rid' => 'rid-row-kea-5513', 'url' => 'https://example.com/row-kea-5513' ] );
 		$this->seed_request( [ 'rid' => 'rid-row-kea-5513', 'url' => 'https://seed.example/row-kea-5513/' ] + $place );
@@ -520,7 +522,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'rid' => 'rid-row-kea-5513', 'url_hash' => Log_Manager::url_hash( 'https://seed.example/row-kea-5513/' ) ], $found );
 	}
 
-	/** What search finds, `dump_request` opens: a rid no row names is not found. */
+	/**
+	 * What search finds, `dump_request` opens: a rid that has no row is not
+	 * found.
+	 */
 	public function test_search_requests_finds_no_rid_no_row_names(): void {
 		$this->write_record( [ 'rid' => 'rid-rowless-5514', 'url' => 'https://example.com/rowless-5514' ] );
 
@@ -745,7 +750,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
-	/** A URL no timed request reached briefs its mean as null, in its brief and its finding. */
+	/**
+	 * A URL without a timed request briefs its mean as null, in its brief and
+	 * its finding.
+	 */
 	public function test_an_untimed_url_briefs_its_mean_as_null(): void {
 		$url = 'https://seed.example/kea-timeouts/';
 		$this->seed_requests( \array_fill( 0, 6, [ 'url' => $url, 'ms' => null, 'error' => 'T' ] ) );
@@ -759,7 +767,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A URL row no timed request reached has a null `max_ms` in `dump_url`,
+	 * A URL row without a timed request has a null `max_ms` in `dump_url`,
 	 * the url: brief and its finding, whatever its stored maximum.
 	 */
 	public function test_an_untimed_url_reports_a_null_max_ms_everywhere(): void {
@@ -1388,7 +1396,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'home', $result['flame_data']['flame']['name'] );
 	}
 
-	/** The record is read once, at the place its row names; no index is walked. */
+	/**
+	 * The record is read once, at the place its row names, without walking an
+	 * index.
+	 */
 	public function test_dump_request_reads_the_record_at_its_rows_position(): void {
 		$this->write_record( [ 'rid' => 'rid-ahead-of-it-6620', 'url' => 'https://example.com/ahead-6620' ] );
 		$place = $this->write_record( [ 'rid' => 'rid-row-placed-6620', 'url' => 'https://example.com/row-placed-6620', 'duration_ms' => 19 ] );
@@ -1416,7 +1427,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'index formatter not registered: flame-index', \trim( Core::as_string( $dumped ) ) );
 	}
 
-	/** A record no row names, aged past or not yet flushed, is not found. */
+	/** A record without a row, aged past or not yet flushed, is not found. */
 	public function test_dump_request_answers_not_found_for_a_record_no_row_names(): void {
 		$this->write_record( [ 'rid' => 'rid-rowless-4410', 'url' => 'https://example.com/rowless-4410', 'duration_ms' => 23 ] );
 
@@ -2258,7 +2269,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'kaka.example', $page['filters']['server'] );
 	}
 
-	/** A hash no URL carries is not found, under a bucket or not. */
+	/**
+	 * A hash that does not belong to any URL is not found, under a bucket or
+	 * not.
+	 */
 	public function test_a_bucketed_read_of_an_unknown_hash_is_not_found(): void {
 		$this->at_the_bucket_clock();
 
@@ -2330,7 +2344,7 @@ class PerformanceCITest extends TestCase {
 	/**
 	 * The overview's totals, the site's and each server's, read the URL
 	 * window and answer what `requests` does: a URL under both worker flags
-	 * counts once, and a window row no request backs counts in them.
+	 * counts once, and a window row without a backing request counts in them.
 	 */
 	public function test_the_overview_totals_read_the_url_window(): void {
 		$latest = self::latest();
@@ -2397,8 +2411,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A `urls_window` row of `$url` on `$server` no request backs, last moved
-	 * in `$bucket`, so a read that lists it read the window.
+	 * A `urls_window` row of `$url` on `$server` without a backing request,
+	 * last moved in `$bucket`, so a read that lists it read the window.
 	 *
 	 * @param string $url    The URL.
 	 * @param string $server Its server.
@@ -2437,8 +2451,8 @@ class PerformanceCITest extends TestCase {
 	/**
 	 * The overview's server list reads the URL window as its totals do,
 	 * corrected while a partition sits a bucket behind: it lists what
-	 * `requests` lists over the range, a server whose one request sits in
-	 * the bucket before it left out, and a window row no request backs in.
+	 * `requests` lists over the range, a server whose one request sits in the
+	 * bucket before it left out, and a window row without a backing request in.
 	 */
 	public function test_the_overview_servers_read_the_url_window(): void {
 		$latest  = self::latest();
@@ -2462,7 +2476,7 @@ class PerformanceCITest extends TestCase {
 	 * A scoped overview the job stored none for, its servers the stored
 	 * overview's list, which lacks its server, asks whether the server has
 	 * traffic of the window, and reads the URL window to answer: a worker row
-	 * there no request backs makes the list read again and name it.
+	 * there without a backing request makes the list read again and name it.
 	 */
 	public function test_a_scoped_overviews_traffic_check_reads_the_url_window(): void {
 		$latest = self::latest();
@@ -3648,7 +3662,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "overview:site --filter={$chip}" );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief answered no structure' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief returned no structure' );
 		$this->assertSame(
 			[ [ self::hash_of( 'seed.example/kotuku-6604/' ), 2, self::hash_of( 'https://seed.example/Kotuku-6604/?a=?' ) ] ],
 			\array_map( static fn ( array $page ): array => [ $page['page_hash'], $page['shapes'], $page['busiest_hash'] ], $brief['pages'] )
@@ -3745,7 +3759,7 @@ class PerformanceCITest extends TestCase {
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
 
 		$this->assertSame( $built, $table['as_of'], 'the listing alone still reads the snapshot' );
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief answered no structure' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief returned no structure' );
 		$this->assertSame( $built + 9, $brief['as_of'], 'the brief answered live' );
 		$this->assertContains( self::hash_of( 'https://seed.example/pateke-7720/?b=?' ), \array_column( $brief['pages'], 'busiest_hash' ) );
 		$this->assertNotEmpty( \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ) );
@@ -3870,10 +3884,10 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=status_class=5' );
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --filter=status_class=5' );
 
-		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url answered no structure' );
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url returned no structure' );
 		$this->assertSame( [ $url, 0, 0 ], [ $reply['stats']['url'], $reply['stats']['count'], $reply['stats']['errors'] ] );
 		$this->assertSame( [], $reply['requests'] );
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 	}
 
 	public function test_dump_url_bucket_selection_narrows_its_stats_and_list(): void {
@@ -4064,7 +4078,7 @@ class PerformanceCITest extends TestCase {
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "--page={$page}" );
 
-		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url answered no structure' );
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url returned no structure' );
 		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles', 'aggregate_owners' ], \array_keys( $reply ) );
 		$this->assertSame(
 			[ $page, 'https://seed.example/kaka-9183/', 3, 95.75, 330.25, 40.5, $at + 11.5, 0 ],
@@ -4176,7 +4190,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "page:{$page}" );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertSame( 'page', $brief['subject'] );
 		$this->assertSame( [ 'https://seed.example/kaka-9183/', $page, 3, 330.25 ], [ $brief['url'], $brief['hash'], $brief['stats']['count'], $brief['stats']['max_ms'] ] );
 		$this->assertSame( [ 'rid-kaka-q2-9183', 'rid-kaka-q1-9183', 'rid-kaka-b1-9183' ], \array_column( $brief['worst_requests'], 'rid' ) );
@@ -4218,8 +4232,8 @@ class PerformanceCITest extends TestCase {
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "page:{$page}" );
 		$span  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:rest_api_init', "page:{$page}" ] );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
-		$this->assertIsArray( $span, \is_string( $span ) ? $span : 'ask answered no span brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
+		$this->assertIsArray( $span, \is_string( $span ) ? $span : 'ask returned no span brief' );
 		$this->assertSame( [ 'https://seed.example/', '/?rest_route=' ], [ $brief['url'], $brief['rule']['pattern'] ?? null ] );
 		$this->assertSame( [], $brief['findings'], 'an instrumented page proposes no cold start' );
 		$this->assertSame( '/?rest_route=', $span['rule']['pattern'] ?? null );
@@ -4233,7 +4247,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $rest ) );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertSame( [ '/?rest_route=', [] ], [ $brief['rule']['pattern'] ?? null, $brief['findings'] ] );
 	}
 
@@ -4250,7 +4264,7 @@ class PerformanceCITest extends TestCase {
 
 		foreach ( [ $unstamped, $unread ] as $url ) {
 			$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) );
-			$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+			$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 			$this->assertSame( '/moa-6612/', $brief['rule']['pattern'] ?? null, $url );
 		}
 	}
@@ -4268,7 +4282,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'page:' . self::hash_of( 'seed.example/' ) );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertSame( 'rid-kereru-h1-5531', Core::as_string( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--page=' . self::hash_of( 'seed.example/' ) )['requests'][0]['rid'] ), 'the newest request is the home shape\'s' );
 		$this->assertSame( '/?rest_route=', $brief['rule']['pattern'] ?? null );
 	}
@@ -4293,7 +4307,7 @@ class PerformanceCITest extends TestCase {
 		$all  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', $page );
 		$post = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $page, '--filter=method=POST' ] );
 
-		$this->assertIsArray( $post, \is_string( $post ) ? $post : 'ask answered no brief' );
+		$this->assertIsArray( $post, \is_string( $post ) ? $post : 'ask returned no brief' );
 		$this->assertSame( [ '/?', '/?rest_route=' ], [ $all['rule']['pattern'] ?? null, $post['rule']['pattern'] ?? null ] );
 	}
 
@@ -4308,7 +4322,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'url:' . self::hash_of( $rest ), '--filter=status=500' ] );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertSame( [ 0, '/?rest_route=' ], [ $brief['stats']['count'], $brief['rule']['pattern'] ?? null ] );
 	}
 
@@ -4326,8 +4340,8 @@ class PerformanceCITest extends TestCase {
 		$stamped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'page:' . self::hash_of( 'seed.example/tieke-4410/' ), $empty ] );
 		$unread  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'page:' . self::hash_of( 'seed.example/tieke-4410/unread/' ), $empty ] );
 
-		$this->assertIsArray( $stamped, \is_string( $stamped ) ? $stamped : 'ask answered no brief' );
-		$this->assertIsArray( $unread, \is_string( $unread ) ? $unread : 'ask answered no brief' );
+		$this->assertIsArray( $stamped, \is_string( $stamped ) ? $stamped : 'ask returned no brief' );
+		$this->assertIsArray( $unread, \is_string( $unread ) ? $unread : 'ask returned no brief' );
 		$this->assertSame( [ 0, '/?rest_route=' ], [ $stamped['stats']['count'], $stamped['rule']['pattern'] ?? null ] );
 		$this->assertSame( [ 0, '/tieke-4410/' ], [ $unread['stats']['count'], $unread['rule']['pattern'] ?? null ] );
 	}
@@ -4338,7 +4352,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "page:{$page}" ] );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertEqualsWithDelta( 191.5 / 3, $brief['ms'], 1e-9 );
 		$this->assertSame( [ 'mean per request over 3 requests, every server', 'https://seed.example/kaka-9183/' ], [ $brief['scope'], $brief['url'] ] );
 	}
@@ -4349,7 +4363,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:sql', "page:{$page}" ] );
 
-		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask returned no brief' );
 		$this->assertSame( [ 'mean per request over 3 requests, every server', 'https://seed.example/kaka-9183/', 20.25 ], [ $brief['scope'], $brief['url'], $brief['avg_time_ms'] ] );
 	}
 
@@ -4637,7 +4651,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'URL not found: deadbeefcafe', $reply );
 	}
 
-	/** A URL is named by `--url` or first by position; `--hash` is no arg. */
+	/**
+	 * A URL is named by `--url` or first by position; `--hash` is not an arg.
+	 */
 	public function test_dump_url_names_a_url_by_url_and_refuses_hash(): void {
 		$url = 'https://seed.example/pukeko-5520/';
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-pukeko-5520', 'ms' => 61.25 ] );
@@ -4645,7 +4661,7 @@ class PerformanceCITest extends TestCase {
 		$named = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--url=' . self::hash_of( $url ) );
 		$hash  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--hash=' . self::hash_of( $url ) );
 
-		$this->assertIsArray( $named, \is_string( $named ) ? $named : 'dump_url answered no structure' );
+		$this->assertIsArray( $named, \is_string( $named ) ? $named : 'dump_url returned no structure' );
 		$this->assertSame( [ $url, 61.25 ], [ $named['stats']['url'], $named['stats']['max_ms'] ] );
 		$this->assertStringContainsString( 'unknown option --hash', Core::as_string( $hash ) );
 	}
@@ -4654,7 +4670,7 @@ class PerformanceCITest extends TestCase {
 		$args = self::args_by_name( 'dump_url' );
 
 		$this->assertSame( [ 'url', 'page', 'server', 'filter', 'bucket' ], \array_keys( $args ) );
-		$this->assertSame( [ false, '' ], [ $args['url']['required'], $args['url']['default'] ], 'a page names no URL' );
+		$this->assertSame( [ false, '' ], [ $args['url']['required'], $args['url']['default'] ], 'a page does not require a URL' );
 		$this->assertSame( \array_diff_key( self::args_by_name( 'query' )['filter'], [ 'description' => true ] ), \array_diff_key( $args['filter'], [ 'description' => true ] ), 'bound as query binds it; only its field list differs' );
 		$this->assertSame( [ 'string', 'string' ], [ $args['server']['type'], $args['bucket']['type'] ] );
 	}

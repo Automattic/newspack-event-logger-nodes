@@ -1886,8 +1886,8 @@ class RequestBuilderTest extends TestCase {
 
 	/**
 	 * Let the builder go quiet, then put the wall on the boundary its cache
-	 * waits for, so the next rotate_if_due() rolls at least once — timed
-	 * (idle) rotation on a builder no line reaches, driven without sleeping.
+	 * waits for, so the next rotate_if_due() rolls at least once — timed (idle)
+	 * rotation on a builder that a line never reaches, driven without sleeping.
 	 *
 	 * The monotonic clock tracks the tick, so a minute of wall is a minute of
 	 * quiet, and a quiet builder's clock is the wall. An absolute jump, not a

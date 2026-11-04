@@ -7,7 +7,8 @@
  * The page link composes its own `_stream:sse-in` (SseIn) and shares the
  * `_http` (HttpOut) and `_heartbeat` (Heartbeat) singletons, wiring the
  * `connected → slot` bridge to that heartbeat. `gyroscope:view.fill()`
- * dispatches envelopes itself, so no route or transform hop sits before it.
+ * dispatches envelopes itself, so a route or transform hop never sits before
+ * it.
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic
  * (covered by the substrate's own suite) is unmocked here — we drive a `msg`

@@ -337,8 +337,8 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
  * and a reader counting spans needs `base`.
  *
  * `onClose( base, at, opened )` sees the base name, the stack index its
- * `(start)` sat at (-1 when nothing opened it), and the stack before unwinding,
- * whose first `at` frames are the span's ancestors.
+ * `(start)` sat at (-1 when it was never opened), and the stack before
+ * unwinding, whose first `at` frames are the span's ancestors.
  *
  * `outlive` picks WHICH unwind, and the two readers genuinely differ. The
  * merged tree pops every frame above the match — `Flame_Fold::close()` is
@@ -767,8 +767,8 @@ const deepestByBase = ( flame ) => {
  * when the head ended is skipped — that row exists, and its tail `(complete)`
  * was already deducted. Instances the node merged BEYOND that one began
  * in the middle and do get a frame, as does a sibling merely sharing the base
- * name. A frame the tail closes with a complete no open span claimed leaves its
- * own `(complete)` off, because that real one closes it.
+ * name. A frame the tail closes with a complete that an open span never
+ * claimed leaves its own `(complete)` off, because that real one closes it.
  *
  * Durations stay INCLUSIVE, as every other duration in the log is.
  *

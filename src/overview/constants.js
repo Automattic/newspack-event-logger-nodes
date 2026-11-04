@@ -25,9 +25,9 @@ import { SUBJECT_PARAMS } from './detailSubject';
  *
  * The list doubles as the validation whitelist for the persisted
  * `event-logger-refresh-interval` localStorage value: `PerformanceDashboard`
- * hands it to `usePersistedChoice`, which discards a saved string matching no
- * option here and falls back to `'15000'`. Dropping that entry would leave the
- * dashboard defaulting to a value the dropdown cannot render.
+ * hands it to `usePersistedChoice`, which discards a saved string that does not
+ * match an option here and falls back to `'15000'`. Dropping that entry would
+ * leave the dashboard defaulting to a value the dropdown cannot render.
  */
 export const DASHBOARD_REFRESH_OPTIONS = [
 	{ label: '1s', value: '1000' },

@@ -176,7 +176,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		expect( Core.node( 'url-detail:transform' ) ).toBeNull();
 		// The receiver fans back to the Fetcher, which settles the ask.
 		// Without it the refresh asks once and never again: the outbox holds
-		// an ask that nothing answers until the fail-open window.
+		// an ask that goes unanswered until the fail-open window.
 		expect( Core.node( 'url-detail:in' ).target ).toEqual( [
 			'url-detail:in:current',
 			'url-detail:fetch',
@@ -880,7 +880,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		).toEqual( options( urls[ VALUE ].arguments, 'filter' ) );
 	} );
 
-	test( 'no chip sends no --filter, so the default question stays the stored one', async () => {
+	test( 'sends no --filter without a chip, so the default question stays the stored one', async () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );

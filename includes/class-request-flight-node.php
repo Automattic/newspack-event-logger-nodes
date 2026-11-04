@@ -107,7 +107,7 @@ class Request_Flight_Node extends Timer_Node {
 	 * `fire()` emits to the gyroscope partition for cross-spoke aggregation.
 	 *
 	 * Reads the patron's live `LRU_Cache` — the canonical in-flight map — and
-	 * returns an empty array when no `Request_Builder_Node` patron is attached.
+	 * returns an empty array without an attached `Request_Builder_Node` patron.
 	 * Each row's `state` carries the top-of-stack hook name and `what` that
 	 * frame's label, `time_ms` the span from process start to the last log
 	 * line, `est_ms` that span plus the age of the tracker timestamp (elapsed

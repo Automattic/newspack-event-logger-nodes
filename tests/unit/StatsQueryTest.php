@@ -246,8 +246,8 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * A `urls_window` row whose sums no request backs, on `$url` under the
-	 * kea server, last moved in `$last_bucket`.
+	 * A `urls_window` row whose sums are not backed by any request, on `$url`
+	 * under the kea server, last moved in `$last_bucket`.
 	 *
 	 * @param string $url         The logged URL.
 	 * @param int    $last_bucket Its last bucket.
@@ -699,9 +699,10 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * The live `urls` listing asks its question over the whole window ending
-	 * at the reply's clock, so its URLs and its pages read the URL window:
-	 * a window row no request backs lists, and the pages answer as before.
+	 * The live `urls` listing asks its question over the whole window ending at
+	 * the reply's clock, so its URLs and its pages read the URL window: a
+	 * window row without a backing request lists, and the pages answer as
+	 * before.
 	 */
 	public function test_the_live_urls_listing_reads_the_url_window(): void {
 		$this->seed_url_traffic();
@@ -720,9 +721,9 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * The live listing's totals and each listed page's URL count read the
-	 * URL window too: a window row no request backs, a third shape of a page
-	 * of two, counts in the URLs, the requests and that page's shapes, and
+	 * The live listing's totals and each listed page's URL count read the URL
+	 * window too: a window row without a backing request, a third shape of a
+	 * page of two, counts in the URLs, the requests and that page's shapes, and
 	 * adds no page.
 	 */
 	public function test_the_live_listings_totals_and_page_shapes_read_the_url_window(): void {
@@ -1518,7 +1519,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame(
 			[ [ 'egret.example', 1, 1, 0, 0, 0, 0 ], [ 'kea.example', 8, 2, 1, 1, 2, 1 ] ],
 			$r['rows'],
-			'a missing status and one past the bounds count in no class'
+			'a missing status and one past the bounds do not count in any class'
 		);
 	}
 
@@ -2212,7 +2213,8 @@ final class StatsQueryTest extends TestCase {
 	/**
 	 * A tuple's rank is the sum of its buckets' `top_by`, so only a measure
 	 * that adds across buckets ranks: a mean, a percentile, an extreme, a
-	 * distinct count or a latest stamp would rank by a figure no tuple has.
+	 * distinct count or a latest stamp would rank by a figure that does not
+	 * belong to any tuple.
 	 */
 	public function test_top_by_a_measure_that_adds_across_buckets_alone(): void {
 		foreach ( [ 'requests' => [ 'avg_ms', 'p50_ms', 'p95_ms', 'urls', 'pages', 'max_ms', 'min_ms', 'max_peak_mb', 'avg_peak_mb', 'last_seen', 'worker' ], 'timings' => [ 'avg_ms', 'avg_calls' ] ] as $source => $measures ) {

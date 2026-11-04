@@ -919,7 +919,7 @@ describe( 'OverviewSection breakdown and owners', () => {
 		unmount();
 	} );
 
-	it( 'keeps the total and caption on the breakdown when no owner is listed', () => {
+	it( 'keeps the total and caption on the breakdown when the list names no owner', () => {
 		const { container, unmount } = mount( {
 			leaderboard: {
 				categories: { 'init hook': { time: 7.5, count: 2 } },

@@ -301,7 +301,7 @@ test( 'renders the flame graph written after the record was found', async () => 
 
 // An unprofiled request has no flame coming, so waiting on one is waiting
 // forever. The ask outlives the record by a few ticks, no more.
-test( 'stops asking a few ticks past the record when no flame arrives', async () => {
+test( 'stops asking a few ticks past the record when a flame never arrives', async () => {
 	setBlob( { rid: 'noflame13', perfUrl: 'admin.php?page=x' } );
 	const wire = installFakeCommandWire( () => ( {
 		rid: 'noflame13',
@@ -333,7 +333,7 @@ test( 'stops asking a few ticks past the record when no flame arrives', async ()
 } );
 
 // A site running no `stats-builder` topology has no stats rows to find the
-// request by, so no ask will ever find it: the tab says why and stops.
+// request by, so an ask will never find it: the tab says why and stops.
 test( 'stops asking and says why when the stats rows did not open', async () => {
 	setBlob( { rid: 'nofacts21', perfUrl: 'admin.php?page=x' } );
 	const wire = installFakeCommandWire(
@@ -380,7 +380,7 @@ test( 'says the flame lookup ran out of time when it was cut', async () => {
 	await act( async () => {} );
 
 	expect( view.container.textContent ).toContain(
-		'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+		'The flame lookup ran out of time, so the trace is not shown here; one may still have been recorded.'
 	);
 } );
 
@@ -420,7 +420,7 @@ test( 'keeps waiting when the reply carries no record yet', async () => {
 	expect( view.container.textContent ).not.toContain( 'Request:' );
 } );
 
-test( 'renders an idle hint when no request id is localized', async () => {
+test( 'renders an idle hint without a localized request id', async () => {
 	let view;
 	await act( async () => {
 		view = render( <CurrentRequestTab /> );

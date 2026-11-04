@@ -62,8 +62,8 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
-	 * Keys the shipped config named that no Field declares. Reported, never
-	 * thrown — see `note_unrecognized_keys()`.
+	 * Keys the shipped config named that are not declared by any Field.
+	 * Reported, never thrown — see `note_unrecognized_keys()`.
 	 *
 	 * @var list<string>
 	 */
@@ -99,7 +99,7 @@ class Config {
 	 * reads, never an operator's own patterns, which it would compile without
 	 * `Hook_Categorizer::categorize()`'s guards — and `window.eventLoggerCustomColors`,
 	 * {@see span_colors()}. The dashboards print it on their own bundle, and
-	 * the Request tab on every page where no dashboard bundle does.
+	 * the Request tab on every page where a dashboard bundle does not.
 	 *
 	 * @return string Inline JS.
 	 */
@@ -340,8 +340,8 @@ class Config {
 	}
 
 	/**
-	 * Keys the shipped config named that no Field declares. Forces the defaults
-	 * load, so a caller need not have read the config first.
+	 * Keys the shipped config named that are not declared by any Field. Forces
+	 * the defaults load, so a caller need not have read the config first.
 	 *
 	 * @api
 	 * @return list<string>
@@ -425,9 +425,9 @@ class Config {
 	}
 
 	/**
-	 * Keys in $config that no Field declares. Public because it answers about
-	 * ANY array: the ledger test reconstructs the shipped file's commented-out
-	 * keys and holds them to the schema through here.
+	 * Keys in $config that are not declared by any Field. Public because it
+	 * answers about ANY array: the ledger test reconstructs the shipped file's
+	 * commented-out keys and holds them to the schema through here.
 	 *
 	 * @param array<string,mixed> $config Any config array.
 	 * @return list<string>

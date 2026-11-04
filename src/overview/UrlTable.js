@@ -450,7 +450,7 @@ const UrlRow = memo(
 		maxAvg,
 		barField,
 	} ) {
-		// A URL no timed request reached is unmeasured, and draws no bar.
+		// A URL without a timed request is unmeasured, and draws no bar.
 		const barValue = url[ barField ];
 		let barStyle;
 		if ( Number.isFinite( barValue ) ) {
@@ -690,7 +690,7 @@ export default function UrlTable( {
 		restorePage,
 		( n ) => ( 1 === n ? null : String( n ) )
 	);
-	// A new set starts on page 1, in render: no ask takes the old offset.
+	// A new set starts on page 1, in render: an ask never takes the old offset.
 	const filters = JSON.stringify( [
 		searchTerm,
 		sortField,

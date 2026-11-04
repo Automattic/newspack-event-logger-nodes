@@ -34,7 +34,7 @@ use Newspack_Nodes\Capabilities;
  * installed — then the `TOP` dearest categories by self time, each named by
  * its label made a token with the label itself as `desc`, then
  * `rid;desc="<request id>"`. Every `desc` is printable ASCII, escaped as a
- * quoted-string and cut at `DESC_MAX`, so no label can split the header.
+ * quoted-string and cut at `DESC_MAX`, so a label can never split the header.
  */
 class Server_Timing {
 

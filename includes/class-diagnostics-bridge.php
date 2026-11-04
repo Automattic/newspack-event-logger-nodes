@@ -48,7 +48,7 @@ class Diagnostics_Bridge {
 	/**
 	 * A wrapper that runs each substrate span — through `$inner` when one was
 	 * there — as a span on the active request, its `(complete)` `m` the
-	 * detail `$describe` reads off the result, and bare when no logger has
+	 * detail `$describe` reads off the result, and bare before any logger has
 	 * started, describing nothing.
 	 *
 	 * @param \Closure|null $inner The wrapper this one encloses; null runs the work.
@@ -66,7 +66,7 @@ class Diagnostics_Bridge {
 
 	/**
 	 * A wrapper that runs each verb — through `$inner` when one was there —
-	 * inside its own span on the active request, and bare when no logger has
+	 * inside its own span on the active request, and bare before any logger has
 	 * started, before anything names the span. The architecture guide states
 	 * the span.
 	 *
@@ -98,7 +98,7 @@ class Diagnostics_Bridge {
 
 	/**
 	 * Log one substrate stderr line to the active request under the keyword
-	 * the seam names; drop it when no logger has started.
+	 * the seam names; drop it before any logger has started.
 	 *
 	 * Two substrate guards make the bare one-liner safe. The seam wraps every
 	 * listener in its own try/catch, so a throw here cannot break the

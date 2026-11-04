@@ -337,7 +337,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * disabled as a custom event when the rule logs it as one, else as a
 	 * hook. Only a span the rule binds by name is one auto-tune acts on, so
 	 * any other is neither summed nor judged (`Flame_Tree::RULE_BOUND_KINDS`).
-	 * A transport is promoted but never disabled: no hook list holds it.
+	 * A transport is promoted but never disabled: a hook list never holds it.
 	 *
 	 * @param Rule   $rule     The request's governing log rule.
 	 * @param string $category The category as logged.

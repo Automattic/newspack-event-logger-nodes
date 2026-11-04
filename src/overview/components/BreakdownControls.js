@@ -138,10 +138,10 @@ function FilterChips( { chips, onChange, options } ) {
  *
  * What differs between the Overview card and the URL modal arrives as a prop —
  * the Server select on one side, the in-flight flag and the refusal on the
- * other, and on both the dimension list that still splits inside that scope
- * and the fields a chip may name — so neither scope carries a second copy of
- * the panel to hang its own extra on. The Metric list is not a prop: every
- * metric reduces the same per-bucket sums, so no caller has one to withhold.
+ * other, and on both the dimension list that still splits inside that scope and
+ * the fields a chip may name — so neither scope carries a second copy of the
+ * panel to hang its own extra on. The Metric list is not a prop: every metric
+ * reduces the same per-bucket sums, so a caller never has one to withhold.
  *
  * Both callers mount it unconditionally, because the selects are the only way
  * out of a dimension with no rows, a read still in flight or a refused reply.

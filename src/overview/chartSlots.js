@@ -14,7 +14,7 @@
  * A series is a `query` answer grouped by `bucket` and the dimensions it
  * breaks down by, one positional row per bucket and tuple. `decodeRows()` is
  * the one reader of that shape: it checks it once and hands every row back
- * under its measures' names, so no chart indexes a row by number.
+ * under its measures' names, so a chart never indexes a row by number.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -326,7 +326,7 @@ const MINUTES_PER_HOUR = 60;
 /**
  * The span a reply's slots cover, as a caption names the window: whole hours
  * as hours, anything under two hours as minutes, the rest as hours and
- * minutes, so no span reads as 0 hours or rounds to an hour it is not.
+ * minutes, so a span never reads as 0 hours or rounds to an hour it is not.
  *
  * @param {Array} slots The reply's slots, or the axis built from them.
  * @return {string} `2 hours`, `90 minutes` or `3 hours 5 minutes`.
@@ -459,7 +459,8 @@ export const useSelectedSlots = ( axis, selectedBuckets ) =>
 /**
  * How a field's value reads in a series name where the answer's own spelling
  * would not, and how a typed one reads back: a status class as `5xx`, and
- * the class of a request that answered no status as `Unknown` in any case.
+ * the class of a request that never returned a status as `Unknown` in any
+ * case.
  *
  * @type {Object<string,{name: (value: *) => string, read: (typed: string) => string}>}
  */

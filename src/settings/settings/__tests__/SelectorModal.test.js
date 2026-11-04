@@ -74,7 +74,7 @@ describe( 'SelectorModal', () => {
 		expect( document.body.textContent ).toContain( 'Choose Instruments' );
 	} );
 
-	it( 'leaves no trailing space when no skin class is passed', () => {
+	it( 'leaves no trailing space without a skin class', () => {
 		mount( {} );
 		expect(
 			document.querySelector( '.event-logger-instrument-modal' ).className

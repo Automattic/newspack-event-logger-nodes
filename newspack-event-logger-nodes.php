@@ -17,8 +17,8 @@
  * load time.
  *
  * WordPress loads plugins alphabetically, so this plugin loads BEFORE
- * `newspack-nodes` and no substrate class exists while this file runs. That
- * splits registration three ways:
+ * `newspack-nodes` and the substrate's classes do not exist while this file
+ * runs. That splits registration three ways:
  *
  * 1. Callbacks the substrate PULLS — `newspack_nodes/declare_config_keys` —
  *    hook with a literal action name, because the class holding the constant

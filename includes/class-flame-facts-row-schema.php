@@ -2,14 +2,14 @@
 /**
  * Flame Facts Row Schema
  *
- * The row tables the stats builder writes and every performance reader
- * queries: one `requests` row per completed request, its per-category
- * `timings` per URL, per page and per site, and its `requests_hourly`
- * rollup. Every string a row repeats, its URL, page, server, agent, JA4,
- * From, category and entry, is the id of a row in `urls`, `pages` or a
- * lookup table, each released once no row names it. A topology declares them as `make_node Row_Table <name>
- * Flame_Facts`, and a reader finds that name through
- * `Bootstrap::row_table()`.
+ * The row tables the stats builder writes and every performance reader queries:
+ * one `requests` row per completed request, its per-category `timings` per URL,
+ * per page and per site, and its `requests_hourly` rollup. Every string a row
+ * repeats, its URL, page, server, agent, JA4, From, category and entry, is the
+ * id of a row in `urls`, `pages` or a lookup table, each released once the rows
+ * no longer name it. A topology declares them as
+ * `make_node Row_Table <name> Flame_Facts`, and a reader finds that name
+ * through `Bootstrap::row_table()`.
  *
  * `category_window` holds each server's sums per category and entry over
  * the last `Bucket::window()`, `urls_window` each URL's request sums and
@@ -85,7 +85,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 
 	/**
 	 * Where a column sits in its table's rows: the index an op's `ids` map
-	 * fills, read off the declaration so no caller counts columns.
+	 * fills, read off the declaration so a caller never counts columns.
 	 *
 	 * @param string $table  A declared table.
 	 * @param string $column One of its columns.

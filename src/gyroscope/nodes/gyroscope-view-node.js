@@ -195,7 +195,7 @@ export class GyroscopeViewNode extends ReactBridge( Node ) {
 	 * `useGyroscopeGraph` sends a `clear` each time the graph rides the page's
 	 * stream — at mount, after a rebuild and on refocus — and none when the SseIn
 	 * alone reopens. The producer re-emits every live request, so a row held
-	 * from before the graph rode would linger where no producer will ever
+	 * from before the graph rode would linger where a producer will never
 	 * complete it.
 	 */
 	_clear() {

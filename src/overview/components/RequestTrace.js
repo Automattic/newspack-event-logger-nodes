@@ -93,7 +93,7 @@ export function FlameCutNote() {
 	return (
 		<p className="newspack-nodes-banner is-info">
 			{ __(
-				'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.',
+				'The flame lookup ran out of time, so the trace is not shown here; one may still have been recorded.',
 				'newspack-event-logger-nodes'
 			) }
 		</p>

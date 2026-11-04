@@ -78,7 +78,7 @@ describe( 'hasPair', () => {
 		expect( hasPair( { pairId: 37 } ) ).toBe( true );
 	} );
 
-	it( 'is false when the entry belongs to no pair', () => {
+	it( 'is false when the entry does not belong to a pair', () => {
 		expect( hasPair( { pairId: null } ) ).toBe( false );
 		expect( hasPair( {} ) ).toBe( false );
 	} );
@@ -346,7 +346,7 @@ describe( 'a folded span row', () => {
 		expect( complete.ts ).toBe( 0 );
 	} );
 
-	it( 'repeats no number or time a kept row already shows', () => {
+	it( 'never repeats a number or time a kept row already shows', () => {
 		// The fold replays the kept head and folds the kept tail as it comes,
 		// so a node's first start or last end can be a row still on screen.
 		const flame = {
@@ -798,7 +798,7 @@ describe( 'computeIndentedEntries', () => {
 		expect( visible[ 1 ].childCount ).toBe( 3 );
 	} );
 
-	it( 'keeps the request frame across a break no `(complete)` closes', () => {
+	it( 'keeps the request frame across a break that a `(complete)` never closes', () => {
 		// `process (aborted)` is a terminal too and matches neither regex, so a
 		// rule keeping only spans the record CLOSES drops the request's own
 		// frame and every row after the marker escapes it. `loop` is severed,
@@ -892,7 +892,7 @@ describe( 'computeIndentedEntries', () => {
 		// never closed, so in the raw entry stream that row reads as
 		// `process/gyrobase/query hook` — and `keptPairCounts` keys by PATH, so
 		// it matched nothing and the fold drew a synthetic "1 merged" copy of a
-		// row already on screen, inside a Perl subprocess no PHP hook can enter.
+		// row already on screen, in a Perl subprocess a PHP hook cannot enter.
 		const flame = {
 			name: 'request',
 			k: 'request',
@@ -1751,7 +1751,7 @@ describe( 'a merged span beside the one the head left open', () => {
 	it( 'never reports a negative or phantom merge count', () => {
 		// `kept` counts complete pairs by path, and labelled siblings share one,
 		// so it is spent rather than re-read: otherwise the second says
-		// "0 merged" for a span nothing merged and the third goes negative.
+		// "0 merged" for a span never merged and the third goes negative.
 		// Unreachable before these siblings were emitted at all, so this pins
 		// the rule rather than proving a fix.
 		const rows = computeIndentedEntries(

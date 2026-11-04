@@ -4,7 +4,7 @@ import { renderComponent } from '../../../test-helpers/renderHook';
 import { slotsEndingAt } from '../../../test-helpers/chartWire';
 
 describe( 'headlineStats', () => {
-	it( 'shows a mean nobody measured as a dash, beside the measured ones', () => {
+	it( 'shows an unmeasured mean as a dash, beside the measured ones', () => {
 		const shown = headlineStats(
 			{ requests: 41, avg_ms: null, requests_per_second: 0.25 },
 			[ 'requests', 'avg_ms', 'requests_per_second' ]
@@ -42,7 +42,7 @@ describe( 'headlineStats', () => {
 		] );
 	} );
 
-	it( 'shows a percentile nobody measured as a dash, and a zero error rate as 0.00%', () => {
+	it( 'shows an unmeasured percentile as a dash, and a zero error rate as 0.00%', () => {
 		const shown = headlineStats( { p99_ms: null, error_rate: 0 }, [
 			'p99_ms',
 			'error_rate',
@@ -97,7 +97,7 @@ describe( 'HeadlineStats', () => {
 		unmount();
 	} );
 
-	it( 'shows a dash for every stat while no totals stand', () => {
+	it( 'shows a dash for every stat while there are no totals', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( HeadlineStats, {
 				totals: null,

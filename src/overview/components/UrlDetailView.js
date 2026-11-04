@@ -206,8 +206,8 @@ const RequestRow = memo(
 	 * than about the URL the modal is open on. Its request-id cell carries a
 	 * bar background whose width is the row's value as a fraction of `maxBar`,
 	 * and its status cell reads `error_status` through `errorStatus()`, falling
-	 * back to the HTTP status code for a request that ended nominally. A
-	 * duration nobody measured shows as a dash and bars nothing.
+	 * back to the HTTP status code for a request that ended nominally. An
+	 * unmeasured duration shows as a dash and draws no bar.
 	 *
 	 * @param {Object}                props          Component props.
 	 * @param {Object}                props.req      Request row: rid, timestamp, method (`Other` for an undeclared one), status_code, error_status, duration_ms, peak_mb.

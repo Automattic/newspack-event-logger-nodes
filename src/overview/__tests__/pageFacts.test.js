@@ -76,7 +76,7 @@ test( 'a selected URL names itself and what it is', () => {
 	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
-test( 'a selected URL nothing timed reached carries max_ms as unmeasured, not 0', () => {
+test( 'a selected URL without a timed request carries max_ms as unmeasured, not 0', () => {
 	const facts = pageFacts( {
 		selectedSubject: { field: 'url', hash: 'moa', url: '/moa' },
 		urlDetail: {
@@ -127,7 +127,7 @@ test( 'a URL names the chips its header and list were narrowed by, beside its st
 	expect( facts ).not.toHaveProperty( 'error_summary' );
 } );
 
-test( 'a URL no chip narrows names an empty filter', () => {
+test( 'a URL without a narrowing chip names an empty filter', () => {
 	const facts = pageFacts( {
 		selectedSubject: { field: 'url', hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 4210 } },
@@ -161,7 +161,7 @@ test( 'a URL listing its whole window names no bucket', () => {
 	expect( facts.bucket ).toBe( '' );
 } );
 
-test( 'a URL no timed request reached carries its mean as unmeasured', () => {
+test( 'a URL without a timed request carries its mean as unmeasured', () => {
 	const facts = pageFacts( {
 		selectedSubject: { field: 'url', hash: 'ccc', url: '/ruru-6603' },
 		urlDetail: { stats: { count: 6, avg_ms: null, max_ms: 0 } },
@@ -171,7 +171,7 @@ test( 'a URL no timed request reached carries its mean as unmeasured', () => {
 	expect( facts.stats.avg_ms ).toBeNull();
 } );
 
-test( 'a slowest row no timed request reached carries its mean as unmeasured', () => {
+test( 'a slowest row without a timed request carries its mean as unmeasured', () => {
 	const facts = pageFacts( {
 		urlTotals: { urls: 2, requests: 40, avg_ms: null },
 		urlSlowest: [
@@ -210,7 +210,7 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 	expect( facts.caveat ).toBe( 'not everything is measured' );
 } );
 
-test( 'a request no detector ran over claims no findings', () => {
+test( 'a request without a detector run claims no findings', () => {
 	// Absent and empty differ: empty says the detector looked.
 	const facts = pageFacts( {
 		selectedRequest: 'rid-7',
@@ -365,7 +365,7 @@ test( 'before the first reply the filters read as absent, not as defaults', () =
 	// ADR-15: the `urls` verb owns every URL-set fact, and the filters are
 	// one — it echoes the set it applied. A client-side default table is a
 	// second copy of that contract, and publishing it before the first reply
-	// states a filter state nothing has confirmed: the plausible-default twin
+	// states an unconfirmed filter state: the plausible-default twin
 	// of the plausible-zero this block already stopped emitting for totals.
 	expect( pageFacts( {} ).filters ).toBeNull();
 } );

@@ -98,7 +98,7 @@ class UrlPartsTest extends TestCase {
 	/**
 	 * The key a URL row is filed by: one row per set of keys as PHP reads
 	 * them into `$_GET`, whatever their values, order or spelling, each written encoded
-	 * so no key can spell a separator. A routing key keeps its value, its
+	 * so a key can never spell a separator. A routing key keeps its value, its
 	 * numeric segments masked; a tracking key is dropped.
 	 *
 	 * @return array<string,array{string,string}>

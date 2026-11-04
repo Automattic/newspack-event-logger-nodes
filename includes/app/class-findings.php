@@ -201,8 +201,8 @@ class Findings {
 			'field'     => 'significant_events',
 		],
 		'custom'           => [
-			'detail' => 'The application logs this span itself, so no rule edit reaches inside it.',
-			'why'    => '%s is a custom event the application logs itself, not a WordPress hook, so no rule edit reaches inside it.',
+			'detail' => 'The application logs this span itself, so a rule edit cannot reach inside it.',
+			'why'    => '%s is a custom event the application logs itself, not a WordPress hook, so a rule edit cannot reach inside it.',
 		],
 		'transport'        => [
 			'detail'    => 'The logger times this round trip itself: its label names the calling frame, and its entries carry the statement or the URL. The listeners on the filter it runs through are not logged.',
@@ -211,7 +211,7 @@ class Findings {
 			'field'     => 'significant_events',
 		],
 		'plugin'           => [
-			'detail' => 'This is one plugin file\'s load, timed by the profiler before any hook can run, so no rule edit reaches inside it.',
+			'detail' => 'This is one plugin file\'s load, timed by the profiler before any hook can run, so a rule edit cannot reach inside it.',
 			'why'    => '%s is a plugin file\'s load: the cost is that plugin\'s bootstrap, and nothing a rule can switch on runs inside it.',
 		],
 		'command'          => [
@@ -219,11 +219,11 @@ class Findings {
 			'why'    => '%s is a command verb, timed whatever the rule says; the time is inside that verb, so read its children — no rule edit reaches the handler itself.',
 		],
 		'qm'               => [
-			'detail' => 'This is a Query Monitor timer the code starts and stops itself, logged on every logged request whatever the rule says, so no rule edit reaches inside it.',
+			'detail' => 'This is a Query Monitor timer the code starts and stops itself, logged on every logged request whatever the rule says, so a rule edit cannot reach inside it.',
 			'why'    => '%s is a Query Monitor timer: the code calling `qm/start` and `qm/stop` decides what it covers, and nothing a rule can switch on runs inside it.',
 		],
 		'upkeep'           => [
-			'detail' => 'This is the event logger\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
+			'detail' => 'This is the event logger\'s own work, told whatever the rule says, so a rule edit cannot reach inside it.',
 			'why'    => '%s is the event logger\'s own work, timed whatever the rule says: its `(complete)` line says what came of it, and the spans inside it, where it has any, say where its time went. Look there — nothing a rule can switch on runs inside it.',
 		],
 		'listener'         => [
@@ -275,7 +275,7 @@ class Findings {
 			)
 		);
 		if ( $missing ) {
-			// One record, one rule id; no edit here reaches it, so no proposal.
+			// One record, one rule id, out of reach of edits here: no proposal.
 			$findings = \array_map(
 				static function ( array $finding ) use ( $stamped ): array {
 					unset( $finding['proposal'] );
@@ -371,7 +371,8 @@ class Findings {
 	 * @param array<string,mixed>|null $cold     The cold-start finding, when there is one.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
 	 * @param bool                     $worker   Whether the record belongs to a worker.
-	 * @return array<string,mixed>|null The finding, or null when no gap reaches `GAP_MS`.
+	 * @return array<string,mixed>|null The finding, or null when every gap is
+	 *                                  under `GAP_MS`.
 	 */
 	private static function entry_gap( array $entries, ?Rule $rule, ?array $cold, ?array $dominant, bool $worker ): ?array {
 		$rule_id = $rule?->id;
@@ -397,7 +398,7 @@ class Findings {
 						'to_i'   => $at,
 						'at_ms'  => ( $from - $origin ) * 1000.0,
 					];
-					// The engine runs in a child, whose CPU no sample counts.
+					// The engine runs in a child; samples never count its CPU.
 					if ( ! \in_array( Request_Builder_Node::NESTED_PRODUCER, \array_column( $open, 0 ), true ) ) {
 						$cpu      = false === $cpu ? Log_Manager::cpu_between_samples( $entries ) : $cpu;
 						$window  += self::on_cpu( $cpu, $from, $to, $gap );
@@ -440,7 +441,7 @@ class Findings {
 			'metric'   => $worst,
 			'rule_id'  => $rule_id,
 			'proposal' => match ( true ) {
-				$exit                                => self::proposal( 'none', $rule_id, "The window is the nested engine's exit, which no rule edit reaches." ),
+				$exit                                => self::proposal( 'none', $rule_id, "The window is the nested engine's exit, which a rule edit cannot reach." ),
 				self::proposes( $cold )              => self::proposal( 'none', $rule_id, 'The lifecycle bracket proposed for this rule splits the request first.' ),
 				[] !== ( $lifecycle['omitted'] ?? [] ) => self::proposal(
 					'add_hooks',
@@ -453,7 +454,7 @@ class Findings {
 					'Trim them back once the window is explained; every enabled hook costs overhead on every request this rule matches.',
 					[ 'pattern' => $rule?->pattern, 'hooks' => $lifecycle['omitted'] ]
 				),
-				null === $edit                       => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so no hook the rule could add is known to run in the window.' ),
+				null === $edit                       => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so the rule could add no hook known to run in the window.' ),
 				isset( $edit['value'] ) && self::proposes( $dominant, Core::as_string( $edit['value'] ) ) => self::proposal( 'none', $rule_id, "The dominant span's finding already proposes the edit that shows inside {$inside}." ),
 				default                              => $edit,
 			},
@@ -552,7 +553,7 @@ class Findings {
 	/**
 	 * Where in `LIFECYCLE_BRACKET` a hook sits, or null for any other.
 	 *
-	 * @param string|null $hook A hook name, or null for no hook.
+	 * @param string|null $hook A hook name, or null when there is no hook.
 	 * @return int|null
 	 */
 	private static function bracket_at( ?string $hook ): ?int {
@@ -652,7 +653,7 @@ class Findings {
 	 * other frames, by frame value, children included, so a hook's frame
 	 * holds its listeners and whatever else ran inside it. Calls unlike each
 	 * other are a slow call beside quick ones, for the dominant span to
-	 * name, and no repetition; a name the flame holds no frame of is judged
+	 * name, and no repetition; a name with no frame in the flame is judged
 	 * by its count.
 	 * A name the dominant span already names, down its chain, is for
 	 * that finding to tell; one it explains, per `defers()`, repeats here too,
@@ -665,7 +666,8 @@ class Findings {
 	 * @param float                    $duration Request duration in milliseconds.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
 	 * @param list<Flame_Entry>        $nodes    Flattened flame nodes.
-	 * @return array<string,mixed>|null The finding, or null when no span repeats enough.
+	 * @return array<string,mixed>|null The finding, or null when the spans do
+	 *                                  not repeat enough.
 	 */
 	private static function repetition( array $record, ?Rule $rule, float $duration, ?array $dominant, array $nodes ): ?array {
 		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
@@ -812,7 +814,7 @@ class Findings {
 	 * A profile is keyed by state and tallies each `l` label in `entries`.
 	 * For a kind `Flame_Tree::RULE_BOUND_KINDS` names, each label is its own
 	 * `<state>: <label>`, judged apart from the rest: 452 queries from 22
-	 * callers are 22 questions, not one. The calls no label holds —
+	 * callers are 22 questions, not one. The calls outside every label —
 	 * unlabelled, or past the builder's label cap — stay under the bare state
 	 * at the profile's totals less the labels', so none drop out. For any
 	 * other kind the state is what repeated. The logger's own work is judged
@@ -855,9 +857,9 @@ class Findings {
 	}
 
 	/**
-	 * Plugin files' loads, summed, when together they hold a large share of
-	 * the request. The profiler times each load before any hook can run, so no
-	 * rule edit reaches inside one. A single load holding `DOMINANT_SHARE` is
+	 * Plugin files' loads, summed, when together they hold a large share of the
+	 * request. The profiler times each load before any hook can run, so a rule
+	 * edit never reaches inside one. A single load holding `DOMINANT_SHARE` is
 	 * for `dominant_span()` to report, so it is left out here, and the loads
 	 * beside it are a finding only when they reach `PLUGIN_LOAD_SHARE` alone.
 	 *
@@ -920,7 +922,8 @@ class Findings {
 	 * ruleset this hub never pushed, or the rule's pattern changed since —
 	 * the id is the pattern's hash, so an edit re-mints it — or the rule was
 	 * deleted; nothing on the record tells the three apart. Like the fatal it
-	 * carries no proposal: no edit here reaches the rule that governed it.
+	 * carries no proposal: an edit here never reaches the rule that governed
+	 * it.
 	 *
 	 * @param string $stamped The rule id the record carries.
 	 * @return array<string,mixed>
@@ -999,7 +1002,8 @@ class Findings {
 	 * @param float             $duration   Request duration in milliseconds.
 	 * @param bool              $rule_known Whether `$rule` is the record's resolution; false when the record's stamp did not resolve, and what the rule logged inside the span is not known here.
 	 * @param list<mixed>       $entries    The record's entries, which time the nested engine's exits.
-	 * @return array<string,mixed>|null The finding, or null when no span holds `DOMINANT_SHARE`.
+	 * @return array<string,mixed>|null The finding, or null when every span
+	 *                                  holds less than `DOMINANT_SHARE`.
 	 */
 	private static function dominant_span( array $nodes, ?Rule $rule, float $duration, bool $rule_known, array $entries ): ?array {
 		$best_index = null;
@@ -1081,7 +1085,7 @@ class Findings {
 			'rule_id'  => $rule?->id,
 			'proposal' => match ( true ) {
 				[] !== $explained => self::proposal( 'none', $rule?->id, "Its interior is already in this record, and the calls named above hold {$held}% of {$frame['name']}; read those before changing the rule." ),
-				self::own_time_is_engine( $frame['self_ms'], self::node_path( $nodes, $stop ), $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s exit, which no rule edit reaches; marking it significant re-times the one listener that spawned the engine.' ),
+				self::own_time_is_engine( $frame['self_ms'], self::node_path( $nodes, $stop ), $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s exit, which a rule edit cannot reach; marking it significant re-times the one listener that spawned the engine.' ),
 				default           => self::visibility_proposal(
 					$frame['name'],
 					$rule,
@@ -1465,7 +1469,8 @@ class Findings {
 	 * A record with no rule gets none. `Log_Manager` writes a record only once
 	 * a log rule matched, and stamps its id, so an unstamped record came from a
 	 * producer that consults no rule — gyrobase's Perl engine. The record
-	 * proves the request was logged, and no rule edit reaches its producer.
+	 * proves the request was logged, and a rule edit never reaches its
+	 * producer.
 	 *
 	 * @param array<array-key,mixed> $record   The request record.
 	 * @param Rule                   $rule     The governing rule.
@@ -1528,7 +1533,7 @@ class Findings {
 			'title'    => $known
 				? \sprintf( 'The request stopped logging %s in, after "%s"', self::ms( $last_ms ), $last )
 				: 'The request stopped logging, and where it stopped is unknown',
-			'detail'   => ( $known ? ( '' === $open ? '' : "Still open: {$open}. " ) : 'Nothing past the request\'s opening rows was logged, so the silence after them places no stop. ' ) . $cause,
+			'detail'   => ( $known ? ( '' === $open ? '' : "Still open: {$open}. " ) : 'Nothing past the request\'s opening rows was logged, so the silence after them does not show where it stopped. ' ) . $cause,
 			'measured' => 'entry timestamps',
 			'metric'   => ( [] === $stop ? [] : [ 'last_entry_ms' => $last_ms ] )
 				+ ( $known ? [ 'last_entry' => $last ] : [] )
@@ -1715,7 +1720,7 @@ class Findings {
 	 * `self_ms` is what the span spent in its OWN body: its value less what its
 	 * children hold. That is the number that separates a span doing work from
 	 * one merely containing it, and summed by name it reproduces `profiles`
-	 * exactly wherever no callback state exists: `profiles` does not subtract a
+	 * exactly wherever callback state is absent: `profiles` does not subtract a
 	 * callback (` @N`) from its parent hook, and this subtracts every child.
 	 *
 	 * It stays non-negative on the raise every producer applies — a parent
@@ -1893,7 +1898,7 @@ class Findings {
 	 * Reading one key alone makes every ordinary request look wholly unmeasured.
 	 * A record carrying neither is folded from its entries, so its spans still
 	 * reach the findings and the briefs; a `flame_data` already resolved, even
-	 * to no tree, is not folded again.
+	 * one holding no tree, is not folded again.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return array<array-key,mixed> The flame tree root, or [] when the record holds no span.
@@ -2011,8 +2016,8 @@ class Findings {
 	}
 
 	/**
-	 * A rule edit, its direction read off `DIRECTION`. Action `none` says why
-	 * no edit is the step.
+	 * A rule edit, its direction read off `DIRECTION`. Action `none` proposes
+	 * no edit and says why.
 	 *
 	 * @param string              $action  What the edit does.
 	 * @param string|null         $rule_id The rule it lands on, or null when none governs.
@@ -2052,10 +2057,10 @@ class Findings {
 	 * Each owner's time on one request, dearest first, as the request builder
 	 * measured it on the span stack (`Request_Builder_Node::owners_of()`),
 	 * never off a flame value (decision 12). `share` divides by the duration,
-	 * and `Owner::UNMEASURED`, the time no span covers, is no owner and is
-	 * left out, so the shares sum to the part measured. None on a record
-	 * carrying no owners, or whose duration nobody measured (decision 24), as
-	 * `for_request()` gates its findings.
+	 * and `Owner::UNMEASURED`, the time outside every span, is not an owner
+	 * and is left out, so the shares sum to the part measured. None on a record
+	 * carrying no owners, or whose duration was never measured (decision 24),
+	 * as `for_request()` gates its findings.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return list<array{owner:string,ms:float,share:float,calls:int}>

@@ -61,8 +61,8 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 
 	/**
 	 * Queue the job, where this copy owns it. A leg that did not go, the feed
-	 * `Job_Intake` refused or a firehose no log rule governs, is said once a
-	 * window, each leg's miss on its own.
+	 * `Job_Intake` refused or a firehose that is not governed by any log rule,
+	 * is said once a window, each leg's miss on its own.
 	 *
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */

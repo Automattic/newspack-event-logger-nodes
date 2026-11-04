@@ -595,7 +595,7 @@ final class Rule_Set {
 	 * paths, so its `Url_Parts::rule_path()` is what `Rule_Matcher` matches.
 	 *
 	 * @param string $url A logged URL, which carries its host.
-	 * @return Rule|null Null when no pattern matches.
+	 * @return Rule|null Null when the URL does not match a pattern.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public function for_url( string $url ): ?Rule {
@@ -622,7 +622,8 @@ final class Rule_Set {
 	 * read-back after `save()` — so matching a URL stays `Rule_Matcher`'s job.
 	 *
 	 * @param string $id Rule id.
-	 * @return Rule|null The rule, or null when no rule carries that id.
+	 * @return Rule|null The rule, or null when the set holds no rule with that
+	 *                   id.
 	 */
 	public function rule_by_id( string $id ): ?Rule {
 		foreach ( $this->rules as $rule ) {

@@ -6,7 +6,7 @@
  * stylesheet imports below are what make the build kit emit
  * `build/settings/index.css`, the sheet `enqueue_react_page()` pairs with the
  * script. `settings.scss` lays out the form table `class-admin.php` prints and
- * `rules-editor.scss` styles `RulesAdmin`; no component imports either, so
+ * `rules-editor.scss` styles `RulesAdmin`; a component never imports either, so
  * this entry is where both reach the build. `HookSelectorModal` and
  * `CustomEventSelectorModal` import their own pickers' sheets as well.
  *

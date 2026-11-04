@@ -79,10 +79,10 @@ final class Overview_Prefetch {
 	 * started record each answer is a `prefetch answer` span labelled with
 	 * its question's name.
 	 *
-	 * The job runs as one unit no cooperative stop splits: each span line is
-	 * a Partition write, and so a point a stop could rise, and a stop inside
-	 * the build would discard it. A stop that falls due raises at the first
-	 * pump after the publish.
+	 * The job runs as one unit that a cooperative stop cannot split: each span
+	 * line is a Partition write, and so a point a stop could rise, and a stop
+	 * inside the build would discard it. A stop that falls due raises at the
+	 * first pump after the publish.
 	 *
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
@@ -179,7 +179,7 @@ final class Overview_Prefetch {
 	 * `$args` with the one server they name put back as `SERVER`: an
 	 * `overview`'s `server`, or a `query`'s one `server=` filter. Args naming
 	 * no server, a blank one, two, or one only by negation come back
-	 * unchanged, so no template's key matches them.
+	 * unchanged, so they do not match a template's key.
 	 *
 	 * @param array<array-key,mixed> $args Bound arguments.
 	 * @return array<array-key,mixed>
@@ -269,9 +269,9 @@ final class Overview_Prefetch {
 
 	/**
 	 * A job's `queued_at` and `interval`, which the tick writes as integers,
-	 * or why the tick could not have queued it: its `queued_at` no integer
-	 * above 0, or its interval no integer `interval_refusal()` passes, naming
-	 * the value it was given.
+	 * or why the tick could not have queued it: its `queued_at` not an integer
+	 * above 0, or its interval not an integer `interval_refusal()` passes,
+	 * naming the value it was given.
 	 *
 	 * @param array<array-key,mixed> $parameters The job's parameters.
 	 * @return array{0:int,1:int}|string

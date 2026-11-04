@@ -14,8 +14,8 @@
 	align-items: baseline;
 }
 
-// One rhythm for every section a view stacks: the gap spaces them, and no
-// section brings a margin of its own.
+// One rhythm for every section a view stacks: the gap spaces them, and a
+// section never brings a margin of its own.
 .event-logger-sections {
 	display: flex;
 	flex-direction: column;

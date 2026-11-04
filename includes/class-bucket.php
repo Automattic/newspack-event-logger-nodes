@@ -91,8 +91,8 @@ final class Bucket {
 	 * `end` opens, `end` not among them, so a run names the key that closes
 	 * it; `spelling()` writes the canonical one, which the dashboard's
 	 * address bar, `--bucket` and the MCP `bucket` argument all carry. ''
-	 * selects nothing. Runs are counted, never walked, so no spelling
-	 * enumerates more than it names.
+	 * selects nothing. Runs are counted, never walked, so a spelling
+	 * never enumerates more than it names.
 	 *
 	 * @param string $spelling A selection's spelling.
 	 * @param int    $now      The clock; a bucket after the one it falls in holds no rows.

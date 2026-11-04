@@ -35,7 +35,7 @@
     <div class="ln"><div class="code"><span class="k">var</span> on_demand_idle = 0</div><div class="why">The worker never idles out, so the fetches keep going.</div></div>
     <div class="ln"><div class="code"><span class="k">var</span> num_partitions = 1</div><div class="why">One instance holds every spoke.</div></div>
     <div class="ln"><div class="code"><span class="k">include</span> hub</div><div class="why">ELN's own composition of <span class="mono">aggregator</span> (firehose and PHP errors in) and <span class="mono">hub-control</span> (commands out) — both legs, below.</div></div>
-    <div class="ln"><div class="code"><span class="k">secure</span></div><div class="why">Freezes the graph: no later command builds or removes a node. A Vault_Group still builds and retracts members on the fleet's Vault RELOAD after this — membership was declared before securing, and reload replays it rather than issuing a fresh <span class="mono">make_node</span>.</div></div>
+    <div class="ln"><div class="code"><span class="k">secure</span></div><div class="why">Freezes the graph: later commands neither build nor remove a node. A Vault_Group still builds and retracts members on the fleet's Vault RELOAD after this — membership was declared before securing, and reload replays it rather than issuing a fresh <span class="mono">make_node</span>.</div></div>
   </div>
 
   <div class="row" style="gap:16px;align-items:flex-start;margin-top:18px">

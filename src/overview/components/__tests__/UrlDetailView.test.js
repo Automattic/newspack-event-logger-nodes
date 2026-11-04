@@ -266,7 +266,7 @@ describe( 'UrlDetailView', () => {
 			},
 		} );
 		expect( cut.container.textContent ).toContain(
-			'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+			'The flame lookup ran out of time, so the trace is not shown here; one may still have been recorded.'
 		);
 		cut.unmount();
 		const whole = mount( {
@@ -1175,7 +1175,7 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'divides the averaged breakdown by no wall clock when no timed request reached the URL', () => {
+	it( 'does not divide the averaged breakdown by a wall clock when the URL has no timed request', () => {
 		const { container, unmount } = mount( {
 			urlDetail: {
 				stats: { avg_ms: null },
@@ -1357,7 +1357,7 @@ describe( 'UrlDetailView breakdown and owners', () => {
 		unmount();
 	} );
 
-	it( 'keeps the total and caption on the breakdown when no owner is listed', () => {
+	it( 'keeps the total and caption on the breakdown when the list names no owner', () => {
 		const { container, unmount } = mount( { urlDetail: urlDetail( [] ) } );
 		expect( container.querySelectorAll( 'tfoot tr' ) ).toHaveLength( 1 );
 		expect( container.textContent ).toContain(

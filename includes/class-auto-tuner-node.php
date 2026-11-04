@@ -192,8 +192,9 @@ class Auto_Tuner_Node extends Node {
 
 	/**
 	 * Load the rule set, mutate the rule identified by `$rule_id`, and save it
-	 * back. Three outcomes write nothing: no rule carries that id, `$mutate`
-	 * returns null (the mutation opting out), or the result is `unchanged()`.
+	 * back. Three outcomes write nothing: the set holds no rule with that id,
+	 * `$mutate` returns null (the mutation opting out), or the result is
+	 * `unchanged()`.
 	 *
 	 * The read-modify-write takes no lock of its own, because
 	 * `Flame_Builder_Node::apply_auto_tune()` holds a five-second memcache lock
@@ -245,7 +246,7 @@ class Auto_Tuner_Node extends Node {
 
 	/**
 	 * Topology-console manifest. `Hidden` keeps this node out of the palette:
-	 * FlameBuilder constructs it, so no topology ever names it in TSL. It takes
+	 * FlameBuilder constructs it, so a topology never names it in TSL. It takes
 	 * no constructor arguments and exposes no verbs.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.

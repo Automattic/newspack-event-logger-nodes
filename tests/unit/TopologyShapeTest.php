@@ -148,7 +148,7 @@ class TopologyShapeTest extends TestCase {
 
 	/**
 	 * A fork that still hands the flame builder its Row_Table fails at load,
-	 * naming the verb no Flame_Builder answers.
+	 * naming the verb that a Flame_Builder never answers.
 	 */
 	public function test_a_fork_naming_the_flame_builders_facts_target_fails_at_load(): void {
 		$tmp = $this->make_temp_dir( 'forked-flame-builder-' );

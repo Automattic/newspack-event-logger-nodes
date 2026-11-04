@@ -73,7 +73,7 @@
     <p>An incoming node's <span class="mono">detail</span> and <span class="mono">t</span> never reach the aggregate, which has merged many requests and holds no single position. No per-node tally is kept.</p>
     <h3 style="margin-top:10px"><span class="n">4</span><span class="mono">finalize_flame_node()</span></h3>
     <div class="lines">value = sum_value / <span class="k">requests the aggregate covers</span></div>
-    <p>The divisor is the aggregate's own request count, never a per-node tally, so a node seen in a minority of requests averages down: the flame shows mean cost per request. The aggregate is rebuilt per answer from the listed requests' stored flames and never stored, so nothing in it ages out.</p>
+    <p>The divisor is the aggregate's own request count, never a per-node tally, so a node seen in a minority of requests averages down: the flame shows mean cost per request. The aggregate is rebuilt per answer from the listed requests' stored flames and never stored, so its contents never age out.</p>
   </div>
 </div>
 

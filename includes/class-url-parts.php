@@ -114,7 +114,7 @@ final class Url_Parts {
 	 * order or spelling, has one key, and `identity()` of it picks the row.
 	 * A key is the one PHP reads into `$_GET`, the last sent
 	 * winning, so `ids[0]` and `ids[1]` are `ids` and `a.b` is `a_b`; it is
-	 * written encoded, so no key can spell a separator. A `KEY_ROUTES` key
+	 * written encoded, so a key can never spell a separator. A `KEY_ROUTES` key
 	 * keeps its value through `route_value()`. Tracking keys are dropped, a
 	 * trimmed line's last parameter, which the trim may have cut, is
 	 * dropped, and a query left with no key leaves the path alone.
@@ -152,8 +152,8 @@ final class Url_Parts {
 	/**
 	 * A routing key's value as `key()` keeps it: decoded, each all-digit
 	 * segment masked, each segment encoded again, so `%2Fwp%2Fv2%2Fposts%2F12`
-	 * and `/wp/v2/posts/7` both read `/wp/v2/posts/?` and no value can add a
-	 * parameter.
+	 * and `/wp/v2/posts/7` both read `/wp/v2/posts/?` and a value can never add
+	 * a parameter.
 	 *
 	 * @param string $value The value as sent.
 	 */
@@ -206,8 +206,8 @@ final class Url_Parts {
 	 * asked for, with no scheme or host. A rule matches the URI a request
 	 * sent, and the stored query is not that: `key()` masked its values, and
 	 * the builder may have appended a worker mark. A grouped key's query opens
-	 * with the path `grouped()` moved there, which no query key or worker mark
-	 * can, so that path is read back. The authority ends at whichever
+	 * with the path `grouped()` moved there, which a query key or worker mark
+	 * never can, so that path is read back. The authority ends at whichever
 	 * delimiter comes first, so a host never swallows a query. JS `rulePath()`
 	 * is its twin.
 	 *
@@ -294,8 +294,8 @@ final class Url_Parts {
 	 * The path a row stores for a URL served by `$server`: what the key does
 	 * not already say. An https URL whose authority is the server, in any
 	 * case, keeps only its path, which a reader joins back as `https://{server}{path}`; any
-	 * other URL, an http one, is kept whole, so no reader shows a scheme it
-	 * was not. Cut to `MAX_PATH_BYTES`, the last of them an ellipsis.
+	 * other URL, an http one, is kept whole, so a reader never shows a
+	 * scheme it was not. Cut to `MAX_PATH_BYTES`, the last of them an ellipsis.
 	 *
 	 * @param string $url    The stored URL.
 	 * @param string $server The server whose key the row is filed under.

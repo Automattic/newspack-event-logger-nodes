@@ -13,7 +13,7 @@
  * inline flame-graph slot. `src/__tests__/appearance-ownership.test.js` pins
  * both halves: one assertion fails if this file stops naming that class,
  * another if any source under `src/` carries an `event-logger-` prefixed copy
- * of it. That second scan is textual, so no file may spell that prefixed
+ * of it. That second scan is textual, so a file may never spell that prefixed
  * name, comments included.
  */
 

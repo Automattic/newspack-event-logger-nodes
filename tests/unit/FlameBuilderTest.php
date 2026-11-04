@@ -1329,9 +1329,9 @@ class FlameBuilderTest extends TestCase {
 
 	/**
 	 * Auto-tune averages a category over at most `AUTO_TUNE_WINDOW`, 1,000
-	 * folds: across 2,500 folds no tick separates, the sums start again
-	 * after the 1,000th and the 2,000th, and only there. Each probe's slow
-	 * call follows a fold of nine fast ones, so a reset one fold early or
+	 * folds: across 2,500 folds that a tick never separates, the sums start
+	 * again after the 1,000th and the 2,000th, and only there. Each probe's
+	 * slow call follows a fold of nine fast ones, so a reset one fold early or
 	 * late averages it under the threshold; a slow call halfway through the
 	 * second window averages under it too.
 	 */

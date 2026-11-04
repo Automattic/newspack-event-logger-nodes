@@ -18,7 +18,7 @@
  * `urls_page` seeking a page's URLs; a `totals` table of one row per view
  * and scope, counting its pages; the stored answers by key; and when it was
  * built and expires. The substrate publishes it whole under `NAME` and
- * opens it `immutable` (ADR-35), so no reader sees a half-built file.
+ * opens it `immutable` (ADR-35), so a reader never sees a half-built file.
  *
  * The verbs name a server by its name, a page and a URL by their hashes,
  * and a listing answers each; the ids stay inside the file.
@@ -172,8 +172,8 @@ final class Url_Snapshot {
 	 * @param int                                          $ttl     Seconds the snapshot serves from the end of its build.
 	 * @param \Closure(self): array<string,array<string,mixed>> $answers The stored answers by key, given the snapshot being built.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Row_Table_Node::build()`,
-	 *                                           or when no active topology
-	 *                                           declares a Flame_Facts table.
+	 *                                           or when the active topologies
+	 *                                           declare no Flame_Facts table.
 	 * @throws \RuntimeException When two do, the build will not publish, or
 	 *                           an answer will not encode.
 	 * @throws \InvalidArgumentException As `$answers`.
@@ -576,7 +576,7 @@ final class Url_Snapshot {
 	 *
 	 * @param array<string,list<scalar>> $filter Fields `SCOPED` maps.
 	 * @return array{0:string, 1:list<scalar>}
-	 * @throws \LogicException On a field `SCOPED` maps no clause for, or one
+	 * @throws \LogicException On a field `SCOPED` has no clause for, or one
 	 *                         naming other than one value, which a filter the
 	 *                         snapshot ignored would leave a listing unfiltered.
 	 */
@@ -584,7 +584,7 @@ final class Url_Snapshot {
 		$clauses = [];
 		$binds   = [];
 		foreach ( $filter as $field => $values ) {
-			$clauses[] = self::SCOPED[ $field ] ?? throw new \LogicException( \esc_html( "the URL snapshot scopes no {$field}" ) );
+			$clauses[] = self::SCOPED[ $field ] ?? throw new \LogicException( \esc_html( "the URL snapshot does not scope {$field}" ) );
 			if ( 1 !== \count( $values ) ) {
 				throw new \LogicException( \esc_html( "the URL snapshot scopes one {$field}, not " . \count( $values ) ) );
 			}

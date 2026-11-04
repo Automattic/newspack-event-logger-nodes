@@ -119,7 +119,7 @@ describe( 'Inflight', () => {
 		expect(
 			container.querySelector( '.newspack-dashboard-title' )
 		).toBeNull();
-		// The legend and toolbar go to the shell header, so no second bar is
+		// The legend and toolbar go to the shell header; a second bar is never
 		// left behind holding them.
 		expect(
 			container.querySelector( '.event-logger-inflight-header' )

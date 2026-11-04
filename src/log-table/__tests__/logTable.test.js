@@ -46,7 +46,7 @@ describe( 'cellRenderer', () => {
 		),
 	} );
 
-	it( 'draws a placeholder for a declared column no case renders', () => {
+	it( 'draws a placeholder for a declared column without a case to render it', () => {
 		const cell = draw(
 			renderCell( 'sentinel_col', { rid: 'rid-8471-zed' } )
 		);

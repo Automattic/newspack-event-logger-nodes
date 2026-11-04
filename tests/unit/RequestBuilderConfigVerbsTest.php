@@ -175,10 +175,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 
 	/**
 	 * A torn-down builder refuses the two Flight verbs rather than reporting
-	 * `ok` for a setting nothing can hold. It is refused one step BEFORE
-	 * `flight()`, at the patron link every verb handler reads, and teardown
-	 * unregisters the `:config` interpreter with it, so no addressed command
-	 * reaches the table at all.
+	 * `ok` for a setting that can no longer be held. It is refused one step
+	 * BEFORE `flight()`, at the patron link every verb handler reads, and
+	 * teardown unregisters the `:config` interpreter with it, so an addressed
+	 * command never reaches the table at all.
 	 */
 	public function test_a_torn_down_builder_refuses_the_inflight_verbs(): void {
 		$rb = new Request_Builder_Node();

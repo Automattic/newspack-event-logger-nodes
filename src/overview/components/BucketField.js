@@ -16,10 +16,10 @@
  * its start crosses midnight when the wrapped run is 12 hours or less, as
  * `23:50-00:05` does; longer, it reads as typed backwards, so `17:30-16:55`
  * is refused and offered the right way round. A forward range of any length,
- * such as `04:00-17:30`, is taken. A time the field cannot read, or one no
- * charted bucket opens at, is refused beneath it and stays in the box. Each
- * token's × removes it, and Backspace in an empty box removes the last;
- * Escape drops the typed text and its refusal. No clear-everything button
+ * such as `04:00-17:30`, is taken. A time the field cannot read, or one that is
+ * not the start of any charted bucket, is refused beneath it and stays in the
+ * box. Each token's × removes it, and Backspace in an empty box removes the
+ * last; Escape drops the typed text and its refusal. No clear-everything button
  * sits beside the search box, where it would read as clearing the search.
  *
  * Built on `TokenInput` rather than `FormTokenField`: that one announces a
@@ -89,7 +89,7 @@ const typedAt = ( { date }, twelve ) => {
  *
  * @param {string}  text   One typed time.
  * @param {boolean} twelve Whether the locale's clock is 12-hour.
- * @return {?number} Its minutes past midnight; null for no time.
+ * @return {?number} Its minutes past midnight, or null for an invalid time.
  */
 const readTime = ( text, twelve ) => {
 	const match = TIME.exec( text );

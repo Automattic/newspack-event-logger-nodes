@@ -596,7 +596,7 @@ describe( 'HookSelectorModal', () => {
 			);
 		} );
 
-		it( 'Select Matches counts no match already chosen', () => {
+		it( 'Select Matches does not count a match already chosen', () => {
 			mountNoisy( [ 'kea_7746_init' ] );
 			search( 'e' );
 			expect( button( 'Select Matches' ).textContent ).toBe(

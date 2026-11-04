@@ -323,7 +323,7 @@ class LogManagerTest extends TestCase {
 		}
 	}
 
-	/** A chunk drawn small keeps its width, so no draw shortens the id. */
+	/** A chunk drawn small keeps its width, so a draw never shortens the id. */
 	public function test_a_request_id_pads_each_chunk_to_eight_digits(): void {
 		$this->assertSame(
 			'00000001' . '00000000' . 'e13wu1of' . '00000010',
@@ -513,7 +513,7 @@ class LogManagerTest extends TestCase {
 	public function test_no_shipped_topology_lifts_the_firehose_pipe_buf_cap(): void {
 		// A void_warranty / allow_large_writes grant on a firehose partition would
 		// let a >PIPE_BUF append tear a peer's atomic write on the multi-writer
-		// firehose. Pin that no shipped topology ever grants it.
+		// firehose. Pin that a shipped topology never grants it.
 		$dir   = \dirname( __DIR__, 2 ) . '/topologies';
 		$files = \glob( $dir . '/*.tsl' ) ?: [];
 		$this->assertNotEmpty( $files, 'the topologies dir resolved to .tsl files' );
@@ -956,8 +956,8 @@ class LogManagerTest extends TestCase {
 	}
 
 	public function test_a_start_line_whose_stop_carries_a_failure_opens_no_span(): void {
-		// A stop carrying a failure says the line never became durable, so no
-		// span opened on the record and the drain has nothing to close.
+		// A stop carrying a failure says the line never became durable, so a
+		// span never opened on the record and the drain has nothing to close.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
@@ -1521,7 +1521,7 @@ class LogManagerTest extends TestCase {
 		$lm = $this->fresh_log_manager();
 		$this->assertFalse( $lm->is_started() );
 		$this->assertTrue( $lm->governing_rule()->is_skip() );
-		$this->assertSame( '', $lm->governing_rule_id(), 'a request no rule logs names no rule' );
+		$this->assertSame( '', $lm->governing_rule_id(), 'a request that is not logged by any rule has no governing rule' );
 	}
 
 	/**
@@ -1708,9 +1708,9 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * A trace is read months later against a core version nobody recorded.
-	 * `process (start)` already names the pid and the host; the WordPress
-	 * version belongs beside them, not in the environment allowlist.
+	 * A trace is read months later against a core version that was never
+	 * recorded. `process (start)` already names the pid and the host; the
+	 * WordPress version belongs beside them, not in the environment allowlist.
 	 */
 	public function test_process_start_frame_names_the_wordpress_version(): void {
 		$this->require_config_or_skip();
@@ -2560,7 +2560,7 @@ class LogManagerTest extends TestCase {
 		// Worst case: several client-controllable values are pathologically long
 		// (a 5KB user agent, a many-hop XFF, a 5KB proxied-request), plus the
 		// URL-valued referer carrying a secret. The per-value cap must keep each
-		// bounded so no single value blows the whole map past MAX_DATA_SIZE.
+		// bounded so one value never blows the whole map past MAX_DATA_SIZE.
 		$_SERVER['HTTP_USER_AGENT']      = \str_repeat( 'A', 5000 );
 		$_SERVER['HTTP_X_FORWARDED_FOR'] = \str_repeat( '1.2.3.4, ', 700 );
 		$_SERVER['A8C_PROXIED_REQUEST']  = '/proxy?secret=NOPE&' . \str_repeat( 'x', 5000 );
@@ -3605,7 +3605,7 @@ class LogManagerTest extends TestCase {
 	/**
 	 * URL with an explicit log rule and a NON-matching request —
 	 * `matches_url_filter` returns false and leaves no governing rule
-	 * behind (no rule matches ⇒ skip).
+	 * behind: a request that does not match any rule is skipped.
 	 */
 	public function test_matches_url_filter_returns_false_when_no_rule_matches(): void {
 		$this->require_config_or_skip();
@@ -4036,7 +4036,7 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * An uncaught driver exception's fatal keeps its class and the cut of
-	 * its message, and no fatal keeps its stack trace, whose frames carry
+	 * its message, and a fatal never keeps its stack trace, whose frames carry
 	 * the arguments a statement ran with.
 	 *
 	 * @param string $message The fatal's message.

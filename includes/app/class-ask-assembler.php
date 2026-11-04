@@ -44,7 +44,7 @@ use Newspack_Nodes\Core;
  * A shaper returns null when the record does not hold what was asked about: a
  * span absent from the tree, an entry position past the record's end, a category off
  * the board. `Performance_CI_Node` turns that null into the message the picker
- * shows, so no shaper here decides how a miss reads.
+ * shows, so a shaper here never decides how a miss reads.
  *
  * @phpstan-type Url_Filters array{search: string, filter: list<string>, include_workers: bool, bucket: string}
  */
@@ -165,9 +165,9 @@ class Ask_Assembler {
 	/**
 	 * One span of a URL's AGGREGATE flame — the tree the URL modal draws, which
 	 * folds every profiled request of that URL into one. Every value on it is
-	 * a per-request MEAN, and no node keeps a call count, so the brief carries
-	 * `scope` saying what the numbers are and no `count` a reader would take
-	 * for one. The root's `count` is the requests the tree folds.
+	 * a per-request MEAN, and its nodes keep no call count, so the brief
+	 * carries `scope` saying what the numbers are and no `count` a reader
+	 * would take for one. The root's `count` is the requests the tree folds.
 	 *
 	 * @param array<array-key,mixed> $flame   The aggregate tree, as `dump_url` carries it.
 	 * @param string                 $name    Span name as it appears in the tree.
@@ -523,7 +523,7 @@ class Ask_Assembler {
 
 	/**
 	 * One URL or one page: its stats and its worst recent requests — plus,
-	 * when nothing governs it, the cold-start finding that says which
+	 * when it falls under no rule, the cold-start finding that says which
 	 * instrumentation to switch on. A page's brief is a URL's of every shape
 	 * of it, named and hashed as its page. A dimensional breakdown is for
 	 * `query` to answer; a brief carries no unbounded series.
@@ -579,7 +579,7 @@ class Ask_Assembler {
 			// A capped list is the window's newest requests, not all of them.
 			'requests_capped'    => $requests_capped,
 			'rule'               => self::rule_shape( $rule ),
-			// A URL no stats row named proposes no rule for it.
+			// A URL without a stats row proposes no rule for it.
 			'findings'           => '' === $url ? [] : Findings::for_url( $stats, $rule ),
 			'fetch'              => self::fetch(
 				'dump_url',
@@ -597,7 +597,7 @@ class Ask_Assembler {
 	/**
 	 * A rule as the brief carries it: what an edit would land on, never a
 	 * roster of names — neither the hooks (hundreds) nor the custom events
-	 * (dozens), which no consumer renders and a model cannot act on.
+	 * (dozens), which a consumer never renders and a model cannot act on.
 	 *
 	 * A record's stamp that did not resolve rides as `{ id, resolved: false }`,
 	 * so a brief never reads as ungoverned when the site named a rule this
@@ -605,7 +605,8 @@ class Ask_Assembler {
 	 *
 	 * @param Rule|null $rule    The rule governing the subject's URL.
 	 * @param string    $stamped The rule id the record carries, or '' for a subject with no record.
-	 * @return array<string,mixed>|null Null when no rule governs it and none was stamped.
+	 * @return array<string,mixed>|null Null when it has no governing rule and
+	 *                                  `$stamped` is ''.
 	 */
 	private static function rule_shape( ?Rule $rule, string $stamped = '' ): ?array {
 		if ( null === $rule ) {
@@ -642,7 +643,7 @@ class Ask_Assembler {
 	/**
 	 * One recent request, named rather than located: enough to ask about it
 	 * (`request:<rid>`) and to see why it is on this list. A null
-	 * duration, one nobody measured, rides as null.
+	 * duration, one that was never measured, rides as null.
 	 *
 	 * @param array<array-key,mixed> $request A `dump_url` request row.
 	 * @return array<string,mixed>

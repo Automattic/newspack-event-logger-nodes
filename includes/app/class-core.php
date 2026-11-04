@@ -3,10 +3,11 @@
  * Application Core — hook, HTTP and query timing for the request log.
  *
  * Binds hook_start / hook_spacer / hook_complete on only the hooks named by the
- * current request's governing rule (Log_Manager::governing_rule()), so a skip rule
- * or no match binds nothing at all. Each hook is bound individually: hook_start at
- * the configured `hook_start_priority` and hook_complete at PHP_INT_MAX - 1, so the
- * span measures the callbacks registered between them. The sacrificial hook_spacer
+ * current request's governing rule (Log_Manager::governing_rule()), so nothing
+ * at all is bound under a skip rule or for a request that does not match any
+ * rule. Each hook is bound individually: hook_start at the configured
+ * `hook_start_priority` and hook_complete at PHP_INT_MAX - 1, so the span
+ * measures the callbacks registered between them. The sacrificial hook_spacer
  * at PHP_INT_MAX - 2 absorbs the priority WP_Hook skips when a callback removes
  * itself mid-run (see hook_spacer).
  *
@@ -15,7 +16,7 @@
  * slow one — "Image_CDN::filter_the_content @10 (complete)" nested inside the
  * hook's own "the_content hook" span.
  *
- * Two more span pairs reach what no hook can. A rule's `log_http` times every
+ * Two more span pairs reach what a hook cannot. A rule's `log_http` times every
  * outbound HTTP request, between `pre_http_request` and `http_api_debug`; see
  * `http_start()` for why a short-circuited request opens nothing. A rule's
  * `log_queries` times every database query, between `query` and
@@ -210,7 +211,7 @@ class Core {
 	 * Query Monitor seam: whether QM is collecting, so `query_end()` leaves
 	 * `$wpdb->queries` for its query panel and every scope binds
 	 * `restore_callbacks()`. Replaces the
-	 * `class_exists( 'QueryMonitor', false )` test, which no test can undo
+	 * `class_exists( 'QueryMonitor', false )` test, which a test cannot undo
 	 * once it declares the class. Tests reassign it.
 	 * Signature: `function (): bool`.
 	 *
@@ -220,7 +221,7 @@ class Core {
 
 	/**
 	 * Query Monitor dispatcher seam: QM's HTML dispatcher, or false. Replaces
-	 * `\QM_Dispatchers::get( 'html' )`, which no test can declare and then
+	 * `\QM_Dispatchers::get( 'html' )`, which a test cannot declare and then
 	 * undo. Tests reassign it with a double carrying `should_dispatch()`.
 	 * Signature: `function (): object|false`.
 	 *
@@ -526,18 +527,19 @@ class Core {
 
 	/**
 	 * Bind hook_start/hook_spacer/hook_complete for the current request's
-	 * governing rule only — the hot-path win: a skip rule or no match binds
-	 * zero hooks instead of every hook the ruleset names.
+	 * governing rule only — the hot-path win: a skip rule, or a request that
+	 * does not match any rule, binds zero hooks instead of every hook the
+	 * ruleset names.
 	 *
 	 * A significant event joins the bind list when it names a hook the rule
 	 * doesn't already cover. One that matches a custom event stays unbound:
 	 * custom events are categories the application logs itself, not do_action
-	 * names, so binding them would register a filter nothing ever fires.
+	 * names, so binding them would register a filter that never fires.
 	 *
-	 * The rule's `log_http` and `log_queries` add the two span pairs no hook
-	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in. Its
-	 * `log_php_errors` installs the error handler and WordPress's deprecation
-	 * listeners, so a rule without it pays for neither.
+	 * The rule's `log_http` and `log_queries` add the two span pairs a hook
+	 * never reaches; the SAVEQUERIES the second needs is why it is an opt-in.
+	 * Its `log_php_errors` installs the error handler and WordPress's
+	 * deprecation listeners, so a rule without it pays for neither.
 	 */
 	private function bind_current_scope(): void {
 		// Query Monitor reads $wp_filter; any scope's wrappers go back for it.
@@ -548,7 +550,7 @@ class Core {
 		if ( null === $rule || ! $rule->is_log() ) {
 			return;
 		}
-		// Ride any logged request: no rule names them.
+		// Ride any logged request: a rule never names them.
 		$listeners = [
 			...$this->query_monitor->listeners(),
 			// A job's template is not the enclosing request's.
@@ -610,7 +612,7 @@ class Core {
 			);
 		}
 
-		// Outbound HTTP blocks below userland, where no hook reaches.
+		// Outbound HTTP blocks below userland, where a hook cannot reach.
 		if ( $rule->log_http ) {
 			\add_filter( self::HTTP_HOOK, [ $this, 'http_start' ], PHP_INT_MAX, 3 );
 			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
@@ -1126,7 +1128,7 @@ class Core {
 	 * `num_rows` for the rest. The firehose replicates to the hub, and MySQL
 	 * quotes the values it failed on: a duplicate key whole, and a syntax
 	 * error's fragment, whose quotes pair wrongly when it opens at a literal,
-	 * so no shaping can be trusted.
+	 * so any shaping of the message would be untrustworthy.
 	 *
 	 * @param object $wpdb  The database object that ran it.
 	 * @param string $query The statement as the database was asked it.
@@ -1193,8 +1195,8 @@ class Core {
 	 * them is what makes the capture aggregate at all.
 	 *
 	 * Every construct is consumed by ONE alternation in ONE pass, because
-	 * literals and comments can each contain the other's delimiter and no chain
-	 * of independent regexes settles that: strip comments first and
+	 * literals and comments can each contain the other's delimiter and a chain
+	 * of independent regexes never settles that: strip comments first and
 	 * `note = 'x -- y'` truncates the statement mid-literal; replace literals
 	 * first and an apostrophe inside a comment opens one that swallows real SQL.
 	 * A comment takes the spaces and tabs before it; the layout the statement
@@ -1347,7 +1349,7 @@ class Core {
 	 *
 	 * Asks for a started logger like every callback: a binding that outlived
 	 * its request must not construct one (decision 20), and complete() has
-	 * nothing to close when no span under this label is open.
+	 * nothing to close when every span under this label is closed.
 	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed

@@ -484,7 +484,10 @@ final class RuleSetTest extends TestCase {
 
 	// ── for_url: the rule a logged URL matches ─────────────────────────────
 
-	/** Two rules whose patterns no default carries: a path prefix and its query-bearing child. */
+	/**
+	 * Two rules whose patterns differ from every default's: a path prefix and
+	 * its query-bearing child.
+	 */
 	private static function tui_rules(): Rule_Set {
 		return new Rule_Set( [
 			new Rule( Rule_Set::id_for( '/tui-6620?moa' ), '/tui-6620?moa', Rule::ACTION_LOG ),
@@ -494,7 +497,8 @@ final class RuleSetTest extends TestCase {
 
 	/**
 	 * A logged URL is absolute, and its rule is the one its path matches: its
-	 * stored query is masked keys and a worker mark, which no request sent.
+	 * stored query is masked keys and a worker mark, which a request never
+	 * sent.
 	 */
 	public function test_for_url_matches_a_logged_urls_path(): void {
 		$set = self::tui_rules();

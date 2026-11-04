@@ -48,7 +48,7 @@
     </div>
     <p>Each rung cuts <span class="mono">m</span> to that many bytes and encodes the whole entry again, because JSON escaping expands bytes and a byte-count subtraction can still land over the cap. The first encoding at or under 3,840 ships; 62 rungs run from 3,840 to 1.</p></div></div>
   <div class="step"><div class="n">2</div><div class="card"><h3>Drop <span class="mono">m</span> whole</h3><p>An array <span class="mono">m</span> skips the ladder and is dropped outright; a string that never fit is dropped too. Every other key survives.</p></div></div>
-  <div class="step"><div class="n">3</div><div class="card"><h3>The floor</h3><p>Reached when the entry still exceeds 3,840 bytes with <span class="mono">m</span> gone, because <span class="mono">l</span>, <span class="mono">caller</span>, <span class="mono">k</span> or another key is itself too large: <span class="mono">{ n, k, ts, truncated: true, m: &lt;first 1,000 bytes of the original encoding&gt; + "..." }</span>. A line no reader can place is worth less than a truncated one.</p></div></div>
+  <div class="step"><div class="n">3</div><div class="card"><h3>The floor</h3><p>Reached when the entry still exceeds 3,840 bytes with <span class="mono">m</span> gone, because <span class="mono">l</span>, <span class="mono">caller</span>, <span class="mono">k</span> or another key is itself too large: <span class="mono">{ n, k, ts, truncated: true, m: &lt;first 1,000 bytes of the original encoding&gt; + "..." }</span>. A line that a reader cannot place is worth less than a truncated one.</p></div></div>
 </div>
 
 <div>

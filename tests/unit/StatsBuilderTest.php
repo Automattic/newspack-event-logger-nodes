@@ -77,8 +77,9 @@ final class StatsBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A builder constructed bare, as no topology arms one, naming the facts
-	 * table whose file holds a current window, so a fold rebuilds nothing.
+	 * A builder constructed bare, as a topology never arms one, naming the
+	 * facts table whose file holds a current window, so a fold rebuilds
+	 * nothing.
 	 */
 	private function unarmed_builder(): Stats_Builder_Node {
 		$this->current_window_facts();
@@ -378,7 +379,7 @@ final class StatsBuilderTest extends TestCase {
 		Core::node( self::FACTS_TABLE )?->remove_node();
 
 		$replayed = $this->armed_stats_builder( '3' );
-		// As a worker replays the dump: no user is current.
+		// As a worker replays the dump, with no current user.
 		unset( $GLOBALS['_current_user_id'] );
 		$this->read_private( $replayed, 'interpreter' )->dispatch( 'set_requests_partition', [ $m[1] ] );
 		$request = $this->completed_request( [ 'rid' => 'rid-kokako-3', 'url' => 'https://kea.example/kokako-3' ] );
@@ -1672,7 +1673,7 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * A tally of gone records reaches the narration on the rollup cadence
-	 * though no flush has rows to write.
+	 * though a flush has no rows to write.
 	 */
 	public function test_gone_records_alone_are_told_on_the_rollup(): void {
 		$sb  = $this->armed_stats_builder();
@@ -2031,8 +2032,9 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * A fresh builder resumes at the file's watermark when the span has not
-	 * changed, with one read: no rebuild negates a row `timings_site` does
-	 * not hold, and a fold in the same bucket reads nothing more.
+	 * changed, with one read: it does not rebuild, so a row `timings_site`
+	 * does not hold is never negated, and a fold in the same bucket reads
+	 * nothing more.
 	 */
 	public function test_a_fresh_builder_resumes_at_the_files_watermark_with_one_read(): void {
 		$this->window_world();
@@ -2119,8 +2121,8 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * Lowering `min_lifetime` from 7,200 to 3,600 expires the buckets that
-	 * left the 12 at the next start, one by one: no rebuild runs, so a row
-	 * `timings_site` does not hold survives.
+	 * left the 12 at the next start, one by one: the builder does not rebuild,
+	 * so a row `timings_site` does not hold survives.
 	 */
 	public function test_a_shrunk_span_expires_the_buckets_that_left_it(): void {
 		$this->use_min_lifetime( 7200 );
@@ -2686,7 +2688,7 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * More URLs than one rebuild batch covers, each with requests in the
-	 * window and a URL window row carrying sums no request backs.
+	 * window and a URL window row carrying sums without a backing request.
 	 *
 	 * @return int The URLs seeded.
 	 */
@@ -2772,7 +2774,7 @@ final class StatsBuilderTest extends TestCase {
 	/**
 	 * More `timings_site` groups on one server than one rebuild batch holds,
 	 * a few on a second server, and a category window holding each group's
-	 * sums plus 999 ms no timing backs, with no watermark.
+	 * sums plus 999 ms without a backing timing, with no watermark.
 	 *
 	 * @return int The groups seeded.
 	 */
@@ -2891,8 +2893,8 @@ final class StatsBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A record replayed from older than retention files rows in a bucket no
-	 * selection over the rows can name, and the next sweep removes them.
+	 * A record replayed from older than retention files rows in a bucket that a
+	 * selection over the rows can never name, and the next sweep removes them.
 	 */
 	public function test_a_record_replayed_from_past_retention_is_unreachable_and_swept(): void {
 		$this->use_min_lifetime( 7200 );

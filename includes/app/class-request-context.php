@@ -21,7 +21,7 @@ use Newspack_Nodes\Core as RuntimeCore;
  *
  * Its `m` is a map of up to five keys, each present only when WordPress set
  * it: `template`, the included file relative to wp-content, else to the
- * install's root, else its basename, so no absolute path leaves the site;
+ * install's root, else its basename, so an absolute path never leaves the site;
  * `matched_rule` and `matched_query`, the second redacted as a URL's query is;
  * `query_vars`, the main query's vars less those WordPress left empty, shaped
  * as hook arguments are, so a value survives only under an allowlisted key;

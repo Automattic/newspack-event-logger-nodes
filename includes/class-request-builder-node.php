@@ -72,8 +72,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * Entry keys standing in for entries this node removed. Either way the
-	 * interval one covers is missing DETAIL, not idle time, so no consumer may
-	 * reason across it. This node mints them, so it owns the vocabulary.
+	 * interval one covers is missing DETAIL, not idle time, so a consumer may
+	 * never reason across it. This node mints them, so it owns the vocabulary.
 	 *
 	 * @var list<string>
 	 */
@@ -981,7 +981,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Mark the hook a listener just closed in, the nearest frame that is no
+	 * Mark the hook a listener just closed in, the nearest frame that is not a
 	 * Query Monitor timer, as core's once the request fired it. Its listeners
 	 * are timed, so the rest of its time is `WP_Hook` dispatching them; a
 	 * hook that times none keeps its owner, since its own time then holds
@@ -1010,7 +1010,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * The index of the topmost frame that is no Query Monitor timer, or null.
+	 * The index of the topmost frame that is not a Query Monitor timer, or
+	 * null.
 	 *
 	 * @param list<array{0: string,1: string,2: string,3: float,4: bool,5: bool,6: ?bool}> $stack The stack.
 	 */
@@ -1168,7 +1169,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$s[ Log_Manager::WORKER_TYPE ] = function ( \stdClass $request, array $entry ): void {
 			// The worker gets its own worker-marked URL row.
 			$worker_type = Core::as_string( $entry['m'] ?? '' );
-			// A type no worker id can carry is dropped, never rewritten.
+			// A type that a worker id cannot carry is dropped, never rewritten.
 			if ( [ $worker_type, 0 ] === \Newspack_Nodes\CLI::parse_worker_id( \Newspack_Nodes\CLI::worker_id( $worker_type, 0 ) ) ) {
 				$request->is_worker   = true;
 				$request->worker_type = $worker_type;
@@ -1978,7 +1979,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * @param array<array-key,mixed> $request The record.
 	 * @return array{0: array<array-key,mixed>, 1: string, 2: string, 3: string} The record, its URL, its host and its rid.
-	 * @throws \InvalidArgumentException When the record is one no builder can fold.
+	 * @throws \InvalidArgumentException When the record is one that a builder
+	 *                                   cannot fold.
 	 */
 	public static function checked_record( array $request ): array {
 		$url    = Core::str( $request['url'] ?? '' );

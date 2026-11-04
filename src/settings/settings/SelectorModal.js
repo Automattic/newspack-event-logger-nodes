@@ -19,7 +19,8 @@ import '../styles/selector-modal.scss';
  * missing them resolves its design tokens to nothing.
  *
  * `selector-modal.scss` sizes the dialog from the picker's own class — the
- * hook catalog is wider than the event picker — so no width belongs here.
+ * hook catalog is wider than the event picker — so a width does not belong
+ * here.
  *
  * @param {Object}                    props             Component props.
  * @param {string}                    props.title       Dialog title.

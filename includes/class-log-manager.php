@@ -210,7 +210,7 @@ class Log_Manager {
 	 * fatal keys with their quotes (51). Reserving 512 for them leaves
 	 * 3,840 − 512 = 3,328 for the three strings:
 	 * 2,048 for the message and 640 each for the file and the plugin slug.
-	 * Raw bytes are no bound — a 4-byte character encodes to 12 — so each is
+	 * Raw bytes are not a bound — a 4-byte character encodes to 12 — so each is
 	 * measured as `message()` encodes it.
 	 */
 	private const FATAL_MESSAGE_BUDGET = 2048;
@@ -234,8 +234,8 @@ class Log_Manager {
 	private const DRIVER_CODE = '/\(\w+\/(\d+)\)|SQLSTATE\[(\w+)\]/';
 
 	/**
-	 * Last-error seam: replaces the `error_get_last()` call, which no test
-	 * can make report a fatal without dying of one. Tests reassign it.
+	 * Last-error seam: replaces the `error_get_last()` call, which a test
+	 * cannot make report a fatal without dying of one. Tests reassign it.
 	 * Signature: `function (): ?array`, shaped as `error_get_last()` answers.
 	 *
 	 * @var \Closure|null
@@ -290,8 +290,8 @@ class Log_Manager {
 	 * HTML character reference for `&` — `amp;`, `#38;` or `#x26;`, padded
 	 * with zeros or not, in either case — so the name read behind
 	 * `esc_url()`'s `&#038;token=` is `token`. A `?` takes it too, which only
-	 * trims a prefix no credential token sits in. Keeping `[?&]` first lets
-	 * Perl's start-class scan find a head.
+	 * trims a prefix that holds no credential token. Keeping `[?&]` first
+	 * lets Perl's start-class scan find a head.
 	 *
 	 * @var string
 	 */
@@ -307,7 +307,7 @@ class Log_Manager {
 	 * LIFO frames of begin/end_job_context: the $_SERVER snapshot to restore;
 	 * the job message the context runs under, its enclosing job's when it
 	 * brought none; the owner of the code it runs, its enclosing job's when
-	 * no handler map names it; and its handler.
+	 * the handler maps do not name it; and its handler.
 	 *
 	 * @var list<array{server:array<string,mixed>,message:array<int,mixed>,owner:string,handler:string}>
 	 */
@@ -333,7 +333,7 @@ class Log_Manager {
 	/**
 	 * @var list<array{0:string,1:array<string,mixed>,2:bool}>|null The lines
 	 * logged while a write is in flight, such as a PHP warning a Partition
-	 * write raises, waiting to be written after it; null while no write is.
+	 * write raises, waiting to be written after it; null outside a write.
 	 */
 	private ?array $held = null;
 
@@ -367,7 +367,10 @@ class Log_Manager {
 	 * @var string|null
 	 */
 	private ?string $saved_unique_id = null;
-	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
+	/**
+	 * @var bool|null True while logging, false after finish(), null when a rule
+	 *                never started it.
+	 */
 	private $started = null;
 	/** @var array<int,array{label: string,ts: int|float,at?: float,m?: mixed,keep?: mixed,inner?: float}> Timer-frame stack; `at` is its wall-clock start, `inner` the ms its closed children took. */
 	private $times = [];
@@ -796,7 +799,7 @@ class Log_Manager {
 	 * bare cooperative stop the write raises still pushes the frame before it
 	 * propagates, because the Partition flushed the line before raising it, and
 	 * the drain closes it. A stop carrying a failure says that flush threw, so
-	 * the line never landed and no frame is pushed.
+	 * the line never landed and the frame is not pushed.
 	 *
 	 * `$shaped` says `m` is a query SHAPE rather than prose or a URL, and so
 	 * must not be redacted. A shape needs no redaction: the producer's
@@ -843,7 +846,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * Run `$run` as a `$label` span on the started record, or bare when no
+	 * Run `$run` as a `$label` span on the started record, or bare before any
 	 * record has started. The `(complete)` `m` is what `$describe` makes of
 	 * the result, `ok` without one, or `outcome()` of a throwable. A caller
 	 * whose label costs work to build asks `started_instance()` itself and
@@ -1494,8 +1497,8 @@ class Log_Manager {
 	/**
 	 * The open record's time so far: milliseconds since the request's root
 	 * frame opened — the profiler drop-in's start where it took one — and
-	 * the self time of every span closed so far, by label. Null when no
-	 * record is open. `App\Server_Timing` reads it as the headers leave.
+	 * the self time of every span closed so far, by label. Null without an
+	 * open record. `App\Server_Timing` reads it as the headers leave.
 	 *
 	 * @return array{total_ms: float, spent: array<string,float>}|null
 	 */
@@ -1511,8 +1514,8 @@ class Log_Manager {
 
 	/**
 	 * Where a span written now would nest: the innermost open frame's start,
-	 * monotonic (`hr`, nanoseconds) and wall-clock (`ts`). Null when no record
-	 * is open. `App\Query_Monitor_Actions` clamps a timer to it.
+	 * monotonic (`hr`, nanoseconds) and wall-clock (`ts`). Null without an open
+	 * record. `App\Query_Monitor_Actions` clamps a timer to it.
 	 *
 	 * @return array{hr: int|float, ts: float}|null
 	 */
@@ -1788,7 +1791,7 @@ class Log_Manager {
 		}
 
 		$dir_template        = self::firehose_dir_template( Config::get_logs_directory() );
-		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
+		// THE accessor: workers never consume past the cap; the GC sweeps it.
 		$num_partitions      = Bootstrap::global_num_partitions();
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
@@ -1862,7 +1865,7 @@ class Log_Manager {
 	 * both from home_url(), the site's own origin. Every logged URL carries a
 	 * host, so a request with none is refused rather than logged as a path.
 	 *
-	 * @throws \RuntimeException When SERVER_NAME is unset or empty outside WP-CLI, or under WP-CLI when home_url() names no host either.
+	 * @throws \RuntimeException When SERVER_NAME is unset or empty outside WP-CLI, or under WP-CLI when home_url() has no host either.
 	 */
 	private static function origin(): string {
 		$server_name = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
@@ -1877,7 +1880,7 @@ class Log_Manager {
 		$scheme = Core::as_string( \wp_parse_url( $home, \PHP_URL_SCHEME ) );
 		$host   = Core::as_string( \wp_parse_url( $home, \PHP_URL_HOST ) );
 		if ( '' === $scheme || '' === $host ) {
-			throw new \RuntimeException( 'Log_Manager: SERVER_NAME is unset and home_url() names no host, so the WP-CLI request has no host to log its URL under' );
+			throw new \RuntimeException( 'Log_Manager: SERVER_NAME is unset and home_url() has no host, so the WP-CLI request has no host to log its URL under' );
 		}
 		return "{$scheme}://{$host}";
 	}
@@ -1975,8 +1978,9 @@ class Log_Manager {
 	 * can never expose the tail of a secret the redaction would have covered.
 	 * Array-valued keys are dropped outright.
 	 *
-	 * ENV_ALLOWLIST is the only key source, and no entry in it may read as a
-	 * secret — `LogManagerTest::test_no_allowlisted_environment_key_looks_like_a_secret`
+	 * ENV_ALLOWLIST is the only key source, and its entries must never read as
+	 * a secret —
+	 * `LogManagerTest::test_no_allowlisted_environment_key_looks_like_a_secret`
 	 * holds that, so a bad addition fails the build rather than this request.
 	 */
 	private function log_environment(): void {
@@ -2181,7 +2185,7 @@ class Log_Manager {
 		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
 			return $entry;
 		}
-		// Floor: a truncated dump keeping n/k/ts, or no reader can place it.
+		// Floor: a truncated dump keeping n/k/ts, or a reader cannot place it.
 		return [
 			'n'         => $entry['n'] ?? 0,
 			'k'         => $entry['k'] ?? '',

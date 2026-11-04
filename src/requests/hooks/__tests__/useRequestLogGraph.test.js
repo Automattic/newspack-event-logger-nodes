@@ -87,7 +87,7 @@ beforeEach( () => {
 	global.EventSource = FakeEventSource;
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 	// The mount-time list_logs POST would hit the network under jsdom. The
-	// wire takes it and says nothing back, so no reply lands outside act();
+	// wire takes it without answering, so a reply never lands outside act();
 	// browse tests inject their own transport and answer for real.
 	installFakeCommandWire( () => undefined );
 } );

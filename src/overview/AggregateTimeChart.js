@@ -12,10 +12,10 @@
  * A first breakdown dimension is ALWAYS selected — it has no "None" — so the
  * selected dimensions' series are the only thing this chart ever draws. It
  * holds no undifferentiated totals to fall back on, because a series legended
- * "Total" under a dropdown reading "User Agent" answers a question nobody
- * asked. `BreakdownControls` mounts it under the Metric and Breakdown selects
- * that set its props — for the site's series in the Overview card, and for
- * one URL's in the detail modal.
+ * "Total" under a dropdown reading "User Agent" answers a question that was
+ * never asked. `BreakdownControls` mounts it under the Metric and Breakdown
+ * selects that set its props — for the site's series in the Overview card,
+ * and for one URL's in the detail modal.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -109,7 +109,7 @@ const Y_FORMATS = {
 /** The metrics whose series add up: a stack of means is not a total. */
 const STACKABLE_METRICS = [ 'volume', 'cumulative' ];
 
-/** A slot no request reached: every sum and count 0. */
+/** A slot without a request: every sum and count 0. */
 const EMPTY_SLOT = { count: 0, sum_ms: 0, sum_peak_mb: 0, timed: 0 };
 
 /**
@@ -119,7 +119,7 @@ const EMPTY_SLOT = { count: 0, sum_ms: 0, sum_peak_mb: 0, timed: 0 };
  * @param {Object<string,number>} row    The slot's `SERIES_MEASURES`, by name.
  * @return {?number} Requests for `volume`, mean milliseconds of the timed
  * requests for `avg`, summed seconds for `cumulative`, mean megabytes for
- * `memory`, each over the slot's five minutes. A mean over no requests is
+ * `memory`, each over the slot's five minutes. A mean over zero requests is
  * null, unmeasured, and the chart draws a gap; a count or a sum of none is
  * a real 0.
  */

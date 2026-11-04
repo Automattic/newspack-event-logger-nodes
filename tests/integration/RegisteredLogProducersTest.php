@@ -8,9 +8,9 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
  * `newspack_nodes/registered_log_producers` filter, as the dir template
  * `Log_Manager` itself writes through. Read by `Newspack_Nodes\Log_Cleaner` to
  * protect `{base}/logs/firehose.p{N}/` from the flat-layout log GC — those dirs
- * are written from request scope and declared in no `.tsl`, so without this
- * registration the GC would orphan them. `jobintake` belongs to `Job_Intake`,
- * substrate code that registers itself.
+ * are written from request scope and not declared in any `.tsl`, so without
+ * this registration the GC would orphan them. `jobintake` belongs to
+ * `Job_Intake`, substrate code that registers itself.
  */
 class RegisteredLogProducersTest extends TestCase {
 	private string $tmp;

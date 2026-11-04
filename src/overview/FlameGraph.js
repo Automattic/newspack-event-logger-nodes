@@ -44,8 +44,8 @@ import {
 } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
- * The label d3-flame-graph shows for a frame, and the key it sorts on when no
- * start time is available: the stable name, never the message. Spacers carry
+ * The label d3-flame-graph shows for a frame, and the key it sorts on when a
+ * start time is unavailable: the stable name, never the message. Spacers carry
  * an empty name.
  *
  * The library's own accessor is `d.data.n || d.data.name`, and a folded frame
@@ -288,7 +288,7 @@ const createTooltip = () => {
 
 		// @longform Flip above the cursor rather than run off the bottom, then
 		// clamp: a tooltip taller than the space above would otherwise run off
-		// the TOP, where nothing can scroll it back into view.
+		// the TOP, where it can never be scrolled back into view.
 		const viewTop = window.scrollY + 10;
 		const viewBottom = window.scrollY + window.innerHeight - 10;
 		let top = mouseY + 15;
@@ -401,8 +401,8 @@ export const framePlaces = ( order ) => {
  * re-bound, so this pass overwrites or clears every style it sets.
  *
  * A spacer's fill is `transparent`, and a style an earlier pass left on its
- * element is cleared. A fill no contrast can be read against still takes its
- * green, and its label takes the default ink.
+ * element is cleared. A fill against which a contrast cannot be read still
+ * takes its green, and its label takes the default ink.
  *
  * @param {Element}       container Flame graph container element.
  * @param {Array<string>} order     The breakdown's categories, in its colour order.
@@ -729,11 +729,12 @@ const collectGaps = ( node, out ) => {
  * Rebuild the tree with a spacer wherever a gap clears the cutoff.
  *
  * A subtree that gains nothing comes back as the same object, so an aggregate —
- * where no family can be placed at all — is never copied to reproduce itself.
+ * where a family cannot be placed at all — is never copied to reproduce itself.
  *
  * @param {Object} node   Flame node.
  * @param {number} cutoff Gaps must exceed this to earn a spacer.
- * @return {Object} The rebuilt node, or the input when nothing gained a spacer.
+ * @return {Object} The rebuilt node, or the input when the rebuild added no
+ *                  spacer.
  */
 const insertSpacers = ( node, cutoff ) => {
 	if ( ! node?.children?.length ) {
@@ -778,7 +779,7 @@ const insertSpacers = ( node, cutoff ) => {
  * from the left, and the dead time before or between two spans is smeared into
  * them. Handing that time over as a frame of its own is what makes the axis
  * mean something. `reappraiseNode` computes a parent as `raw - Σ children +
- * Σ children`, so the spacers cancel and no node's value changes.
+ * Σ children`, so the spacers cancel and every node keeps its value.
  *
  * Runs AFTER pruning, deliberately: the prune cutoff and node count must be
  * computed on real frames. That is also why `maxSpacers` exists — pruning caps
@@ -1008,7 +1009,8 @@ export default function FlameGraph( { data, onRevealEntry, order = [] } ) {
 	}
 
 	/**
-	 * Forget the tooltip when the pointer leaves, so no refresh revives it.
+	 * Forget the tooltip when the pointer leaves, so a refresh never revives
+	 * it.
 	 */
 	const handleMouseLeave = () => {
 		tooltipRef.current?.clearState?.();

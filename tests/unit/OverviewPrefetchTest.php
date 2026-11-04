@@ -43,7 +43,10 @@ final class OverviewPrefetchTest extends TestCase {
 
 	private const NOW = 1_790_007_215;
 
-	/** An interval no default names, so a TTL read from anywhere else fails. */
+	/**
+	 * An interval distinct from every default, so a TTL read from anywhere else
+	 * fails.
+	 */
 	private const INTERVAL = 47;
 
 	/** A snapshot's life: four of its job's intervals. */
@@ -74,7 +77,7 @@ final class OverviewPrefetchTest extends TestCase {
 	 */
 	private function urls( array $tokens ): array {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $tokens );
-		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'urls answered no structure' );
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'urls returned no structure' );
 		return $reply;
 	}
 
@@ -334,7 +337,10 @@ final class OverviewPrefetchTest extends TestCase {
 		return \array_map( static fn ( array $child ): string => Core::as_string( $child['name'] ?? '' ), self::flame_nodes( $node ) );
 	}
 
-	/** A template naming its server where `templated()` cannot find it would store answers no poll reads, so the job refuses it. */
+	/**
+	 * A template naming its server where `templated()` cannot find it would
+	 * store answers that a poll never reads, so the job refuses it.
+	 */
 	public function test_a_template_templated_cannot_invert_is_refused(): void {
 		Overview_Prefetch::$read_file = static fn ( string $path ): string => (string) \wp_json_encode(
 			[ 'kea_7025' => [ 'verb' => 'query', 'tokens' => [ 'requests', 'bucket', '--search={server}', '--measure=count' ] ] ]
@@ -598,7 +604,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
 		$this->assertSame( 1, $overview['totals']['urls'], 'the live rows, moa alone' );
 		$this->assertNotEmpty(
@@ -625,7 +631,10 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertNotSame( [], $said(), 'the stored question opens it, so the silence above is real' );
 	}
 
-	/** A scoped overview's totals are live, its servers the job's: no scope changes them. */
+	/**
+	 * A scoped overview's totals are live, its servers the job's: every scope
+	 * leaves them unchanged.
+	 */
 	public function test_a_scoped_overview_names_the_servers_the_snapshot_stored(): void {
 		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/a/', 'ms' => 33.5 ] );
 		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) => '{"as_of":1790007215,"available":true,"servers":["kea-6201.example"],"totals":{},"slots":[],"leaderboard":{}}' ] );
@@ -635,7 +644,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6201.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
 		$this->assertSame( 2, $overview['totals']['requests'], 'the totals are live' );
 		$this->assertSame( [ 'kea-6201.example' ], $overview['servers'], 'the servers are the job\'s, before kaka' );
@@ -657,7 +666,7 @@ final class OverviewPrefetchTest extends TestCase {
 			}
 		}
 		$kea = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7020.example' ] );
-		$this->assertIsArray( $kea, \is_string( $kea ) ? $kea : 'overview answered no structure' );
+		$this->assertIsArray( $kea, \is_string( $kea ) ? $kea : 'overview returned no structure' );
 		$this->assertSame( 1, $kea['totals']['requests'], 'the stored totals, c unread' );
 		$this->assertSame( [ 'kea-7020.example', 'kaka-7020.example' ], $kea['servers'] );
 	}
@@ -723,7 +732,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7023.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
 		$this->assertSame( [ 'kaka-7023.example', 'kea-7023.example' ], $overview['servers'], 'read live' );
 		$this->assertNotEmpty( \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ) );
@@ -738,8 +747,8 @@ final class OverviewPrefetchTest extends TestCase {
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 		$scoped   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7024.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
-		$this->assertIsArray( $scoped, \is_string( $scoped ) ? $scoped : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
+		$this->assertIsArray( $scoped, \is_string( $scoped ) ? $scoped : 'overview returned no structure' );
 		$this->assertSame( [ self::NOW, [] ], [ $overview['as_of'], $overview['servers'] ] );
 		$this->assertSame( self::NOW + 9, $scoped['as_of'], 'no server listed, so none stored' );
 	}
@@ -754,7 +763,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6206.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'ruru-6206.example', 'kea-6206.example' ], $overview['servers'], 'the scope stays on a server the job never saw' );
 	}
 
@@ -767,7 +776,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6210.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( 0, $overview['totals']['requests'], 'no non-worker request' );
 		$this->assertContains( 'ruru-6210.example', $overview['servers'], 'the scope stays on a server only workers reached' );
 	}
@@ -781,7 +790,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-6208.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( 0, $overview['totals']['requests'] );
 		$this->assertSame( [ 'kea-6208.example' ], $overview['servers'], 'the stored list, kaka unread' );
 	}
@@ -800,11 +809,11 @@ final class OverviewPrefetchTest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
 		$this->assertSame( self::NOW + 9, \is_array( $query ) ? $query['as_of'] : $query, 'the query answered live' );
-		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'overview answered no structure' );
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $reply['as_of'], 'the overview answered live' );
 		$this->assertSame( [ 'kea-6209.example' ], $reply['servers'] );
 		$this->assertNotEmpty( $said( 'performance: the URL snapshot did not read' ), 'the read failure is said' );
-		$this->assertNotEmpty( $said( 'the stored overview names no servers' ), 'and so is the overview naming none' );
+		$this->assertNotEmpty( $said( 'the stored overview has no servers list' ), 'and so is the overview naming none' );
 	}
 
 	/** A blank server names no server, so the stored overview answers it whole. */
@@ -816,7 +825,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW, $overview['as_of'], 'served, dated by the job' );
 		$this->assertSame( 1, $overview['totals']['requests'], 'the stored totals, kaka unread' );
 		$this->assertSame( [ 'kea-6207.example' ], $overview['servers'] );
@@ -829,7 +838,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6202.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6202.example', 'kea-6202.example' ], $overview['servers'], 'busiest first, read live' );
 	}
 
@@ -842,7 +851,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6203.example', 'kea-6203.example' ], $overview['servers'] );
 	}
 
@@ -856,7 +865,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6204.example', 'kea-6204.example' ], $overview['servers'] );
 		$this->assertNotEmpty(
 			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ),
@@ -889,11 +898,11 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $tokens );
 
-		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'], 'answered live' );
 		$this->assertSame( [ 'kea-6205.example' ], $overview['servers'] );
 		$this->assertNotEmpty(
-			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'the stored overview names no servers' ) ),
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'the stored overview has no servers list' ) ),
 			'the outage is said once'
 		);
 	}
@@ -1107,7 +1116,7 @@ final class OverviewPrefetchTest extends TestCase {
 			'no queued_at'                  => [ [ 'interval' => 47 ], $queued_at . 'null' ],
 			'a queued_at below 1'           => [ [ 'queued_at' => -5, 'interval' => 47 ], $queued_at . '-5' ],
 			'a queued_at of 0'              => [ [ 'queued_at' => 0, 'interval' => 47 ], $queued_at . '0' ],
-			'a queued_at no JSON encodes'   => [ [ 'queued_at' => \NAN, 'interval' => 47 ], $queued_at . 'double' ],
+			'a queued_at JSON cannot encode' => [ [ 'queued_at' => \NAN, 'interval' => 47 ], $queued_at . 'double' ],
 			'a fraction for its queued_at'  => [ [ 'queued_at' => 0.5, 'interval' => 47 ], $queued_at . '0.5' ],
 			'a word for its queued_at'      => [ [ 'queued_at' => 'kea-7027', 'interval' => 47 ], $queued_at . '"kea-7027"' ],
 			'a line break in its queued_at' => [ [ 'queued_at' => "kea\n7040", 'interval' => 47 ], $queued_at . '"kea\\n7040"' ],

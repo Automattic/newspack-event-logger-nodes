@@ -41,9 +41,9 @@ const POLL_INTERVAL_MS = 1000;
 const FLAME_RETRY_TICKS = 5;
 
 /**
- * The tail of `Performance_CI_Node::stats_outage()`'s refusal: no stats rows
- * opened, as on a site running no `stats-builder` topology, so no later ask
- * can find the request by its row.
+ * The tail of `Performance_CI_Node::stats_outage()`'s refusal: the stats rows
+ * did not open, as on a site running no `stats-builder` topology, so a later
+ * ask can never find the request by its row.
  */
 const STATS_OUTAGE = 'the stats rows did not open';
 
@@ -72,7 +72,7 @@ function currentRequestData() {
  * (logging off, running as root, or no matching `log` rule), `loading` until
  * the poll graph mounts the view node, `outage` once `dump_request` answers
  * that the stats rows did not open, which stops the asking, `processing`
- * while no request row names the record yet, and `found` once
+ * until a request row names the record, and `found` once
  * `dump_request` answers with one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own

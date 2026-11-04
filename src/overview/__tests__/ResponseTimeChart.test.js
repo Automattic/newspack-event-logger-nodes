@@ -379,7 +379,7 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'plots no duration nobody measured, so the mean and trend leave it out', () => {
+	it( 'does not plot an unmeasured duration, so the mean and trend leave it out', () => {
 		// A timeout's duration is the eviction wait and an abort's ends at
 		// the stop (decision 24): plotted, either flattens every real dot.
 		const { container, unmount } = mountChart( [

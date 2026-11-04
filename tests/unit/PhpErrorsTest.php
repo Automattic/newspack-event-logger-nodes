@@ -493,7 +493,7 @@ final class PhpErrorsTest extends TestCase {
 		$this->assertArrayHasKey( 'doing_it_wrong_run', $GLOBALS['_wp_test_filters'] );
 
 		Log_Manager::begin_job_context( 'kea-7746-job' );
-		$this->assertSame( $this->handler, self::top_handler(), 'the job is governed by no rule' );
+		$this->assertSame( $this->handler, self::top_handler(), 'no rule governs the job' );
 		$this->assertArrayNotHasKey( 'doing_it_wrong_run', $GLOBALS['_wp_test_filters'] );
 
 		Log_Manager::end_job_context();

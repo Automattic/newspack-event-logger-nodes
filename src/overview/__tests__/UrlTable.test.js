@@ -80,7 +80,7 @@ const URLS = [
 	},
 ].map( asPage );
 
-// The table writes its filters into the bar; no test may inherit another's.
+// The table writes its filters into the bar; a test never inherits another's.
 beforeEach( () => {
 	window.history.replaceState( null, '', '/wp-admin/admin.php?page=perf' );
 } );
@@ -154,7 +154,7 @@ describe( 'UrlTable', () => {
 	it( 'falls back to a page that exists when the set shrinks', () => {
 		// Narrowing the server filter can leave the table on an offset past the
 		// end of the new set: the body renders empty AND, below the one-page
-		// threshold, the pager disappears — so no control is left to get back.
+		// threshold, the pager disappears and leaves no control to get back.
 		// The page follows the set down.
 		const onParamsChange = jest.fn();
 		const props = {
@@ -927,7 +927,7 @@ describe( 'UrlTable', () => {
 	} );
 
 	it.each( [ 'avg', 'cumulative' ] )(
-		'draws no %s bar for a URL no timed request reached, and scales the rest without it',
+		'draws no %s bar for a URL without a timed request, and scales the rest without it',
 		( metric ) => {
 			const untimed = Array.from( { length: 20 }, ( _, i ) =>
 				asPage( {
@@ -961,7 +961,7 @@ describe( 'UrlTable', () => {
 		}
 	);
 
-	it( 'renders a dash for the Avg, Min and Max of a URL no timed request reached', () => {
+	it( 'renders a dash for the Avg, Min and Max of a URL without a timed request', () => {
 		const { container, unmount } = mount( {
 			urls: [
 				{ ...URLS[ 0 ], avg_ms: null, min_ms: null, max_ms: null },
@@ -1077,7 +1077,7 @@ describe( 'UrlTable', () => {
 	it( 'names the search as a whole-word match', () => {
 		// The server reads a token index: the term is split on every
 		// non-alphanumeric run and each token must be a whole word of the
-		// path. A box saying "Search URLs" invites a substring nothing answers.
+		// path. A "Search URLs" box invites a substring, which never matches.
 		const { container, unmount } = mount();
 		expect(
 			container.querySelector( 'input' ).getAttribute( 'placeholder' )
@@ -1477,7 +1477,7 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
-	it( 'expands a page from a caret click, the caret no control of its own', () => {
+	it( 'expands a page from a caret click, the caret not a control of its own', () => {
 		const onSelect = jest.fn();
 		const onToggleExpand = jest.fn();
 		const { container, unmount } = mount( {

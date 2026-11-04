@@ -16,7 +16,10 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 #[CoversClass( Owner::class )]
 class OwnerTest extends TestCase {
 
-	/** An install laid out as WordPress lays one out, at a path no default names. */
+	/**
+	 * An install laid out as WordPress lays one out, at a path distinct from
+	 * every default.
+	 */
 	private const ROOTS = [
 		'plugins'    => '/srv/kea-7746/wp-content/plugins',
 		'mu_plugins' => '/srv/kea-7746/wp-content/mu-plugins',
@@ -33,7 +36,8 @@ class OwnerTest extends TestCase {
 	}
 
 	/**
-	 * Every row of the owner table, and the files that belong to no row.
+	 * Every row of the owner table, and the files that do not belong to any
+	 * row.
 	 *
 	 * @return array<string,array{string,string}>
 	 */
@@ -51,7 +55,7 @@ class OwnerTest extends TestCase {
 			'a file loose in the theme root' => [ "{$content}/themes/index.php", '' ],
 			'a drop-in'                      => [ "{$content}/object-cache.php", 'dropin' ],
 			'a drop-in core reads on error'  => [ "{$content}/fatal-error-handler.php", 'dropin' ],
-			'a content file that is no drop-in' => [ "{$content}/kaka-5150.php", '' ],
+			'a content file that is not a drop-in' => [ "{$content}/kaka-5150.php", '' ],
 			'wp-includes'                    => [ '/srv/kea-7746/wp-includes/class-wp-hook.php', 'core' ],
 			'wp-admin'                       => [ '/srv/kea-7746/wp-admin/includes/plugin.php', 'core' ],
 			'a root file'                    => [ '/srv/kea-7746/wp-settings.php', 'core' ],
@@ -67,7 +71,7 @@ class OwnerTest extends TestCase {
 			'a managed theme without a version' => [ '/srv/managed-6620/themes/kowhai-8840/style.php', 'platform' ],
 			'a managed drop-in'              => [ '/srv/managed-6620/drop-ins/object-cache.php', 'dropin' ],
 			'a managed drop-in core reads on error' => [ '/srv/managed-6620/drop-ins/fatal-error-handler.php', 'dropin' ],
-			'a managed drop-ins file that is no drop-in' => [ '/srv/managed-6620/drop-ins/kaka-6620.php', 'platform' ],
+			'a managed drop-ins file that is not a drop-in' => [ '/srv/managed-6620/drop-ins/kaka-6620.php', 'platform' ],
 			'a platform mu-plugin'           => [ '/srv/managed-6620/mu-plugins/tieke-6620.php', 'platform' ],
 			'a platform mu-plugin directory' => [ '/srv/managed-6620/mu-plugins/tieke-6620/tieke.php', 'platform' ],
 			'a managed root outside its kinds' => [ '/srv/managed-6620/languages/kowhai.php', 'platform' ],
@@ -139,7 +143,8 @@ class OwnerTest extends TestCase {
 
 	/**
 	 * A link whose target sits inside another link's owns its own files, and a
-	 * file linked loose into a theme root is no theme, as a file there is not.
+	 * file linked loose into a theme root is not a theme, as a file there is
+	 * not.
 	 */
 	public function test_the_innermost_link_owns_and_a_loose_theme_file_link_is_no_theme(): void {
 		$base  = self::temp_path( 'nested' );

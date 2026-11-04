@@ -418,7 +418,7 @@ describe( 'PerformanceDashboard', () => {
 	beforeEach( () => {
 		mockView = null;
 		window.localStorage.clear();
-		// The page writes its filters into the bar; no test inherits them.
+		// The page writes its filters into the bar; a test never inherits them.
 		window.history.replaceState(
 			null,
 			'',
@@ -1374,7 +1374,7 @@ describe( 'PerformanceDashboard', () => {
 				unmount();
 			} );
 
-			it( 'opens a linked value no control offers on its default, and drops it', async () => {
+			it( 'opens a linked value that the controls do not offer on its default, and drops it', async () => {
 				mockNavState.selectedSubject = ROW;
 				linkTo(
 					[
@@ -1545,7 +1545,7 @@ describe( 'PerformanceDashboard', () => {
 				unmount();
 			} );
 
-			it( 'carries no window on the bar while no URL is open', async () => {
+			it( 'carries no window on the bar until a URL opens', async () => {
 				linkTo( LINKED );
 				mockView = detailView( urlsOf( [] ) );
 				const { unmount } = mountDash();
@@ -2688,7 +2688,7 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'hands the graph a selected request by its rid alone', async () => {
-		// The request's row names its partition, so no caller supplies one.
+		// The request's row names its partition; a caller never supplies one.
 		mockNavState.selectedSubject = {
 			field: 'url',
 			hash: 'h1',
@@ -3026,7 +3026,7 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	// Back before the answer lands: the intent is gone, so the reply answers a
-	// question nobody is asking any more and must not reopen the modal the
+	// question that is no longer being asked and must not reopen the modal the
 	// operator just left — nor push a fresh entry over the one they walked to.
 	it( 'a deep-link reply that no longer matches the standing intent is dropped', async () => {
 		mockNavState.deepLink = { requestId: 'tqz9ldm3wp', subject: null };
@@ -3895,7 +3895,7 @@ describe( 'PerformanceDashboard', () => {
 		// Back out of that request and the URL pane has nothing to show — but
 		// the modal must stay up, or the operator is left on a paused dashboard
 		// with the selection still set and no close button to clear it.
-		it( 'keeps the modal up when the request is closed and no URL slice came', async () => {
+		it( 'keeps the modal up when the request is closed and a URL slice never came', async () => {
 			mockNavState.selectedSubject = {
 				field: 'url',
 				hash: '905b81442680',
@@ -4089,7 +4089,7 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
-		it( 'names a one-shape page by no other URL the window last answered', async () => {
+		it( 'does not name a one-shape page by another URL the window last answered', async () => {
 			mockNavState.selectedSubject = { field: 'url', hash: HIHI.hash };
 			mockView = loadedView( {
 				urlDetail: {

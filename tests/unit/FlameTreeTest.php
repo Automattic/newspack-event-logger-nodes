@@ -173,7 +173,7 @@ class FlameTreeTest extends TestCase {
 	}
 
 	public function test_merge_never_carries_a_start_offset_into_the_aggregate(): void {
-		// Merged siblings span many requests, so no single offset is true of them.
+		// Merged siblings span many requests, so they share no single offset.
 		$merged = Flame_Tree::merge_flame_children_incremental(
 			[],
 			[ [ 'name' => 'db', 'value' => 5, 't' => 250.5 ] ]

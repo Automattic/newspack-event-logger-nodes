@@ -39,7 +39,7 @@ import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
 const SLOTS = slotsEndingAt( '2026-09-29-14-35', 24 );
 
 /**
- * A limit no parsing case here reaches, so each tests the spelling alone.
+ * A limit beyond every parsing case here, so each tests the spelling alone.
  */
 const ROOM = 100;
 
@@ -551,7 +551,7 @@ describe( 'runsOf and runSpan', () => {
 		);
 	} );
 
-	it( 'dates a run crossing local midnight, and no run ending on it', () => {
+	it( 'dates a run crossing local midnight, but not a run ending on it', () => {
 		expect( runSpan( [ '2026-10-05-06-55', '2026-10-05-07-00' ] ) ).toBe(
 			'Oct 4, 11:55 PM–Oct 5, 12:05 AM'
 		);

@@ -465,7 +465,7 @@ describe( 'FlameGraph', () => {
 			} )
 		);
 		// Taller than the space above the cursor: flipping runs it off the top,
-		// where nothing can scroll it back.
+		// where it can never be scrolled back.
 		chain.node.mockReturnValue( { offsetWidth: 100, offsetHeight: 900 } );
 		chain.style.mockClear();
 		const previousEvent = window.event;
@@ -707,7 +707,7 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
-	it( 'observes nothing when no chart was ever built (no data)', () => {
+	it( 'observes nothing when a chart was never built (no data)', () => {
 		// The empty state renders before the container ref, so there is no
 		// element to observe — asserting no-throw on a resize proved nothing.
 		const { unmount } = renderComponent(
@@ -1067,7 +1067,7 @@ describe( 'withTimeSpacers', () => {
 
 	it( 'leaves a folded tree alone — a merged node has no end to gap against', () => {
 		// `merged` means `t` is the EARLIEST span's start while `value` totals
-		// them all, so `t + value` lands where no span ran and every gap
+		// them all, so `t + value` lands outside every span and every gap
 		// measured from it is fiction. Flame_Fold decides; the browser reads.
 		const folded = {
 			name: 'process',

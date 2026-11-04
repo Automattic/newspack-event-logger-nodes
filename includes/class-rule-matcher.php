@@ -78,7 +78,8 @@ final class Rule_Matcher {
 	 * misses included.
 	 *
 	 * @param string $url Request path, plus an optional query string.
-	 * @return Rule|null The governing rule, or null when no pattern matches, which skips the request.
+	 * @return Rule|null The governing rule, or null when the URL does not match
+	 *                   a pattern, which skips the request.
 	 */
 	public function match( string $url ): ?Rule {
 		[ $t_path, $t_query ] = self::split( $url );

@@ -74,7 +74,8 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	 * Ingest gate over the four fields the toolbar placeholder names — request
 	 * id, keyword, message and url — each searched on its own. The base's
 	 * `content` joins the same four with spaces, so matching there would also
-	 * admit a term straddling two of them, which no column on screen contains.
+	 * admit a term straddling two of them, which a column on screen never
+	 * contains.
 	 *
 	 * @param {Object} fields      Shaped row fields.
 	 * @param {string} filterLower The active filter, already lowercased.

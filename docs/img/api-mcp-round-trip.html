@@ -73,7 +73,7 @@
   </div>
 </div>
 
-<div class="hop" data-arrow="3,2" data-cap="returns, or throws" data-span="1,3"><span class="n">5</span>A return value becomes one <span class="mono">text</span> content block: the reply JSON-encoded with <span class="mono">JSON_HEX_TAG | JSON_UNESCAPED_SLASHES</span> and wrapped in <span class="mono">&lt;site-data&gt;</span>, so no payload can close the fence. A throw becomes <span class="mono">result.isError: true</span> with the message as the text, unfenced: a tool error, not a transport error, because the call reached the server and was answered.</div>
+<div class="hop" data-arrow="3,2" data-cap="returns, or throws" data-span="1,3"><span class="n">5</span>A return value becomes one <span class="mono">text</span> content block: the reply JSON-encoded with <span class="mono">JSON_HEX_TAG | JSON_UNESCAPED_SLASHES</span> and wrapped in <span class="mono">&lt;site-data&gt;</span>, so a payload can never close the fence. A throw becomes <span class="mono">result.isError: true</span> with the message as the text, unfenced: a tool error, not a transport error, because the call reached the server and was answered.</div>
 
 <div class="hop" data-arrow="2,0" data-cap="HTTP 200, one JSON-RPC response" data-span="0,3"><span class="n">6</span><span class="mono">{ jsonrpc: "2.0", id, result }</span> or <span class="mono">{ jsonrpc: "2.0", id, error: { code, message } }</span>. Nothing in a reply asks the agent to act; wiring a client up is the operator's deliberate act.</div>
 </div>

@@ -39,11 +39,11 @@ use Newspack_Nodes\Core as RuntimeCore;
  * Written at the stop, the pair nests inside whatever is open then. A timer
  * stopped while another that started before it runs is held in that one and
  * written inside it at its stop, so nested timers come out nested. One that
- * started before the span it is written in is CLAMPED to that span's start,
- * so no child opens before its parent; its close says how long it really ran
- * and how much of that came first. Its time is charged to no category of
- * `Log_Manager::timing_so_far()`, and `Request_Builder_Node` takes it from no
- * ancestor: it overlays time the spans around it already count.
+ * started before the span it is written in is CLAMPED to that span's start, so
+ * a child never opens before its parent; its close says how long it really ran
+ * and how much of that came first. Its time is not charged to any category of
+ * `Log_Manager::timing_so_far()`, and `Request_Builder_Node` never takes it
+ * from an ancestor: it overlays time the spans around it already count.
  */
 class Query_Monitor_Actions {
 

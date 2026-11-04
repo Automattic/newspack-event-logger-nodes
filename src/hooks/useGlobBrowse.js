@@ -11,11 +11,11 @@
  * A sole partition auto-selects: one dir already IS the whole live glob.
  *
  * Seeks ride the existing `positions` transport (keyed by partition DIRECTORY,
- * the same key SseIn tracks resume offsets under), so no new server verb is
- * needed. The substrate's `raw-logs` CI answers both catalog questions —
+ * the same key SseIn tracks resume offsets under), so they need no new server
+ * verb. The substrate's `raw-logs` CI answers both catalog questions —
  * `list_logs` for the concrete dirs, polled as a slice, and `dump_log` for
  * one dir's segments. Each rides its OWN nodes, so every reply lands on the
- * node that asked for it and no id pairs them up (ADR-7).
+ * node that asked for it, without an id to pair them up (ADR-7).
  */
 
 import {
@@ -97,11 +97,11 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 
 	// @longform
 	// A sole partition auto-selects BEFORE PAINT: a passive effect would paint
-	// the picker at a value matching no row first. Layout effects run before
-	// the graph's own mount effect, so this leans on the catalog never arriving
-	// populated on a first render — it only ever fills from a command reply,
-	// and a rebuild clears the node's state cache. A catalog hoisted above this
-	// dashboard would break that.
+	// the picker first at a value that does not match any row. Layout effects
+	// run before the graph's own mount effect, so this leans on the catalog
+	// never arriving populated on a first render — it only ever fills from a
+	// command reply, and a rebuild clears the node's state cache. A catalog
+	// hoisted above this dashboard would break that.
 	useLayoutEffect( () => {
 		if ( 1 === partitions.length && '' === selectedRef.current ) {
 			selectPartition( partitions[ 0 ].key );

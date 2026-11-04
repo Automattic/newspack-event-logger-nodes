@@ -221,8 +221,8 @@ if ( ! \function_exists( 'newspack_profiler_lean_plugins' ) ) {
 	 *
 	 * Skipping a plugin removes all of its behaviour, any restriction it
 	 * places on REST requests included; the substrate's own signature check
-	 * still decides every message. The match is exact, so that no other
-	 * script runs without the site's plugins. WordPress's front controller
+	 * still decides every message. The match is exact, so that every other
+	 * script runs with the site's plugins. WordPress's front controller
 	 * must serve the request, with no path info: the request has loaded
 	 * `wp-blog-header.php` from `ABSPATH` before the plugin loop, wherever
 	 * the server says the script sits. That holds on WP Cloud, which serves

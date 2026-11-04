@@ -236,7 +236,8 @@ export default function RuleEditModal( {
 	 *
 	 * The pattern is trimmed before it is checked and before it is emitted, so
 	 * surrounding whitespace never reaches `Rules_CI_Node`, which mints the id
-	 * from the pattern text and would key the rule to a string no URL matches.
+	 * from the pattern text and would key the rule to a string that never
+	 * matches a URL.
 	 */
 	const handleSave = () => {
 		const trimmed = pattern.trim();

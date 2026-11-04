@@ -1,10 +1,10 @@
 /**
  * The rule editor's form against the real custom-event picker it opens.
  *
- * The picker portals to the body, so no DOM form owns its search box, and it
- * sits beside the editor's form in the React tree, so a submit rising from it
- * reaches no form React would bubble it to. Enter in the search therefore
- * neither applies the picker nor saves the rule.
+ * The picker portals to the body, so its search box sits outside every DOM
+ * form, and it sits beside the editor's form in the React tree, so a submit
+ * rising from it reaches no form React would bubble it to. Enter in the search
+ * therefore neither applies the picker nor saves the rule.
  */
 
 jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
@@ -50,7 +50,7 @@ describe( 'RuleEditModal — the custom-event picker', () => {
 			'.event-logger-custom-event-modal .event-logger-selector-modal__header input'
 		);
 
-	test( 'its search box belongs to no form', () => {
+	test( 'its search box does not belong to any form', () => {
 		expect( search() ).toBeTruthy();
 		expect( search().form ).toBeNull();
 	} );

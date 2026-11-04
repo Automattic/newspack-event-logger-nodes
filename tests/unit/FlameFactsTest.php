@@ -197,8 +197,8 @@ final class FlameFactsTest extends TestCase {
 
 	/**
 	 * Purging a URL's last request releases the URL, then the server only it
-	 * named, then the JA4 and the From no other request names; a JA4 a
-	 * newer request names stays.
+	 * named, then the JA4 and the From that are not named by any other request;
+	 * a JA4 a newer request names stays.
 	 */
 	public function test_purging_a_urls_last_request_cascades_to_the_names_only_it_named(): void {
 		$this->activate_shipped( 'stats-builder', 1 );

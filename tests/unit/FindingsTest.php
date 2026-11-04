@@ -147,7 +147,10 @@ class FindingsTest extends TestCase {
 		$this->assertArrayNotHasKey( 'proposal', $found );
 	}
 
-	/** Nothing past the request's opening rows places no stop: only the time is known. */
+	/**
+	 * A record with nothing past its opening rows places no stop: only the time
+	 * is known.
+	 */
 	public function test_a_record_silent_after_its_opening_rows_has_no_known_stop_point(): void {
 		$record                = $this->timed_out_record();
 		$record['entries']     = \array_slice( $record['entries'], 0, 3 );
@@ -345,8 +348,9 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A timed-out duration ends where the builder gave up (decision 24), so no
-	 * share of it is a finding; what reads timestamps and rule facts still runs.
+	 * A timed-out duration ends where the builder gave up (decision 24), so a
+	 * share of it is never a finding; what reads timestamps and rule facts
+	 * still runs.
 	 */
 	public function test_a_timed_out_record_reports_no_share_of_its_duration(): void {
 		$record               = $this->timed_out_record();
@@ -411,7 +415,10 @@ class FindingsTest extends TestCase {
 		return [ 'duration_ms' => $duration_ms, 'error_status' => $error_status, 'owners' => $owners ];
 	}
 
-	/** `(unmeasured)` is no owner: it is listed nowhere, and each share still divides by the duration. */
+	/**
+	 * `(unmeasured)` is not an owner: it is listed nowhere, and each share
+	 * still divides by the duration.
+	 */
 	public function test_owners_are_the_records_rows_dearest_first_each_with_its_share(): void {
 		$record = self::owned_record(
 			[
@@ -451,7 +458,7 @@ class FindingsTest extends TestCase {
 		$this->assertSame( [], Findings::owners( $record ) );
 	}
 
-	/** A duration nobody measured is not a timing sample (decision 24). */
+	/** An unmeasured duration is not a timing sample (decision 24). */
 	#[DataProvider( 'untimed_records' )]
 	public function test_owners_of_an_untimed_record_are_empty( float $duration_ms, string $error_status ): void {
 		$this->assertSame( [], Findings::owners( self::owned_record( [ 'kea-7746' => [ 9.0, 1 ] ], $duration_ms, $error_status ) ) );
@@ -876,8 +883,8 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * Calls a per-label profile tallied under no label — unlabelled, or past
-	 * the builder's label cap — still repeated, under the bare state.
+	 * Calls a per-label profile did not tally under any label — unlabelled, or
+	 * past the builder's label cap — still repeated, under the bare state.
 	 */
 	public function test_unlabelled_calls_of_a_custom_kind_repeat_as_the_bare_state(): void {
 		$record             = $this->healthy_record();
@@ -1238,7 +1245,7 @@ class FindingsTest extends TestCase {
 
 	public function test_a_round_trip_is_not_a_gap(): void {
 		// Nothing logs between a query's own start and complete: that window
-		// IS the query, measured as its duration, and no hook can bracket it.
+		// IS the query, measured as its duration, and a hook cannot bracket it.
 		// The gap outside it is the one a hook could explain.
 		$record            = $this->healthy_record();
 		$record['entries'] = [
@@ -1258,8 +1265,8 @@ class FindingsTest extends TestCase {
 	/**
 	 * The live hub request: the theme's `require_once` runs inside
 	 * `template_redirect`, and the nested engine's own producer opens
-	 * `gyrobase` 306ms later. That window sits inside an open span, but no
-	 * span measures it — the hook's duration covers it only as unexplained
+	 * `gyrobase` 306ms later. That window sits inside an open span, but a span
+	 * never measures it — the hook's duration covers it only as unexplained
 	 * self time.
 	 */
 	public function test_a_gap_inside_an_open_span_before_its_first_child_reports(): void {
@@ -1610,7 +1617,10 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 2, $found['metric']['from_i'] );
 	}
 
-	/** A record resolved to no tree is not folded again from its entries. */
+	/**
+	 * A record whose resolution holds no tree is not folded again from its
+	 * entries.
+	 */
 	public function test_a_resolved_empty_tree_is_not_refolded(): void {
 		$record = [
 			'flame_data' => [],
@@ -1903,10 +1913,11 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A record no rule governs was written by a producer that consults no
-	 * rule: `Log_Manager` writes one only after a log rule matched, and stamps
-	 * its id. The record itself proves the request was logged, and no rule
-	 * edit — least of all WordPress lifecycle hooks — reaches its producer.
+	 * A record without a governing rule was written by a producer that consults
+	 * no rule: `Log_Manager` writes one only after a log rule matched, and
+	 * stamps its id. The record itself proves the request was logged, and no
+	 * rule edit — least of all WordPress lifecycle hooks — reaches its
+	 * producer.
 	 */
 	public function test_a_record_no_rule_governs_is_not_called_unmeasured(): void {
 		$findings = Findings::for_request( $this->ruleless_engine_record(), null );
@@ -1931,8 +1942,8 @@ class FindingsTest extends TestCase {
 	/**
 	 * A record stamped with a rule this ruleset does not hold is a provenance
 	 * finding, not an instrumentation one: the site ran a ruleset this hub
-	 * never pushed, or the rule was deleted since. Calling it "no rule
-	 * governs" sends the operator to the rule editor, where no edit reaches it.
+	 * never pushed, or the rule was deleted since. Calling it "no rule governs"
+	 * sends the operator to the rule editor, where an edit never reaches it.
 	 */
 	public function test_a_stamped_rule_this_ruleset_lacks_is_named_not_called_ungoverned(): void {
 		$record            = $this->healthy_record();
@@ -2373,7 +2384,7 @@ class FindingsTest extends TestCase {
 		$this->assertArrayNotHasKey( 'field', $found['proposal'] );
 		$this->assertSame( '', $found['proposal']['undo'] );
 		$this->assertStringContainsString( 'render is a custom event', $found['proposal']['why'] );
-		$this->assertStringContainsString( 'no rule edit reaches inside it', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'a rule edit cannot reach inside it', $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'enabled on this rule', $found['proposal']['why'] );
 		// A childless span has no children to send the reader to.
 		$this->assertStringNotContainsString( 'children', $found['detail'] );
@@ -2874,8 +2885,8 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A Query Monitor timer is the code's own measurement, logged whatever
-	 * the rule says: no rule edit reaches it, and it is no custom event.
+	 * A Query Monitor timer is the code's own measurement, logged whatever the
+	 * rule says: a rule edit never reaches it, and it is not a custom event.
 	 */
 	public function test_a_dominant_query_monitor_span_proposes_nothing(): void {
 		$record = $this->healthy_record();
@@ -2970,7 +2981,7 @@ class FindingsTest extends TestCase {
 	/**
 	 * One load dominating the profiled time is for the dominant span to name,
 	 * but when the OTHER loads alone still hold a large share of the request,
-	 * that cost belongs to no dominant span and is still reported.
+	 * that cost does not belong to any dominant span and is still reported.
 	 */
 	public function test_the_rest_of_the_loads_are_reported_beside_a_dominant_one(): void {
 		$record                = $this->loaded_record();
@@ -3191,10 +3202,10 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * The same load UNFOLDED, which is how nearly every record arrives: a
-	 * stored tree keeps each render as its own sibling, so no single one holds
-	 * 60% and the detector fell back to the whole request. Siblings sharing a
-	 * name are one repeat at every depth, so this names the same leaf and the
-	 * same multiplier the folded record does.
+	 * stored tree keeps each render as its own sibling, so a single one never
+	 * holds 60% and the detector fell back to the whole request. Siblings
+	 * sharing a name are one repeat at every depth, so this names the same leaf
+	 * and the same multiplier the folded record does.
 	 */
 	public function test_same_name_siblings_in_a_stored_tree_dominate_as_one_repeat(): void {
 		$revisions = 'the_content hook: WP_REST_Revisions_Controller->prepare_item_for_response';
@@ -3309,7 +3320,10 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'Most of it', $found['detail'] );
 	}
 
-	/** Where the descent stops on a body nothing inside explains, the proposal is to see inside THAT frame. */
+	/**
+	 * Where the descent stops on an unexplained body, the proposal is to see
+	 * inside THAT frame.
+	 */
 	public function test_a_descent_stopping_on_an_unexplained_body_proposes_seeing_inside_it(): void {
 		$render = [ 'name' => 'render_block hook', 'value' => 1300.0, 'children' => $this->frames( 'wptexturize @10', [ 120.0 ] ) ];
 
@@ -3322,7 +3336,7 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * A 4s request whose `do_blocks` holds 52% of it, short of dominant, so
-	 * no dominant span names the frames inside it.
+	 * a dominant span never names the frames inside it.
 	 *
 	 * @param list<array<string,mixed>> $inside What runs inside `do_blocks`.
 	 */
@@ -3346,7 +3360,7 @@ class FindingsTest extends TestCase {
 	/**
 	 * The same post save's queries: `sql` ran 172 times across three callers,
 	 * and two of `WP_Query->get_posts`' 31 calls hold 84% of its time. That is
-	 * two slow queries beside quick ones, and no caller repeats.
+	 * two slow queries beside quick ones, and the callers do not repeat.
 	 */
 	public function test_a_few_slow_calls_of_a_caller_are_not_repetition(): void {
 		$quick              = \array_fill( 0, 29, 310.0 / 29 );
@@ -3639,7 +3653,8 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * Five seconds in one call beside 500 calls of 4ms are not calls alike:
-	 * the slow one is for the dominant span to name, so no repeat is claimed.
+	 * the slow one is for the dominant span to name, so a repeat is not
+	 * claimed.
 	 */
 	public function test_calls_unlike_each_other_are_not_a_repetition(): void {
 		$record                = $this->repeat_record( $this->frames( 'sql: Slow_Report->rows', [ 5000.0, ...\array_fill( 0, 500, 4.0 ) ] ) );
@@ -3795,8 +3810,8 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * One 1000ms leaf beside nine wrappers of ninety-nine frames: the leaf is
-	 * the slowest call by its own time, which no estimate from the merged
-	 * group may shrink, so the calls are unlike.
+	 * the slowest call by its own time, which an estimate from the merged
+	 * group may never shrink, so the calls are unlike.
 	 */
 	public function test_a_slow_leaf_beside_wrappers_is_not_a_repetition(): void {
 		$blocks = [ [ 'name' => 'render_block hook', 'value' => 1000.0, 'children' => [] ] ];

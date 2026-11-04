@@ -103,8 +103,8 @@ final class Flame_Tree {
 	/**
 	 * Every name above: its hook category (a key of `hook_categories.json`
 	 * `_colors`, so an operator recolouring a category recolours its spans),
-	 * and the `Findings` kind of a span no rule edit reaches inside —
-	 * `upkeep`, the plugin's own work — or null for a point event.
+	 * and the `Findings` kind of a span that a rule edit never reaches
+	 * inside — `upkeep`, the plugin's own work — or null for a point event.
 	 *
 	 * The builders' and the overview-prefetch job's own spans take Event
 	 * Logger, except the two that hold other platform spans, which take a
@@ -114,8 +114,8 @@ final class Flame_Tree {
 	 * takes Event Logger Snapshot. The performance readers' reads nest inside
 	 * a verb's command span or a prefetch answer, and take Event Logger
 	 * Reads. All four are this plugin's own categories, described and
-	 * pattern-free like `Other`, so no third-party hook category's colour
-	 * moves a platform span.
+	 * pattern-free like `Other`, so a third-party hook category's colour
+	 * never moves a platform span.
 	 *
 	 * @var array<string,array{0: string, 1: 'upkeep'|null}>
 	 */
@@ -530,8 +530,8 @@ final class Flame_Tree {
 	 * its right edge. Overlap has no honest side-by-side layout anyway, and
 	 * `withTimeSpacers` declines to position such a family for that reason.
 	 *
-	 * There is no merged case here because no merged node reaches this: every
-	 * node `build_flame_data()` makes is one span, and
+	 * There is no merged case here because a merged node never reaches this:
+	 * every node `build_flame_data()` makes is one span, and
 	 * `merge_flame_children_incremental()` drops `t` on the way into the
 	 * aggregate, so `$start` is null and the sum stands. Restoring `t` there
 	 * would need the guard `Flame_Fold::positioned()` carries for the folded
@@ -637,7 +637,7 @@ final class Flame_Tree {
 	 * the last three are logged whatever the rule says, and calling any of
 	 * these a custom event proposes a rule edit that changes nothing. A `qm`
 	 * span is a Query Monitor timer, written on every logged request whatever
-	 * the rule names, so no rule binds it either. A hook
+	 * the rule names, so a rule never binds it either. A hook
 	 * is known by its BASE name: with hook tracing on, the frame carries the
 	 * caller too.
 	 *

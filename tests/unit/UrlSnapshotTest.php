@@ -397,7 +397,7 @@ final class UrlSnapshotTest extends TestCase {
 	 */
 	public static function unmapped_scopes(): array {
 		return [
-			'an unmapped field' => [ [ 'country' => [ 'NZ' ] ], 'the URL snapshot scopes no country' ],
+			'an unmapped field' => [ [ 'country' => [ 'NZ' ] ], 'the URL snapshot does not scope country' ],
 			'two servers'       => [ [ 'server' => [ self::KAKA, 'tui-6103.example' ] ], 'the URL snapshot scopes one server, not 2' ],
 			'two pages'         => [ [ 'page' => [ 'a1b2c3d4e5f6', 'f6e5d4c3b2a1' ] ], 'the URL snapshot scopes one page, not 2' ],
 		];

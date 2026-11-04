@@ -1331,7 +1331,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( [ 41000.0, 2417.0, 300.0, null, null ], \array_column( $brief['worst_requests'], 'duration_ms' ) );
 	}
 
-	/** A figure nobody measured stays null; a measured one is the number. */
+	/** An unmeasured figure stays null; a measured one is the number. */
 	public function test_a_measured_figure_is_the_number_or_null(): void {
 		$this->assertNull( Ask_Assembler::measured_figure( null ) );
 		$this->assertSame( 0.0, Ask_Assembler::measured_figure( 0 ) );

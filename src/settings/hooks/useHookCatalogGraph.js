@@ -3,8 +3,8 @@
  * a batched-poll slice.
  *
  * The ask rides the router's tick, so it travels in the same POST as everything
- * else due that tick, and `isOpen` gates the whole graph: a picker nobody opens
- * mounts no nodes and sends no request.
+ * else due that tick, and `isOpen` gates the whole graph: a picker that is
+ * never opened mounts no nodes and sends no request.
  *
  * An open picker keeps asking, which is what a modal carrying no error UI
  * needs. A refusal publishes an error rather than a taxonomy, so it clears the
@@ -35,7 +35,7 @@ const VIEW = 'hook-catalog:view';
 const POLL_INTERVAL_MS = 10000;
 
 /**
- * The model read while no view node exists: a closed picker mounts none, and
+ * The model read without a view node: a closed picker mounts none, and
  * the first render of an open one precedes the mount. It matches the view
  * class's own empty slice, where `hooksByCategory: null` marks a taxonomy that
  * has not arrived.

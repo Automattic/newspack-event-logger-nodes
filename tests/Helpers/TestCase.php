@@ -116,7 +116,7 @@ abstract class TestCase extends RuntimeTestCase {
 		$sb = new Stats_Builder_Node();
 		$sb->name( 'sb' );
 		$sb->arguments( [] );
-		// As a worker loading stats-builder.tsl names it: no user is current.
+		// As a worker loading stats-builder.tsl names it, with no current user.
 		$user = $GLOBALS['_current_user_id'] ?? null;
 		unset( $GLOBALS['_current_user_id'] );
 		try {
@@ -264,7 +264,7 @@ abstract class TestCase extends RuntimeTestCase {
 				$table->sink( $sink );
 			}
 		}
-		$reply = $capture->captured[0] ?? throw new \LogicException( 'the facts table answered no ROWS' );
+		$reply = $capture->captured[0] ?? throw new \LogicException( 'the facts table returned no ROWS' );
 		if ( 0 !== ( \Newspack_Nodes\Core::num_int( $reply[ \Newspack_Nodes\Message::TYPE ] ) & \Newspack_Nodes\Message::TM_ERROR ) ) {
 			throw new \LogicException( 'the facts table refused ROWS: ' . \Newspack_Nodes\Core::as_string( $reply[ \Newspack_Nodes\Message::VALUE ] ) );
 		}
@@ -571,8 +571,8 @@ abstract class TestCase extends RuntimeTestCase {
 	/**
 	 * Classify against the `tests/fixtures/owners` tree, whose one plugin is
 	 * `kea-7746` and whose `abspath` is core, so a test file calling into it
-	 * sits under no root. This plugin's own `includes/` is owned too, as it is
-	 * on a site, rooted as mu-plugins: the one root that holds it without
+	 * sits outside every root. This plugin's own `includes/` is owned too, as
+	 * it is on a site, rooted as mu-plugins: the one root that holds it without
 	 * holding the fixtures beside it, so its files read `mu:app` and
 	 * `mu:class-log-manager`.
 	 */

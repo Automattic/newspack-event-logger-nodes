@@ -94,7 +94,7 @@ describe( 'findSubject', () => {
 		).toBeNull();
 	} );
 
-	it( 'finds a URL subject by its hash, and nothing for no subject', () => {
+	it( 'finds a URL subject by its hash, and nothing without a subject', () => {
 		expect(
 			findSubject( [ KAHU, TIEKE ], {
 				field: 'url',

@@ -104,8 +104,8 @@ class Hook_Categorizer {
 	/**
 	 * Get registered hooks grouped by category.
 	 *
-	 * Drops this plugin's and the substrate's own hooks, sends anything matching
-	 * no pattern to `Other`, and omits the categories that ended up empty. The
+	 * Drops this plugin's and the substrate's own hooks, sends anything
+	 * unmatched to `Other`, and omits the categories that ended up empty. The
 	 * color map seeds the groups, so its key order is the picker's section
 	 * order; a category named only by a user pattern or override gets no seeded
 	 * bucket and lands after them, in first-hook order.
@@ -145,8 +145,8 @@ class Hook_Categorizer {
 	 * `preg_match()` per matcher, and the shipped set is one matcher. The scan
 	 * runs under a `pcre.backtrack_limit` of 10000, restored in `finally`,
 	 * including on a throw. A combined matcher that hits it walks its patterns
-	 * one at a time under the same limit, so no pattern is given more than the
-	 * walk would give it.
+	 * one at a time under the same limit, so a pattern is never given more than
+	 * the walk would give it.
 	 *
 	 * @param string $hook_name Hook name.
 	 * @return string Category name, or `Other` when nothing matches.

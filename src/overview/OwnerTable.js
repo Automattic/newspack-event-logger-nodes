@@ -21,7 +21,7 @@ import RequestProfile, {
 } from './RequestProfile';
 import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 
-/** The owner the server names for time no code claims. */
+/** The owner the server names for time that is not claimed by any code. */
 const UNOWNED = '(unowned)';
 
 /**

@@ -24,13 +24,13 @@ export const views = registerSliceViews( {
 	 * record, which is what the tab's extra ticks wait for — comes inside it.
 	 *
 	 * A worker writes the record moments after the page rendered, so the first
-	 * few asks find nothing and `dump_request` throws. That reply is a
-	 * TM_ERROR the base folds into `error`, leaving `request` null, which the
-	 * tab renders as "still processing". `error` is declared so the failure
-	 * lands in the model and the next good reply clears it; the tab prints
-	 * only a stats outage, which no retry mends, because a pending write and
-	 * a refused session are the same wait and the poll retries both. The
-	 * model declares no `loading` either: the tab's "Loading…" is
+	 * few asks find nothing and `dump_request` throws. That reply is a TM_ERROR
+	 * the base folds into `error`, leaving `request` null, which the tab
+	 * renders as "still processing". `error` is declared so the failure lands
+	 * in the model and the next good reply clears it; the tab prints only a
+	 * stats outage, which a retry never mends, because a pending write and a
+	 * refused session are the same wait and the poll retries both. The model
+	 * declares no `loading` either: the tab's "Loading…" is
 	 * `undefined === model`, before the poll mounts this node.
 	 *
 	 * A payload that is not an object returns null, keeping the record already

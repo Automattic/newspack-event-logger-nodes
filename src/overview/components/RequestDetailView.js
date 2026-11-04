@@ -32,11 +32,11 @@ import { errorStatus } from '../../components/errorStatus';
 
 /**
  * `requestDetail` is the durable request body `record_of()` writes and
- * `dump_request` reads back: `request_url`, `request_method`, `timestamp` (seconds),
- * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status`,
- * `folded`, plus the `findings` `dump_request` computes for it — absent when
- * no detector ran, which is not the same answer as an empty list — and
- * `flame_cut`, true when the flame lookup ran out of time.
+ * `dump_request` reads back: `request_url`, `request_method`, `timestamp`
+ * (seconds), `duration_ms`, `peak_mb`, `status_code`, `profiles`,
+ * `error_status`, `folded`, plus the `findings` `dump_request` computes for it
+ * — absent when the detectors did not run, which is not the same answer as an
+ * empty list — and `flame_cut`, true when the flame lookup ran out of time.
  *
  * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
  * clean request, and one of the shared `ERROR_STATUSES` codes for anything

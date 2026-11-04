@@ -168,7 +168,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** What a `urls` listing totals, ungrouped, live and in the snapshot. */
 	public const URL_TOTALS = [ 'count', 'timed', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
 
-	/** What one URL's stats read beyond `URL_MEASURES`, which no snapshot keeps. */
+	/**
+	 * What one URL's stats read beyond `URL_MEASURES`, which a snapshot never
+	 * keeps.
+	 */
 	private const URL_DETAIL_EXTRAS = [ 'p50_ms', 'p95_ms', 'p99_ms', 'error_rate' ];
 
 	/** What a `urls` row measures. */
@@ -193,7 +196,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		'day'          => 'UTC days since the epoch',
 		'url'          => 'a 12-hex URL hash',
 		'page'         => 'a 12-hex page hash',
-		'status'       => 'the HTTP status code, `Unknown` where the request answered none',
+		'status'       => 'the HTTP status code, `Unknown` where the request has none',
 		'status_class' => 'the first digit of the status, 1 to 5, which `5xx` also reads as, or `Unknown`',
 		'method'       => '`GET`, `POST`, `HEAD`, `DELETE`, `PUT`, `PATCH`, `OPTIONS`, `CLI` for WP-CLI, or `Other` for any other',
 		'country'      => 'the GeoIP country code, such as `US`, `Unknown` where none',
@@ -620,9 +623,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `url:` or `page:` brief — stats, worst recent requests, and the
-	 * cold-start finding when nothing governs it, of the requests `dump_url`
-	 * reads under the same server, `filter` and `bucket`, under the rule
-	 * `subject_rule()` finds.
+	 * cold-start finding when it falls under no rule, of the requests
+	 * `dump_url` reads under the same server, `filter` and `bucket`, under the
+	 * rule `subject_rule()` finds.
 	 *
 	 * @param string      $field   A `SUBJECTS` field, the descriptor's type.
 	 * @param string      $hash    The hash the descriptor names.
@@ -630,7 +633,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param Url_Filters $filters The url filters in force.
 	 * @param int         $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When no request row names the hash.
+	 * @throws \RuntimeException When the hash has no request row.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function ask_subject( string $field, string $hash, string $server, array $filters, int $now ): array {
@@ -655,7 +658,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param list<Context_Entry> $context The parsed containers, outermost last.
 	 * @param string       $server  Server the modal is scoped to; rides the subject's pointer.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When no row names the rid, or the rows did not open.
+	 * @throws \RuntimeException When the rid has no row, or the rows did not
+	 *                           open.
 	 */
 	private static function ask_request( string $rid, array $context, string $server ): array {
 		$record  = self::load_request( $rid );
@@ -775,7 +779,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int          $now      The reply's clock.
 	 * @param int          $limit    Most requests listed, newest first.
 	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, filter: array<string,list<scalar>>, requests_capped: bool, bucket: string, buckets: list<array{0:int,1:int}>, available: bool}
-	 * @throws \RuntimeException When no request row names the hash.
+	 * @throws \RuntimeException When the hash has no request row.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
 	private static function subject_detail( string $field, string $hash, array $owner, string $server, array $tokens, string $spelling, int $now, int $limit ): array {
@@ -818,7 +822,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param list<array{0:int,1:int}>                                                 $buckets The buckets read.
 	 * @param int                                                                      $now     The reply's clock.
 	 * @return array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}
-	 * @throws \RuntimeException When no request row names the hash.
+	 * @throws \RuntimeException When the hash has no request row.
 	 */
 	private static function subject_stats( string $field, string $hash, string $server, array $answer, array $buckets, int $now ): array {
 		$found = [] === $answer['rows'] ? null : \array_combine( $answer['columns'], $answer['rows'][0] );
@@ -933,7 +937,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *                              fallback answer for; '' is every server.
 	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When no board holds the category, the name is a callback row, or a subject's stats did not open or name it.
+	 * @throws \RuntimeException When the category is missing from every board,
+	 *                           the name is a callback row, or a subject's
+	 *                           stats did not open or name it.
 	 */
 	private static function ask_category( string $name, array $context, string $server, int $now ): array {
 		// A callback row is not a board; its time counts inside its hook.
@@ -1026,7 +1032,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A subject's category profile over `$buckets`, in the leaderboard's
-	 * shape, or null over no profiled request.
+	 * shape, or null without a profiled request.
 	 *
 	 * @param string                     $field   A `SUBJECTS` field, the one the hash is of.
 	 * @param string                     $hash    The hash it names.
@@ -1043,7 +1049,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * A subject's aggregate flame, folded from the flames its newest
 	 * FLAME_REQUEST_LIMIT listed requests stored, in the display shape: the
-	 * empty tree over no stored flame.
+	 * empty tree without a stored flame.
 	 *
 	 * Each partition those requests sit in is asked once for their
 	 * rids' flames, no further back than the oldest one's `finished_at`,
@@ -1164,8 +1170,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `SUBJECTS` container a context chain names — for a span or a
-	 * category picked inside a window, the `url:` or `page:` beside no
-	 * request — or null when it names none.
+	 * category picked inside a window, the `url:` or `page:` without a
+	 * request beside it — or null when it names none.
 	 *
 	 * @param list<Context_Entry> $context The parsed containers.
 	 * @return Context_Entry|null
@@ -1206,7 +1212,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string $rid Request id to load.
 	 * @return array<array-key,mixed>
-	 * @throws \RuntimeException When the rows did not open, no row names the rid, or its place holds no record of it.
+	 * @throws \RuntimeException When the rows did not open, the rid has no row,
+	 *                           or its place holds no record of it.
 	 */
 	private static function load_request( string $rid ): array {
 		$row    = self::row_of( $rid );
@@ -1267,7 +1274,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The refusal a request no row names answers.
+	 * The refusal for a request that has no row.
 	 *
 	 * @param string $rid Request id.
 	 */
@@ -1276,16 +1283,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The flames stored on one partition for `$rids`, by rid: one
-	 * `locate_by()` over its flame index, newest first, then one
-	 * `read_many()`. A rid with no stored flame is absent. The walk ends once
-	 * it holds every rid, or at the first segment whose index took its last
-	 * line before `$since`: the builder appends a request's flame no earlier
-	 * than the tick its row's `finished_at` is clamped to, on this host's
-	 * clock, so no older segment holds one. `$deadline` bounds the rest, and
-	 * a walk it cuts answers null rather than the part it read. On a started
-	 * record the walk is a `flame lookup` span labelled with the partition,
-	 * closing on how many of its rids it found, or `cut`.
+	 * The flames stored on one partition for `$rids`, by rid: one `locate_by()`
+	 * over its flame index, newest first, then one `read_many()`. A rid with no
+	 * stored flame is absent. The walk ends once it holds every rid, or at the
+	 * first segment whose index took its last line before `$since`: the builder
+	 * appends a request's flame no earlier than the tick its row's
+	 * `finished_at` is clamped to, on this host's clock, so an older segment
+	 * never holds one. `$deadline` bounds the rest, and a walk it cuts answers
+	 * null rather than the part it read. On a started record the walk is a
+	 * `flame lookup` span labelled with the partition, closing on how many of
+	 * its rids it found, or `cut`.
 	 *
 	 * @param int          $partition The flames partition.
 	 * @param list<string> $rids      Request ids.
@@ -1435,12 +1442,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the job stored that server's answer, which it does for every server its
 	 * list names. A scoped `overview` it stored none for reads its totals and
 	 * leaderboard live and takes the stored unscoped overview's `servers`,
-	 * which no scope changes, as `answer_overview()` admits them. A blank
+	 * which scopes never change, as `answer_overview()` admits them. A blank
 	 * server scopes nothing, so it is the unscoped question. A `urls` question
-	 * the snapshot cannot answer, and a question no stored question or
-	 * template keys, never open it. A snapshot that opens but will not read, a
-	 * stored answer that will not decode, and a stored overview naming no
-	 * `servers` each say so once a window and answer live.
+	 * the snapshot cannot answer, and a question that is not keyed by any
+	 * stored question or template, never open it. A snapshot that opens but
+	 * will not read, a stored answer that will not decode, and a stored
+	 * overview naming no `servers` each say so once a window and answer live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
@@ -1476,7 +1483,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$listed = null;
 		}
 		if ( 'overview' === $verb && null !== $listed && ! \is_array( $listed['servers'] ?? null ) ) {
-			Core::print_less_often( 'performance: the stored overview names no servers' );
+			Core::print_less_often( 'performance: the stored overview has no servers list' );
 			$stored = null;
 			$listed = null;
 		}
@@ -1592,7 +1599,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $now   The reply's clock.
 	 * @param Url_Snapshot|null      $built The snapshot being built; null reads the rows.
 	 * @return array<string,mixed>
-	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
+	 * @throws \InvalidArgumentException On a verb without a stored answer, or
+	 *                                   what the verb refuses.
 	 */
 	public static function answer_live( string $verb, array $args, int $now, ?Url_Snapshot $built ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
@@ -1675,8 +1683,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * dearest per request first: `ms_per_request` and `calls_per_request`
 	 * are its summed `ms` and `calls` over the `requests` of the
 	 * `(unmeasured)` row, which counts every request folded, and `share` its
-	 * `ms` over every row's. That row is no owner and is not listed. Empty
-	 * over no folded request.
+	 * `ms` over every row's. That row is not an owner and is not listed. Empty
+	 * without a folded request.
 	 *
 	 * @param array<string,list<scalar>> $filter  Fields the `owners` source holds.
 	 * @param list<array{0:int,1:int}>   $buckets The board's buckets.
@@ -1856,7 +1864,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *  - `count` = sum_count / count — mean calls per request.
 	 *  - entries are per-appearance means (sum / samples).
 	 *
-	 * Over no profiled request each mean is null, as `mean()` answers. An
+	 * Without a profiled request each mean is null, as `mean()` answers. An
 	 * entry whose sample count is zero is dropped rather than divided. Past `ENTRY_TRIM_ABOVE` entries a category keeps only its
 	 * `ENTRY_TRIM_TO` slowest, ranked by average exclusive time, so one pathological
 	 * category cannot flood a payload.
@@ -2564,8 +2572,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * handler runs, so a handler reads `$args['<name>']` typed and defaulted,
 	 * and a token that does not fit never reaches it. A handler throws a
 	 * RuntimeException on a value its declaration cannot rule out; the
-	 * interpreter turns either throw into a TM_COMMAND|TM_ERROR reply, so no
-	 * handler returns an error shape.
+	 * interpreter turns either throw into a TM_COMMAND|TM_ERROR reply, so a
+	 * handler never returns an error shape.
 	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed>
@@ -2581,7 +2589,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the last ' . $span . ' buckets, the chart\'s: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the category leaderboard over them. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where none is stored or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
+					'description' => 'The site over the last ' . $span . ' buckets, the chart\'s: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the category leaderboard over them. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where that run stored none or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
@@ -2590,7 +2598,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures; it owns the page field, so a `page=` or `page!=` filter beside it is refused. `--filter=page=<page hash>` keeps that one page row, as any filter narrows the pages. `rows` is the exact count the pager lists, the pages or under `--page` that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `page` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures; it owns the page field, so a `page=` or `page!=` filter beside it is refused. `--filter=page=<page hash>` keeps that one page row, as any filter narrows the pages. `rows` is the exact count the pager lists, the pages or under `--page` that page\'s URLs, and `totals` counts both `urls` and `pages`. Where a row holds no timed request, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question that sets no arg other than `sort`, `order`, `limit`, `offset`, `server`, `page` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -2628,7 +2636,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL, named by `--url=<hash>` or first by position, or every shape of one page, named by `--page=<page hash>`, from its request rows, worker traffic counted; exactly one of the two is named, and both or neither is refused. A page answers the same shape as a URL, every read keyed on its page: `stats.hash` is the page hash, `stats.url` the name a `urls` page row of several shapes shows, `https://` and the page, and an unknown page is `Page not found`. Its `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the `bucket` selection or, with none, the ' . $kept . ' buckets the timings keep, null over no profiled request; `aggregate_owners` follows the same selection. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list; a filter naming `url` is refused beside `--url`, and one naming `page` beside `--page`. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL, or to the page by `page=`.',
+					'description' => 'One URL, named by `--url=<hash>` or first by position, or every shape of one page, named by `--page=<page hash>`, from its request rows, worker traffic counted; exactly one of the two is named, and both or neither is refused. A page answers the same shape as a URL, every read keyed on its page: `stats.hash` is the page hash, `stats.url` the name a `urls` page row of several shapes shows, `https://` and the page, and an unknown page is `Page not found`. Its `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them unless a filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the `bucket` selection or, with none, the ' . $kept . ' buckets the timings keep, null without a profiled request; `aggregate_owners` follows the same selection. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list; a filter naming `url` is refused beside `--url`, and one naming `page` beside `--page`. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where its duration was not measured; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL, or to the page by `page=`.',
 					'args'        => [
 						[ 'name' => 'url', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A URL\'s hash: answers that URL. It owns the url field, so a `url=` or `url!=` filter beside it is refused. Refused beside `page`.' ],
 						[ 'description' => 'A page\'s hash, `page_hash`: answers every shape of that page in place of one URL. It owns the page field, so a `page=` or `page!=` filter beside it is refused. Refused beside `url`.' ] + self::PAGE_ARG,
@@ -2706,13 +2714,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_request',
 					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when no row names the rid (aged past the ' . $kept . ' buckets the rows keep, or not yet written) or when its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner, though the request still counts in every aggregate.',
+					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when the rid is not in any row (aged past the ' . $kept . ' buckets the rows keep, or not yet written) or when its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner, though the request still counts in every aggregate.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				$result = self::load_request( Core::as_string( $args['rid'] ) );
-				// Findings ride the record; no model is involved in them.
+				// Findings ride the record; they involve no model.
 				$rule               = self::rule_for_record( $result );
 				$result['findings'] = Findings::for_request( $result, $rule );
 				$result['caveat']   = Findings::caveat();

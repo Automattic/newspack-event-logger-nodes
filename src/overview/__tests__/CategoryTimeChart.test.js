@@ -305,7 +305,7 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'plots a mean over no calls as a gap, where a rate over them is a real 0', () => {
+	it( 'plots a mean over zero calls as a gap, where a rate over them is a real 0', () => {
 		const data = cats( {
 			[ SLOTS[ 0 ] ]: { db: [ 900, 0 ] },
 			[ SLOTS[ 1 ] ]: { db: [ 3000, 12 ] },

@@ -44,10 +44,10 @@ final class Owner {
 	/** The owner of the host's own code, in its managed tree or its scripts. */
 	public const PLATFORM = 'platform';
 
-	/** The bucket for time no owner claims. */
+	/** The bucket for time that is not claimed by any owner. */
 	public const UNOWNED = '(unowned)';
 
-	/** The bucket for time no frame accounts for. */
+	/** The bucket for time that is not accounted for by any frame. */
 	public const UNMEASURED = '(unmeasured)';
 
 	/** What an mu-plugin's slug follows. */
@@ -157,7 +157,7 @@ final class Owner {
 	 * The owner of a file.
 	 *
 	 * @param string $file A path as PHP names it.
-	 * @return string The owner, or '' when no root holds the file.
+	 * @return string The owner, or '' when the file is outside every root.
 	 */
 	public static function of( string $file ): string {
 		if ( isset( self::$owners[ $file ] ) ) {
@@ -393,7 +393,7 @@ final class Owner {
 	}
 
 	/**
-	 * Whether an owner is a plugin: a bare slug, which no other owner is.
+	 * Whether an owner is a plugin: a bare slug, which other owners are not.
 	 *
 	 * @param string $owner An owner `of()` answered.
 	 */

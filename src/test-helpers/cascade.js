@@ -137,7 +137,7 @@ const declarationsOf = ( rule ) =>
  * Resolve what an element actually gets from stylesheets emitted in order.
  *
  * Media-query blocks are skipped: jsdom reports no viewport, so honouring them
- * would invent a win no browser agrees with.
+ * would invent a win that browsers do not agree with.
  *
  * @param {Element}                  element     The rendered element.
  * @param {import('postcss').Root[]} stylesheets Compiled sheets, in bundle emission order.

@@ -75,7 +75,7 @@
     <h3><span class="mono">fire()</span> rides the Router's TIMER, every 1 s</h3>
     <p><span class="mono">set_inflight_target gyroscope:partition</span> arms it: a non-empty string target registers the hitchhike, and any other value stops the timer. <span class="mono">inflight_snapshot()</span> builds one row per rid, with twelve keys:</p>
     <div class="keys"><span>method</span><span>url</span><span>state</span><span>what</span><span>time_ms</span><span>est_ms</span><span>start_time</span><span>last_log_ts</span><span>tracker_ts</span><span>lag_ms</span><span>remote_addr</span><span>user_agent</span></div>
-    <p><span class="mono">state</span> is the innermost open span's name, or <span class="mono">process</span> when none is open. <span class="mono">est_ms</span> is <span class="mono">time_ms</span> plus the age of <span class="mono">tracker_ts</span>, so an idle row's estimate keeps growing.</p>
+    <p><span class="mono">state</span> is the innermost open span's name, or <span class="mono">process</span> outside every span. <span class="mono">est_ms</span> is <span class="mono">time_ms</span> plus the age of <span class="mono">tracker_ts</span>, so an idle row's estimate keeps growing.</p>
   </div>
 
   <div class="card" id="s3" style="margin-top:10px"><div class="where">which rows go</div>
@@ -100,7 +100,7 @@
   <div class="card" id="s6" style="margin-top:10px"><div class="where">Request_Builder_Node · on completion</div>
     <h3>A finished request becomes a ten-key summary</h3>
     <p>On <span class="mono">process (complete)</span>, or when the LRU's timed rotation evicts a stalled request with <span class="mono">error_status</span> T, <span class="mono">emit_request()</span> writes the full document to <span class="mono">requests.pN</span> and the summary to <span class="mono">completed:tee</span>, which copies it to <span class="mono">completed.p0</span> and <span class="mono">gyroscope.p0</span>.</p>
-    <p>Its <span class="mono">state</span> is always <span class="mono">complete</span>, and it gets the same fit and the same rate-limited drop. The rid then leaves the map, so no later tick offers it.</p>
+    <p>Its <span class="mono">state</span> is always <span class="mono">complete</span>, and it gets the same fit and the same rate-limited drop. The rid then leaves the map, so a later tick never offers it.</p>
   </div>
 </div>
 

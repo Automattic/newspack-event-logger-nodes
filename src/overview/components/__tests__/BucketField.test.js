@@ -560,7 +560,7 @@ describe( 'BucketField', () => {
 	} );
 
 	it.each( [ '4:55-5:30 PM', '13:00 PM', '0:30 am', '4:55 p.m.', '24:00' ] )(
-		'refuses %j as no time it reads',
+		'refuses %j as a time it cannot read',
 		( typed ) => {
 			const field = mountField( '' );
 			type( field.input(), typed );

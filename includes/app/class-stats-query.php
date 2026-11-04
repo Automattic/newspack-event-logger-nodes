@@ -272,7 +272,7 @@ final class Stats_Query {
 	/**
 	 * The distinct URLs and pages a selection holds, counted by the URL's
 	 * hash and the page's hash with its server: a partition files a URL
-	 * under its own id, so no partial composes and every arm's rows read
+	 * under its own id, so partials never compose and every arm's rows read
 	 * whole.
 	 */
 	private const DISTINCT = [
@@ -283,7 +283,7 @@ final class Stats_Query {
 	/**
 	 * Each request measure's fold, which depends on the measure alone, so
 	 * one table serves `requests`, `requests_hourly` and `urls_window`; a
-	 * measure it lacks composes from no partials.
+	 * measure it lacks does not compose from partials.
 	 */
 	private const REQUEST_FOLDS = [
 		'count'       => [ 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
@@ -594,7 +594,8 @@ final class Stats_Query {
 	/**
 	 * Every row a spec groups, in its sort's order, read in one statement up
 	 * to `$most`, and whether more lay past them: an unpaged `run()` for a
-	 * caller that wants the whole answer, which no page of `MAX_LIMIT` holds.
+	 * caller that wants the whole answer, which a page of `MAX_LIMIT` cannot
+	 * hold.
 	 *
 	 * @api Performance_CI_Node, whose leaderboard and page shapes read whole.
 	 * @param array<string,mixed> $spec As `run()` takes it, with no `limit`,
@@ -732,7 +733,7 @@ final class Stats_Query {
 	 * under its own. A sort naming a group field orders the rows by it, its
 	 * ties by the other group fields in their order, so a sort by the first
 	 * is the order the GROUP BY already emits and SQLite sorts once; with no
-	 * sort they come in no order. An empty window stores an empty table.
+	 * sort they come unordered. An empty window stores an empty table.
 	 * The caller runs the statement inside a read transaction begun before
 	 * this call, so the statement reads the files the window check read.
 	 * Third comes the table it reads, as `run()` reports one.
@@ -845,7 +846,7 @@ final class Stats_Query {
 			if ( '' === $sort ) {
 				return [] === $groups ? '' : ' ORDER BY ' . \implode( ', ', $groups );
 			}
-			$sorted = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} names no group or measure" ) );
+			$sorted = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} is not a group or measure" ) );
 			return ' ORDER BY ' . self::ranking( $sorted, $groups, $order, true );
 		};
 		$page = $order_by( $spec['sort'], $spec['order'] );
@@ -1128,7 +1129,8 @@ final class Stats_Query {
 	 * @param string $table A table `run()` reads.
 	 * @param string $name  One of its measures.
 	 * @return array{0:string, 1:list<string>}
-	 * @throws \InvalidArgumentException On a measure the table folds from no partials.
+	 * @throws \InvalidArgumentException On a measure the table does not fold
+	 *                                   from partials.
 	 */
 	public static function fold( string $table, string $name ): array {
 		$def = self::TABLES[ $table ] ?? null;
@@ -1343,8 +1345,8 @@ final class Stats_Query {
 	 * after its watermark and before the range and any after its end, read
 	 * from the table it sums by `Stats_Builder_Node::window_columns()`,
 	 * grouped by its key. A sum subtracts. An extreme the edge held is read
-	 * again over the range, a seek of that key. A row left counting no
-	 * request has no last bucket, so the range leaves it out, and one that
+	 * again over the range, a seek of that key. A row left counting zero
+	 * requests has no last bucket, so the range leaves it out, and one that
 	 * moved past the range's end ends at it. A partition in step subtracts
 	 * nothing. Binds come in placeholder order.
 	 *
@@ -1435,10 +1437,10 @@ final class Stats_Query {
 	}
 
 	/**
-	 * What `$read` answers over every attached partition of the Row_Table
-	 * the active topologies declare with the Flame_Facts schema, none when no
-	 * partition has written a file. A fleet whose stats file will not open,
-	 * or that declares no such table, says so once a window and answers null
+	 * What `$read` answers over every attached partition of the Row_Table the
+	 * active topologies declare with the Flame_Facts schema, none before any
+	 * partition has written a file. A fleet whose stats file will not open, or
+	 * that declares no such table, says so once a window and answers null
 	 * (decision 3); one declaring two is refused.
 	 *
 	 * On a started record the read is a `stats query` span labelled `$label`,
@@ -1637,10 +1639,10 @@ final class Stats_Query {
 			throw new \InvalidArgumentException( \esc_html( "top {$top} is outside 1.." . self::MAX_TOP ) );
 		}
 		if ( '' === $top_by ) {
-			throw new \InvalidArgumentException( \esc_html( "top {$top} names no top_by measure to rank by" ) );
+			throw new \InvalidArgumentException( \esc_html( "top {$top} needs a top_by measure to rank by" ) );
 		}
 		if ( ! \in_array( $top_by, self::ADDITIVE[ $source ], true ) ) {
-			throw new \InvalidArgumentException( \esc_html( "top_by {$top_by} is no {$source} measure that adds across buckets: one of " . \implode( ', ', self::ADDITIVE[ $source ] ) ) );
+			throw new \InvalidArgumentException( \esc_html( "top_by {$top_by} is not a {$source} measure that adds across buckets: one of " . \implode( ', ', self::ADDITIVE[ $source ] ) ) );
 		}
 		if ( [] === \array_intersect( $group, self::TIME_FIELDS ) ) {
 			throw new \InvalidArgumentException( \esc_html( 'top needs a time field in its group: ' . \implode( ', ', self::TIME_FIELDS ) ) );
@@ -1735,8 +1737,8 @@ final class Stats_Query {
 
 	/**
 	 * A search term as an FTS5 query: each word of it quoted and the words
-	 * joined by spaces, so every word must match and no operator in the
-	 * term acts as one.
+	 * joined by spaces, so every word must match and an operator in the
+	 * term never acts as one.
 	 *
 	 * @param string $term The search term.
 	 * @throws \InvalidArgumentException When the term holds no word.

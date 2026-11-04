@@ -120,7 +120,7 @@ import {
  * The stand-in title for a URL whose hash is selected but whose name has not
  * arrived. `canLogUrl` compares against this exact string, so it stays the one
  * place the placeholder is spelled: put the hash here instead and the modal
- * offers a logging rule for a URL nobody has named.
+ * offers a logging rule for a URL whose name has not arrived.
  *
  * @return {string} The translated placeholder.
  */
@@ -148,7 +148,7 @@ function HeldClick( { onCancel } ) {
 /**
  * Order two request rows by one column in one direction. A null duration,
  * one `dump_url` measured none of (decision 24), ranks LAST either way, as
- * the `urls` verb ranks a URL no timed request reached; such rows keep their
+ * the `urls` verb ranks a URL without a timed request; such rows keep their
  * order among themselves. A row missing any other field counts as 0.
  *
  * @param {Object}                       a    A `dump_url` request row.
@@ -700,7 +700,9 @@ export default function PerformanceDashboard( {
 		null !== oneRequest &&
 		sameSubject( selectedSubject, oneRequest.subject ) &&
 		! selectedRequest;
-	/** Cancel a held click: no window opens, and the bar drops `?url=`. */
+	/**
+	 * Cancel a held click: the window never opens, and the bar drops `?url=`.
+	 */
 	const cancelHold = useCallback( () => {
 		setOneRequest( null );
 		selectSubject( null );
@@ -815,7 +817,8 @@ export default function PerformanceDashboard( {
 
 	/**
 	 * Resolve a `?url=` or `?page_hash=` deep link, which needs the server
-	 * whenever no row of the loaded catalog page opens it, and so titles it.
+	 * whenever the subject is missing from the loaded catalog page, and so
+	 * titles it.
 	 */
 	const { run: askDeepLinkSubject } = useCommandOnce( {
 		group: GROUPS.url,
@@ -1021,7 +1024,7 @@ export default function PerformanceDashboard( {
 	 * Sorting happens here rather than on the server because the modal already
 	 * holds the rows `dump_url` returned, so a column click costs no fetch. A
 	 * row missing the sort field counts as 0 and still takes a position; a
-	 * duration nobody measured ranks last (`compareRequests()`).
+	 * duration that was never measured ranks last (`compareRequests()`).
 	 */
 	const sortedRequests = useMemo( () => {
 		if ( ! urlDetail?.requests ) {
@@ -1103,7 +1106,7 @@ export default function PerformanceDashboard( {
 
 	/**
 	 * Open `RuleEditModal` on the exact rule for this URL, or on a blank draft
-	 * seeded with its pattern when no rule matches.
+	 * seeded with its pattern when the URL does not match any rule.
 	 */
 	const openRuleEditor = useCallback( () => {
 		if ( ! canLogUrl ) {

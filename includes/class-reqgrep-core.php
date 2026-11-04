@@ -104,7 +104,7 @@ class Reqgrep_Core {
 	 * for its rid while every bucket is full. Full buckets mean the earlier lines
 	 * were rotated out rather than never read, so the operator can fix it by
 	 * enlarging the history; a partly-filled ring just means the reader started
-	 * mid-request, which no tuning cures.
+	 * mid-request, which tuning cannot cure.
 	 */
 	private ?\Closure $on_history_miss;
 

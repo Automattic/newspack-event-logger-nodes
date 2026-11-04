@@ -107,7 +107,7 @@ describe( 'the lists drawn from it', () => {
 		);
 	} );
 
-	it( 'breaks a chart down by no field a chip alone names', () => {
+	it( 'never breaks a chart down by a field that only a chip names', () => {
 		const values = CHART_BREAKDOWN_OPTIONS.map( ( o ) => o.value );
 
 		expect( values ).not.toContain( 'worker' );

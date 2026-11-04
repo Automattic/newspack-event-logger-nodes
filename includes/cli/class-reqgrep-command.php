@@ -123,7 +123,10 @@ class Reqgrep_Command {
 	 */
 	private array $fmt_keys = [];
 
-	/** True when this record carries a fold marker, so no interval in it is measurable. */
+	/**
+	 * True when this record carries a fold marker, so its intervals are not
+	 * measurable.
+	 */
 	private bool $fmt_folded = false;
 
 	/**
@@ -835,7 +838,7 @@ class Reqgrep_Command {
 	 *
 	 * @param list<string> $stack Open base names, innermost last.
 	 * @param string       $name  Base name being closed.
-	 * @return int Index into $stack, or -1 when nothing opened it.
+	 * @return int Index into $stack, or -1 when it was never opened.
 	 */
 	private static function nearest_open( array $stack, string $name ): int {
 		$found = \array_keys( $stack, $name, true );

@@ -254,8 +254,8 @@ export function useShowMore( rows ) {
 }
 
 /**
- * The table row that toggles a `useShowMore()` table; nothing when no row
- * is held back.
+ * The table row that toggles a `useShowMore()` table; nothing when the
+ * table holds back no row.
  *
  * @param {Object}                         props         Component props.
  * @param {ReturnType<typeof useShowMore>} props.more    The table's `useShowMore()`.
@@ -305,7 +305,7 @@ export function ShowMoreRow( { more, label, colSpan } ) {
  * @param {Object<string,Object>} props.profiles            Per-category `{ count, time, entries }`, keyed by category name.
  * @param {?number}               props.totalMs             Wall-clock duration in ms — the denominator for every percentage; null or 0 where unmeasured.
  * @param {?number}               [props.totalProfiledTime] Profiled total the averaged views compute server-side, null where unmeasured; summed from the non-listener categories when omitted.
- * @param {string|null}           [props.title]             Heading text, or null for no heading; defaults to "Time Breakdown".
+ * @param {string|null}           [props.title]             Heading text, or null to omit the heading; defaults to "Time Breakdown".
  * @param {string}                [props.labelledBy]        Id of the heading that names the table when `title` is null and a wrapper carries it.
  * @param {boolean}               [props.totaled]           False to leave the Total Profiled row to a table below that closes for both.
  * @return {import('react').ReactElement|null} The panel, or null when every category carries zero time and zero count.

@@ -36,7 +36,7 @@ import { axisDuration } from '@newspack-nodes/shared/utils/axis-ticks';
 /**
  * Each status class's place in CRT's greens: the four classes brighten with
  * severity, each pair at least 1.3 apart in lightness, and unknown takes the
- * green furthest from all four, which no fifth place in the set can hold 1.3
+ * green furthest from all four, since the set holds no fifth place 1.3
  * from every one of them.
  */
 export const STATUS_PLACE = {

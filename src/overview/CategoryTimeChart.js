@@ -155,7 +155,7 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
 		values: axis.map( ( slot ) => {
 			const stats = byBucket[ slot.bucketKey ]?.[ name ];
 			if ( ! stats ) {
-				// A mean over no calls is unmeasured; a rate of none is 0.
+				// A mean over zero calls is unmeasured; a rate of none is 0.
 				return {
 					date: slot.date,
 					value: mode === 'average' ? null : 0,

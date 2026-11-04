@@ -10,10 +10,10 @@
  *
  * Traffic runs both ways. Inbound, the query params seed the selection — on
  * mount and again on every Back/Forward, because the address bar IS the link.
- * Only the server can answer for a subject no loaded row of the catalog
- * opens, or for a `?request=`, whose rid names its URL, so the owner supplies
- * the resolvers. Outbound, every later selection change pushes a
- * history entry — every one the OPERATOR makes, that is. A selection the address
+ * Only the server can answer for a subject missing from the catalog's loaded
+ * rows, or for a `?request=`, whose rid names its URL, so the owner supplies
+ * the resolvers. Outbound, every later selection change pushes a history entry
+ * — every one the OPERATOR makes, that is. A selection the address
  * bar itself dictated is not written back, and the suppression is armed by the
  * same comparison that decides whether the selection moves at all, so the flush
  * it belongs to is the one that spends it.
@@ -80,7 +80,7 @@ export default function useUrlNavigation( urls ) {
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
 
 	// @longform Seeded from the query string on mount, these hold the part of
-	// the link nothing has answered yet: popstate re-seeds the subject and the
+	// the link that is not answered yet: popstate re-seeds the subject and the
 	// rid, while the search query is read once and the owner clears it.
 	const [ initialSubject, setInitialSubject ] = useState( linkedSubject );
 	const [ initialRequestId, setInitialRequestId ] = useState( () => {

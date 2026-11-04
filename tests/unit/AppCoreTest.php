@@ -160,7 +160,7 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * A log rule times outbound HTTP without naming a hook: the request spends
-	 * the time below PHP userland, where no hook can reach, and the caveat on
+	 * the time below PHP userland, where a hook cannot reach, and the caveat on
 	 * every brief says so.
 	 */
 	public function test_a_rule_can_turn_the_outbound_http_pair_off(): void {
@@ -890,8 +890,8 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
-	 * Pretty-printing spends bytes on indentation nobody reads, against the
-	 * same MAX_DATA_SIZE the SQL frames were already losing content to.
+	 * Pretty-printing spends bytes on indentation that is never read, against
+	 * the same MAX_DATA_SIZE the SQL frames were already losing content to.
 	 */
 	public function test_hook_start_does_not_pretty_print(): void {
 		$this->set_governing_rule( $this->query_rule( false ) );
@@ -1883,7 +1883,10 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( $trips, $memd->multi_calls );
 	}
 
-	/** A start priority below the bootstrap's is a choice where no rule binds `plugins_loaded`: no complaint. */
+	/**
+	 * A start priority below the bootstrap's is a choice where the rules do not
+	 * bind `plugins_loaded`: no complaint.
+	 */
 	public function test_a_wide_start_priority_under_a_rule_without_plugins_loaded_is_not_reported(): void {
 		$this->set_governing_rule(
 			new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'init' ] ),
@@ -2480,8 +2483,8 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
-	 * Wrappers outlive the scope that made them, so a rebind onto a request
-	 * no rule governs still restores them. Runs what `shutdown` holds at the
+	 * Wrappers outlive the scope that made them, so a rebind onto an ungoverned
+	 * request still restores them. Runs what `shutdown` holds at the
 	 * restore's priority, which the harness keeps current across a rebind.
 	 */
 	public function test_a_rebind_onto_an_ungoverned_scope_still_restores_earlier_wraps(): void {
@@ -2921,7 +2924,7 @@ class AppCoreTest extends TestCase {
 		$this->assertNotNull( $this->last_entry( "[kea-7746] {closure}:class-kea-7746-caller.php:{$line} @10 (complete)" ) );
 	}
 
-	/** A listener from a file under no root keeps its bare name. */
+	/** A listener from a file outside every root keeps its bare name. */
 	public function test_a_wrapped_listener_without_an_owner_keeps_its_bare_name(): void {
 		self::own_the_owner_fixtures();
 		$core            = $this->significant_core();
@@ -3273,7 +3276,7 @@ class AppCoreTest extends TestCase {
 		$this->assertContains( 'send_headers', $bound, 'the other request-scoped listeners still bind' );
 	}
 
-	/** A request no rule logs binds none of them. */
+	/** A request that the rules do not log binds none of them. */
 	public function test_an_unlogged_request_binds_no_request_scoped_listener(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule( null );
@@ -3283,7 +3286,7 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( [], \array_intersect( [ 'qm/start', 'template_include', 'send_headers', 'shutdown' ], $bound ) );
 	}
 
-	/** A scope no rule logs takes them back off. */
+	/** A scope that the rules do not log takes them back off. */
 	public function test_a_rebind_to_an_unlogged_scope_unbinds_them(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG ) );

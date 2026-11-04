@@ -78,8 +78,8 @@ trait Narration {
 	 * label's tally after the counters `$describe` leads with. Both halves are
 	 * kept, so a fold keeps the step, and each is guarded on its own, so a
 	 * stop the `(start)` raises still runs the step and closes it. The span
-	 * runs in a `deferring()` bracket of its own, so that holds where no
-	 * bracket is open — a restore the reader runs before its first message —
+	 * runs in a `deferring()` bracket of its own, so that holds outside any
+	 * bracket — a restore the reader runs before its first message —
 	 * and the stop leaves once the span has closed. The clean stop that
 	 * bracket raises is then one `guarded()` forward, so inside a message's
 	 * or a tick's bracket it waits for that work as any forward's does. Any

@@ -391,7 +391,7 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
-	it( 'leaves the plugin out of a fatal no plugin raised', () => {
+	it( 'leaves the plugin out of a fatal raised outside every plugin', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, {
 				entries: makeEntries(),
@@ -2424,7 +2424,7 @@ it( 'draws a folded row with one known end as that end alone', () => {
 	unmount();
 } );
 
-it( 'offers no pointer on a complete that closes no pair', () => {
+it( 'offers no pointer on a complete that does not close a pair', () => {
 	const entries = makeEntries();
 	entries.splice( 6, 0, {
 		n: 99,
@@ -3151,7 +3151,7 @@ describe( 'the rows under an armed Ask picker', () => {
 		document.documentElement.classList.remove( 'newspack-nodes-asking' );
 	} );
 
-	// @longform A header cell belongs to no row, so only the picker can
+	// @longform A header cell does not belong to any row, so only the picker can
 	// cancel this press: the rows cancel their own whether armed or not.
 	it( 'cancels the default of a modified press on an askable outside the rows', () => {
 		const { container, unmount } = armed();

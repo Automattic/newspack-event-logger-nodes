@@ -111,8 +111,8 @@ class Rules_CI_Node extends Service_CI_Node {
 	 *
 	 * The `capability` key is the whole gate: `dispatch()` refuses a caller
 	 * below the role declared here (ADR-26) — READ for `dump`, TUNE for the
-	 * four writes — so no handler checks again; one that did would outrank its
-	 * own declaration without saying so.
+	 * four writes — so a handler never checks again; one that did would
+	 * outrank its own declaration without saying so.
 	 *
 	 * @api Used by the substrate to provide UI etc.
 	 * @return array<string,mixed>

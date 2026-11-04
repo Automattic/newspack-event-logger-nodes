@@ -48,8 +48,8 @@ const ErrorLog = lazy( () => import( './ErrorLog' ) );
  * `overflowY` is hidden because the virtualized log body inside owns the
  * scrolling, and a shell scroller beside it is the second scrollbar
  * `DashboardShell` makes every caller state its side of. `storageKey` scopes
- * the debug overlay's persisted panel layout to this page, so no sibling
- * dashboard shares it.
+ * the debug overlay's persisted panel layout to this page, so a sibling
+ * dashboard never shares it.
  *
  * @return {import('react').ReactElement} Rendered component.
  * @testonly Exported for index.test.js; the `DOMContentLoaded` listener below

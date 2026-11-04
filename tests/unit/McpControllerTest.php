@@ -118,12 +118,12 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( '`stats` covers the last 13 five-minute buckets', $tools['dump_url']['description'] );
 		$this->assertStringContainsString( 'or with none over the 25 buckets timings are kept', $tools['dump_url']['description'] );
 		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'dump_url', 'bucket' ) );
-		$this->assertStringContainsString( 'no request row in the 25 buckets the rows keep', $arg( 'dump_url', 'bucket' ) );
+		$this->assertStringContainsString( 'the hash is not in any request row of the 25 buckets the rows keep', $arg( 'dump_url', 'bucket' ) );
 		$this->assertStringContainsString( 'one row per completed request, 25 buckets of them', $tools['performance_query']['description'] );
 		$this->assertStringContainsString( 'hook time, 25 buckets of it', $tools['performance_query']['description'] );
 		$this->assertStringContainsString( '25 for any source', $arg( 'performance_query', 'bucket' ) );
 		$this->assertStringContainsString( 'Omitted, the last 13.', $arg( 'performance_query', 'bucket' ) );
-		$this->assertStringContainsString( 'no row of the last 25 buckets names that rid', $tools['dump_request']['description'] );
+		$this->assertStringContainsString( 'that rid is not in any row of the last 25 buckets', $tools['dump_request']['description'] );
 		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'performance_ask', 'bucket' ) );
 		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300)\b|24 hours|25 hours|seven days|\{(window|kept)\}/', (string) \wp_json_encode( $tools ) );
 	}
@@ -181,8 +181,8 @@ class McpControllerTest extends TestCase {
 			$this->assertArrayNotHasKey( 'errors_only', $tools[ $tool ]['inputSchema']['properties'], $tool );
 			$filter = $tools[ $tool ]['inputSchema']['properties']['filter']['description'];
 			$this->assertStringContainsString( '`status_class=5`', $filter, "{$tool}: the 5xx responses" );
-			$this->assertStringContainsString( '`status_class=Unknown`', $filter, "{$tool}: the requests that answered no status" );
-			$this->assertStringContainsString( 'CLI or cron runs', $filter, "{$tool}: no status is not only a timeout" );
+			$this->assertStringContainsString( '`status_class=Unknown`', $filter, "{$tool}: the requests without a status" );
+			$this->assertStringContainsString( 'CLI or cron runs', $filter, "{$tool}: a missing status is not only a timeout" );
 			$this->assertStringContainsString( 'most fatals among them', $filter, "{$tool}: a fatal after headers keeps its status" );
 			$this->assertStringContainsString( '`error=T` and `error=F`', $filter, "{$tool}: the exact successor of errors_only" );
 			$this->assertStringContainsString( $owned, $filter, "{$tool}: one argument owns each field" );
@@ -198,8 +198,8 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
 		$this->assertStringContainsString( '`stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', $tools['dump_url']['description'], 'it names each stat null unmeasured' );
-		$this->assertStringContainsString( 'the nearest-rank `p50_ms`, `p95_ms` and `p99_ms`, null where no request was timed', $tools['dump_url']['description'], 'it names the percentiles null untimed' );
-		$this->assertStringContainsString( '`error_rate`, `errors` over `count`, null over no requests', $tools['dump_url']['description'], 'it names the error rate null over nothing' );
+		$this->assertStringContainsString( 'the nearest-rank `p50_ms`, `p95_ms` and `p99_ms`, null without a timed request', $tools['dump_url']['description'], 'it names the percentiles null untimed' );
+		$this->assertStringContainsString( '`error_rate`, `errors` over `count`, null without requests', $tools['dump_url']['description'], 'it names the error rate null over nothing' );
 		$this->assertStringContainsString( '`requests_capped`', $tools['dump_url']['description'], 'it says when the list holds the newest only' );
 		$this->assertStringContainsString( '`aggregate_profiles`', $tools['dump_url']['description'], 'it names the URL\'s profile' );
 		$this->assertStringContainsString( 'performance_query', $tools['dump_url']['description'], 'it points the series at the query tool' );
@@ -257,9 +257,9 @@ class McpControllerTest extends TestCase {
 	}
 
 	/**
-	 * A URL-set filter lists every `requests` field no argument always owns,
-	 * each with how its value is spelled, and never `server` or `bucket`,
-	 * whose own arguments own them; a field a subject owns says when.
+	 * A URL-set filter lists every `requests` field that an argument does not
+	 * always own, each with how its value is spelled, and never `server` or
+	 * `bucket`, whose own arguments own them; a field a subject owns says when.
 	 */
 	public function test_each_url_set_filter_lists_every_field_its_arguments_leave(): void {
 		$tools = $this->tune_tools();
@@ -324,7 +324,7 @@ class McpControllerTest extends TestCase {
 			$this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'initialize' ], $bearer )
 		)['result']['instructions'];
 
-		foreach ( [ 'masked as `?`', '`?oid=?`', '`rest_route`', '`utm_*` and `fbclid` are dropped', 'its worker as a bare key', 'lowercased and as `https://`', 'its scheme, query and worker mark dropped', 'timeouts and fatals only', '`status_class=5`', '`mu:<slug>`', '`theme:<slug>`', '`dropin`', '`platform` for the host\'s own code', 'a top-level hook whose listeners are timed', '`(unowned)` is time no owned frame encloses', '`(unmeasured)` the duration no span covers', 'do not sum to the request', '`Y-m-d-H-i` UTC' ] as $term ) {
+		foreach ( [ 'masked as `?`', '`?oid=?`', '`rest_route`', '`utm_*` and `fbclid` are dropped', 'its worker as a bare key', 'lowercased and as `https://`', 'its scheme, query and worker mark dropped', 'timeouts and fatals only', '`status_class=5`', '`mu:<slug>`', '`theme:<slug>`', '`dropin`', '`platform` for the host\'s own code', 'a top-level hook whose listeners are timed', '`(unowned)` is time outside every owned frame', '`(unmeasured)` the duration outside every span', 'do not sum to the request', '`Y-m-d-H-i` UTC' ] as $term ) {
 			$this->assertStringContainsString( $term, $instructions, $term );
 		}
 		$this->assertStringStartsWith( Mcp_Door::FENCE_NOTE . ' The ruleset tools change what the site logs', $instructions );
@@ -621,7 +621,7 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'budget', $tools[ $tool ]['summary'], $tool );
 			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
 		}
-		$this->assertStringContainsString( 'no row of the last {kept} buckets', $tools['dump_request']['summary'], 'it says a request outlives its row' );
+		$this->assertStringContainsString( 'that rid is not in any row of the last {kept} buckets', $tools['dump_request']['summary'], 'it says a request outlives its row' );
 		$this->assertStringContainsString( 'aged out of the raw logs', $tools['dump_request']['summary'], 'it says a row can outlive its record' );
 		$this->assertStringContainsString( 'which keep it at least `min_lifetime` unless `max_segments` prunes it sooner', $tools['dump_request']['summary'] );
 		$this->assertStringContainsString( '`request:<rid>`', $tools['performance_ask']['summary'], 'a request is named by its rid alone' );

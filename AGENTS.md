@@ -75,7 +75,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 2 | Sums, not means |
 | 3 | Stats reads fail soft; a stats write raises |
 | 4 | Settings fan-out is a node graph; no consumer means a silent no-op |
-| 5 | A stats schema change is a version bump and a rebuild, and nothing in this code migrates |
+| 5 | A stats schema change is a version bump and a rebuild, never a migration in code |
 | 6 | `get_multi` batching is essential — superseded by decision 36 |
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB |
 | 8 | A spoke's job is re-keyed `remote_job` when the hub pulls it |
@@ -94,17 +94,17 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 21 | The fold keeps the CLOSE of any span the kept head left open |
 | 22 | Query spans are the same pair as decision 20, but PER-RULE |
 | 23 | A span says how long, never who asked. Two knobs answer the second question, at two prices |
-| 24 | A duration nobody measured is not a timing sample |
+| 24 | An unmeasured duration is not a timing sample |
 | 25 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced |
 | 26 | A merged transport node keeps the statements it ran |
 | 27 | The platform's requests to itself are worker traffic, named by path |
 | 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index — superseded by decision 36 |
 | 29 | Every reader dates from the tick, and a reply reads it once |
-| 30 | Every memcache value belongs to one server, carries nothing its key implies, and fits one item — superseded by decision 34 |
+| 30 | Every memcache value belongs to one server, omits what its key implies, and fits one item — superseded by decision 34 |
 | 31 | A snapshot node's replay counts each record once |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
 | 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache — superseded by decision 34 |
-| 34 | Stats live in SQLite Tables, and nothing repairs a loss |
+| 34 | Stats live in SQLite Tables, and a loss is never repaired |
 | 35 | A chart hour is one key holding its twelve five-minute slots — superseded by decision 36 |
 | 36 | The query vocabulary is fixed; no SQL from outside; a picker chooses the rollup |
 | 37 | The Overview reads a job's snapshot for four intervals |
@@ -150,7 +150,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 - **There is no operator hub toggle**: `enable_workers` and `enable_aggregator` are not config keys, and `RetiredConfigKeysTest` fails the build on either. A hub declares itself in TSL: `<eln:is_hub>` is `1` when an active topology's top-level frontmatter carries `var is_hub = 1`, as the stock `hub` and `aggregator` do. That declaration is part of the hub's topology, not an operator setting, and nothing else counts — not a topology's name, not the logs its readers pull. Any value but `1` or `0` fails loud, naming the topology. Frontmatter is read from the top-level file only, so a custom topology that includes `hub` or `aggregator` declares the var itself. Settings fan-out is ungated: without `hub-control` active and at least one Vault entry in group `spoke`, a recorded settings event is tailed and dropped.
 - **Both request bounds FOLD.** `entry_budget` caps the entries in flight and `max_entries_per_request` caps one envelope; both are `Request_Builder_Node` arguments, not config keys. Never build a cap that merely stops appending and sets a flag — it loses every entry past it.
 - **Firehose writes stay under PIPE_BUF.** `Log_Manager::message()` fits the whole entry to `MAX_DATA_SIZE` (3840) by trimming `m`, and never renames the category `k`: `Flame_Tree::PATTERN_START` opens a span on it. Shape a large value at the producer or split it; a large job goes through `Job_Intake` (decision 7). The architecture guide's "PIPE_BUF and truncation" section carries the full algorithm.
-- **Reach the cache through `Cache_Backend`; never build your own.** `Cache_Backend::shared_first()` is memcached, else APCu, and null with neither. Tests assign the substrate's `InMemoryMemcached` double to `Core::$memd`, since no cache interface exists to inject. Rotating the salt orphans every memcached and APCu key but not the SQLite stats rows, which carry no salt (deactivating the topology and running `wp nodes gc --force` deletes them), and `Cache_Backend::rotate_salt()` itself asks every live worker to restart, because each memoizes the install scope at boot.
+- **Reach the cache through `Cache_Backend`; never build your own.** `Cache_Backend::shared_first()` is memcached, else APCu, and null with neither. Tests assign the substrate's `InMemoryMemcached` double to `Core::$memd`, since there is no cache interface to inject. Rotating the salt orphans every memcached and APCu key but not the SQLite stats rows, which carry no salt (deactivating the topology and running `wp nodes gc --force` deletes them), and `Cache_Backend::rotate_salt()` itself asks every live worker to restart, because each memoizes the install scope at boot.
 - **Stats reads fail soft, stats writes raise, SSE slots fail closed. Don't unify them.** A reader whose stats file will not open answers no rows with `available` false, and the dashboards show "no data"; a row batch that fails raises `Worker_Should_Stop` and the successor replays it; SSE connections get a 429, because the slot pool IS the rate limit.
 - **Application Node classes resolve by namespace prefix.** `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node`; a new node needs only the class under that namespace and `composer dump-autoload -o`.
 - **Command and constructor `arguments` are a token array** (`list<string>`), never a space-joined string. The substrate binds a verb's tokens against the `args` its schema declares before the handler runs, so a handler reads `$args['<name>']`, typed and defaulted, and parses nothing; each arg arrives by position or as `--name=value`. Declare what the callers send: the dashboards build args with `formatCommandArgs(...)`, the MCP door names every arg, and an undeclared option is refused.

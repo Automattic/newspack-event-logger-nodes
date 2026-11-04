@@ -26,11 +26,11 @@ table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monos
 .mono { overflow-wrap:anywhere; }
 </style>
 <div class="sheet">
-<h1>Six bundles, two transports, and no data that did not come through a node</h1>
+<h1>Six bundles, two transports, and all their data through a node</h1>
 <p class="sub">Every tree separates the chrome from the data the same way: the root renders, one hook declares the node graph behind it, and rows reach React off a view node. Three dashboards stream a partition glob; three ask a service CI by command; the seven page globals carry what the server knew before the first command ran.</p>
 
 <div class="tr">
-  <div class="transport cmd"><h3>By command: <span class="mono">POST /wp-json/newspack-nodes/v1/command</span></h3><p>A TM_COMMAND minted FROM the dashboard's own Request node, answered TO = FROM, so the reply lands on the node that asked and no correlator exists. A batched Fetcher sends one POST per tick; <span class="mono">useCommandOnce</span> parks a one-shot in the same outbox. Reads retry a MISSING reply and supersede; writes do neither. The server owns the set: search, sort and page are reported upward, never applied in the browser.</p></div>
+  <div class="transport cmd"><h3>By command: <span class="mono">POST /wp-json/newspack-nodes/v1/command</span></h3><p>A TM_COMMAND minted FROM the dashboard's own Request node, answered TO = FROM, so the reply lands on the node that asked, with no correlator. A batched Fetcher sends one POST per tick; <span class="mono">useCommandOnce</span> parks a one-shot in the same outbox. Reads retry a MISSING reply and supersede; writes do neither. The server owns the set: search, sort and page are reported upward, never applied in the browser.</p></div>
   <div class="transport sse"><h3>By stream: <span class="mono">GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=&lt;glob&gt;</span></h3><p>The page's one RemoteLink, <span class="mono">_stream</span>, which every stream graph rides, owning one SseIn child; the shared <span class="mono">_heartbeat</span> keeping its slot; a pass-through Tee per graph; and one view node shaping each 7-field envelope into a row. The log tables read rows off the view node each frame, and <span class="mono">Inflight</span> samples the view's snapshot into state on the operator's cadence, so a busy stream re-renders at that cadence, not per message.</p></div>
 </div>
 

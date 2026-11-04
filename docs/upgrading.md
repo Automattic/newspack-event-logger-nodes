@@ -109,7 +109,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   Debugging section is gone. A config file or `LOCAL_NEWSPACK_NODES_CONF`
   still naming either is reported to stderr as an unknown key; a stored
   `newspack_event_logger_nodes_log_memory` or `_flush_every_line` row is
-  ignored, and nothing migrates it. Set the switch on each rule that wants
+  ignored, and it is not migrated. Set the switch on each rule that wants
   it, in the rules editor or in the rule's JSON. `performance set` takes
   `newspack_event_logger_nodes_rules` alone and answers `unknown option` for
   any other, and `hub-control.tsl` registers only the ruleset with
@@ -118,9 +118,9 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **The `memory` entry is gone, and the terminal always carries `peak_mb`.**
   `process (complete)` and `process (aborted)` carry the peak memory in MB,
   rounded to two places, whatever any switch says, and the record's `peak_mb`
-  is read from there. `Log_Manager::MEMORY` is gone, and no entry carries
-  the process's memory at the end. A rule's `log_memory` puts `peak_mb` on
-  every other `(complete)` too.
+  is read from there. `Log_Manager::MEMORY` is gone, and an entry never
+  carries the process's memory at the end. A rule's `log_memory` puts
+  `peak_mb` on every other `(complete)` too.
 - **`request_context`, `objectcache` and `resources` are written only where
   a rule asks.** Each `Rule` gains `log_context`, `log_cache` and
   `log_resources`, off unless set, beside `log_memory` and
@@ -199,7 +199,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   is an insert-ignore on `rid`. A flame whose record is gone, or which was
   written before `request_at` existed, is skipped and counted as
   `records_gone`, never dead-lettered. The Row_Table keeps its name, its
-  files and schema version 8, so nothing needs a rebuild.
+  files and schema version 8, so a rebuild is not needed.
 - **`GET_STATS` answers on two nodes.** `request stats-builder GET_STATS`
   answers `{ buffered_requests, buffered_rows, last_flush_age_s,
   records_gone, narration }`; `request flame-builder GET_STATS` answers
@@ -257,7 +257,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   comparing server names lowercases them; the Overview folds a `?server=`
   link itself. A `?url=` link, a `url:` descriptor or a `url=` filter
   carrying a hash from 0.147.0 or earlier names a URL spelled with capitals
-  or over http that no row carries any more; open the URL from the table
+  or over http that the rows no longer carry; open the URL from the table
   again for its new hash. A page that hashes a stored URL itself takes
   `urlHash()`, as the request stream, the in-flight view and the error log
   do. `Log_Manager::url_hash()` is unchanged, so rule ids keep their hashes.
@@ -283,7 +283,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `query` spells it. `--filter=error=T --filter=error=F` keeps exactly the
   timeouts and fatals `errors_only` kept; `--filter=status_class=5` keeps
   the 5xx responses, most fatals among them, and
-  `--filter=status_class=Unknown` the requests that answered no status:
+  `--filter=status_class=Unknown` the requests that never returned a status:
   timeouts, and CLI or cron runs where workers count. A filter narrows
   `dump_url`'s stats as well as its list, so its `requests_capped` counts
   against the narrowed `stats.count`. One argument owns each field, so a
@@ -312,7 +312,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
   On a site running `complete`, or another topology that includes
   `flame-builder`, name that topology in place of `performance`.
-  `gc --force` deletes the old `flame-stats:*` files, which nothing declares
+  `gc --force` deletes the old `flame-stats:*` files, which are not declared anywhere
   once this release loads, and the reactivated readers rebuild the rows from
   the retained firehose. Every host running the flame builder needs
   `pdo_sqlite` with FTS5. Every fleet runs at most 8 partitions, down from
@@ -355,8 +355,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `aggregate_flame` is null under a filter or a selection, and when
   `MAX_SCAN_S` cut the rebuild, which alone answers `flame_cut` true.
 
-- **`dump_request` reads a request through its row.** A rid no request row
-  names answers `Request not found`: one aged past the seven days the rows
+- **`dump_request` reads a request through its row.** A rid that has no request
+  row answers `Request not found`: one aged past the seven days the rows
   keep, though its record is still in `requests.p{N}`, and one the flame
   builder has not written yet, for up to its five-second flush after the
   request finishes. The flame is read from the row's partition alone, and
@@ -365,7 +365,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `request:` ask reads it the same way.
 
 - **`search_requests` answers `{ rid, url_hash }` from the request's row.**
-  `partition` is gone from its answer, and a rid no row names answers
+  `partition` is gone from its answer, and a rid that has no row answers
   `Request not found`, as `dump_request` does. Rows that will not open answer
   `no request <rid>: the stats rows did not open` from both. `requests.p{N}`
   keeps no index, so a copy of `request-builder.tsl` drops its
@@ -545,8 +545,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **This release needs newspack-nodes 2.94.0.** A bucket selection reads
   every URL its sets name through the substrate's
   `Table_Client::all_members()` and its `SSCAN` verb, which read a set of
-  any size page by page, and no selection is refused for naming too many
-  URLs. Below the floor the plugin stays dormant behind its admin notice.
+  any size page by page, and a selection is never refused for naming too
+  many URLs. Below the floor the plugin stays dormant behind its admin notice.
   Update the substrate first, then this plugin, then restart the workers.
 
 ## 0.123.0
@@ -585,7 +585,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **A rid lookup's not-found is definite.** `search_requests`,
   `dump_request` and a `request:` ask walk the indexes with no time budget,
   so they no longer throw `request index scan budget spent before rid <rid>
-  was reached`; `Request not found` means no partition holds the rid.
+  was reached`; `Request not found` means the rid is not in any partition.
 
 - **A capped request list is complete.** `dump_url`'s `scan_stopped_early`
   is true only when the walk spent its time budget; a list of 500 is the
@@ -665,8 +665,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   from a server list can stop. `Stats_Store::MAX_SERVER_VALUES`,
   `admit_servers()`, `refile_path()` and `dim_cap()` are gone.
 
-- **A mean nobody measured is null.** `avg_ms` is null for a URL no timed
-  request reached, in a `urls` header's totals, in `overview`'s
+- **An unmeasured mean is null.** `avg_ms` is null for a URL without a
+  timed request, in a `urls` header's totals, in `overview`'s
   `global_avg_ms` and its leaderboard's `avg_ms`, and in every `ask` brief,
   where each read 0; `avg_peak_mb` is null for a scope with no request. A
   client renders null as unmeasured. Such a URL ranks last on `avg_ms`,
@@ -699,8 +699,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   indexes it through the `ROW_*` constants, never a literal.
 
 - **`errors` counts timeouts and fatals.** Every `urls` row carries it; the
-  totals carry it under `errors_only`, as before. It was the requests no
-  status class counted, which left out every fatal (a 500) and counted every
+  totals carry it under `errors_only`, as before. It was the requests outside every
+  status class, which left out every fatal (a 500) and counted every
   CLI worker request (status 0); a client comparing `errors` across the
   upgrade sees fatal-heavy URLs rise and worker URLs fall.
 
@@ -753,7 +753,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   newspack-intelligence 0.12.0 together, and deploy them together.** The
   substrate now binds every verb's arguments against the `args` its schema
   declares and hands the handler them by name, and every handler here reads
-  them by name, so no order of updating one plugin at a time works:
+  them by name, so every order of updating one plugin at a time fails:
   - nodes alone — 0.110.0's `performance` verbs (`overview`, `urls`,
     `dump_url`, `url_breakdown`, `search_requests`, `grep_requests`,
     `dump_request`, `ask`, `set`) and `rules delete` answer
@@ -898,8 +898,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `performance` and `complete` refuse to load, naming the Table that cannot
   open, and the `performance` verbs answer no stats.
 
-- **Stats start empty, and no flush is required.** The Tables are new
-  files, so nothing carries memcache's stats over, and they fill as traffic
+- **Stats start empty and need no flush.** The Tables are new
+  files, so memcache's stats are not carried over, and they fill as traffic
   arrives. Nothing reads the old memcache stats keys, and memcache reclaims
   them by TTL or eviction. `wp nodes memcache flush` deletes nothing: it
   rotates the salt, which orphans every memcache key, and restarts every

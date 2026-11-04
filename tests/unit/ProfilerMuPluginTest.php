@@ -52,7 +52,7 @@ class ProfilerMuPluginTest extends TestCase {
 		$GLOBALS['_wp_options']['home']                = 'https://kea-5108.test';
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
-		// Beneath the drop-in's, so no error it chains reaches PHPUnit's.
+		// Beneath the drop-in's, so an error it chains never reaches PHPUnit's.
 		\set_error_handler( static fn (): bool => true );
 	}
 
@@ -368,7 +368,7 @@ class ProfilerMuPluginTest extends TestCase {
 	 * A fetch keeps whichever of the two plugins the site has, each matched by
 	 * its file name whatever directory holds it. The substrate alone serves
 	 * the fetch, the event logger alone boots silently, and when the site has
-	 * neither, no plugin loads.
+	 * neither, the fetch loads no plugin.
 	 */
 	public function test_a_fetch_keeps_whichever_of_the_two_the_site_has(): void {
 		self::load_drop_in();

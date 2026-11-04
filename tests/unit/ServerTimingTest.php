@@ -108,7 +108,10 @@ class ServerTimingTest extends TestCase {
 		$this->assertSame( [], $this->sent );
 	}
 
-	/** A request no rule logs has no time to tell, so it gets no header. */
+	/**
+	 * A request that the rules do not log has no time to tell, so it gets no
+	 * header.
+	 */
 	public function test_an_unlogged_request_gets_no_header(): void {
 		$this->a_reader();
 

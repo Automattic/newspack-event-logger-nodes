@@ -392,9 +392,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * The private reader over the `requests.p{partition}` directory, built
-	 * on first use and never named, so no other node can reach it.
+	 * on first use and never named, so other nodes cannot reach it.
 	 *
-	 * @throws Worker_Should_Stop When no directory is named, it does not exist, or it will not open, so the flame replays.
+	 * @throws Worker_Should_Stop When the directory is not named, does not
+	 *                            exist, or will not open, so the flame replays.
 	 */
 	private function requests(): Partition_Node {
 		return $this->requests ??= self::stopping(
@@ -438,7 +439,8 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string                 $url      The request's URL.
 	 * @param string                 $url_hash The hash of its identity, `Url_Parts::hash()`.
 	 * @param string                 $server   Its host.
-	 * @throws \LogicException When no partition is bound, so a row can not name one.
+	 * @throws \LogicException When `Topology_Loader` bound no partition, as
+	 *                         outside a worker, so a row can not name one.
 	 */
 	private function buffer_request( array $request, string $rid, array $place, string $url, string $url_hash, string $server ): void {
 		$partition = Core::bound_partition() ?? throw new \LogicException( 'Stats_Builder: no partition is bound, so a request row can not name one' );
@@ -479,7 +481,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$windowed  = $bucket > $this->window_through;
 		$site      = [ 'server_id' => $server_at ];
 		$by_url    = $site + [ 'url_id' => $url_at ];
-		// A page no timing row names would never be released by a purge.
+		// A page unnamed by any timing row would never be released by a purge.
 		$by_page = [] === $timings ? $site : $site + [ 'page_id' => $this->page_op_at( $url_at ) ];
 		foreach ( $timings as $category => $entries ) {
 			$category_at = [ 'category_id' => $this->named_at( 'category_id', $category ) ];
@@ -540,7 +542,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * The batch index of the `ignore` filing `$name` in the lookup table
 	 * `Flame_Facts_Row_Schema::NAMED_BY` names for `$column`, appended the
-	 * first time the batch names it; null for no name.
+	 * first time the batch names it; null when there is no name.
 	 *
 	 * @param string      $column A column naming a lookup row by its id.
 	 * @param string|null $name   The name, exactly as the record carries it.
@@ -1207,11 +1209,12 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * One reader over this partition's file of the Row_Table
 	 * `set_facts_target` named, which attaches nothing before the file exists.
 	 *
-	 * @throws \LogicException When no partition is bound, or no table is named.
+	 * @throws \LogicException When `Topology_Loader` bound no partition, or
+	 *                         `set_facts_target` named no table.
 	 * @throws \PDOException When the file will not open.
 	 */
 	private function own_reader(): Row_Reader {
-		$partition = Core::bound_partition() ?? throw new \LogicException( 'Stats_Builder: no partition is bound, so no window can be read' );
+		$partition = Core::bound_partition() ?? throw new \LogicException( 'Stats_Builder: no partition is bound, so a window cannot be read' );
 		return Sqlite_Arm::open_rows( [ $partition => Table_Node::file( $this->facts_table(), $partition ) ], Flame_Facts_Row_Schema::version() );
 	}
 

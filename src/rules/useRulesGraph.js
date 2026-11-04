@@ -71,9 +71,9 @@ const FETCH = 'rules:fetch';
 /**
  * Ask the `rules` CI to re-dump, FROM the table's own receiver Tee: the server
  * echoes TO=FROM, so the reply lands on `rules:in`, fans into `rules:view` and
- * repaints the table. That repaint IS the result — nothing is returned and no
- * caller awaits one. The ask supersedes one still standing, because a dump
- * after a mutation must go out even while an earlier dump is unanswered.
+ * repaints the table. That repaint IS the result — nothing is returned and a
+ * caller never awaits one. The ask supersedes one still standing, because a
+ * dump after a mutation must go out even while an earlier dump is unanswered.
  */
 function fireDump() {
 	Core.node( FETCH )?.askNow( [] );

@@ -88,7 +88,7 @@ describe( 'RequestDetailView', () => {
 		view.unmount();
 	} );
 
-	it( 'mounts a fresh log table for each request, so no fold state carries over', () => {
+	it( 'mounts a fresh log table for each request, so a fold state never carries over', () => {
 		global.__requestDetailTableMounts = 0;
 		const props = ( rid ) =>
 			React.createElement( RequestDetailView, {
@@ -136,7 +136,7 @@ describe( 'RequestDetailView', () => {
 			);
 		const cut = view( true );
 		expect( cut.container.textContent ).toContain(
-			'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+			'The flame lookup ran out of time, so the trace is not shown here; one may still have been recorded.'
 		);
 		cut.unmount();
 		const whole = view( false );
@@ -293,7 +293,7 @@ describe( 'RequestDetailView', () => {
 		unmount();
 	} );
 
-	it( 'draws no findings section for a record no detector ran over', () => {
+	it( 'draws no findings section for a record without a detector run', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestDetailView, {
 				requestDetail: baseRequest,
