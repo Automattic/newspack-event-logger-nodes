@@ -147,7 +147,7 @@ Two suites hold every file in the directory to a shape:
 1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack_event_logger_nodes_register_cli_commands()`, which the deferred bootstrap in `newspack-event-logger-nodes.php` calls under WP-CLI. `tests/unit/Cli/CliUsageOverviewTest.php` fails a verb that the usage overview would not list.
 2. Validate inputs at the boundary, and refuse rather than coerce — `Command_Args::option_int()` returns null for a malformed flag so each layer reports it in its own voice.
 3. **Make blocking work injectable.** A command that reads stdin in a loop, sleeps between iterations, or polls a file takes the resource or the iteration count as a parameter so tests can drive it deterministically. Two distinct seams in `Reqgrep_Command`:
-   - `process_stdin( $stream = null )` — stream-injection seam; defaults to null (resolving STDIN inside), tests pass a `php://memory` resource.
+   - `process_stdin( $stream )` — stream-injection seam; `__invoke()` passes what the static `Reqgrep_Command::$stdin` closure answers, `\STDIN` by default, and tests pass a `php://memory` resource to either.
    - `follow_mode( int $max_iterations = PHP_INT_MAX )` — iteration-cap seam; production passes the default, tests pass a small number.
 
    Keep them separate; don't fold the cap into the stdin reader.

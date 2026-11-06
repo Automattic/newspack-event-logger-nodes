@@ -125,7 +125,7 @@ Cross-deploy-unit guards stay, because the other side can be absent. The loader 
 
 ### 12. Injection seams for blocking work
 
-CLI commands and other blocking-work classes take a seam instead of calling `STDIN` / `microtime` / `sleep` inline — and the seam differs by method rather than being a uniform "resource plus cap" pair. `Reqgrep_Command::process_stdin( $stream = null )` takes only the I/O resource, defaulting to `STDIN` and draining a `Stdin_Node` to EOF with no cap; `Reqgrep_Command::follow_mode( int $max_iterations = \PHP_INT_MAX )` takes only an iteration cap. Production uses the defaults; tests pass `php://memory` streams and small caps to drive loops deterministically.
+CLI commands and other blocking-work classes take a seam instead of calling `STDIN` / `microtime` / `sleep` inline — and the seam differs by method rather than being a uniform "resource plus cap" pair. `Reqgrep_Command::process_stdin( $stream )` takes only the I/O resource, which `__invoke()` reads from the static `$stdin` closure, `\STDIN` by default, and drains a `Stdin_Node` to EOF with no cap; `Reqgrep_Command::follow_mode( int $max_iterations = \PHP_INT_MAX )` takes only an iteration cap. Production uses the defaults; tests pass `php://memory` streams and small caps to drive loops deterministically.
 
 Flag a new blocking command that bakes the stream in with no injection seam and no iteration cap. It is hard to test, and the fix costs one parameter.
 

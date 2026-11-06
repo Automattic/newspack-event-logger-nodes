@@ -43,7 +43,7 @@
         <div class="st"><div class="num">1</div><div class="card"><h3><span class="m">wp nodes reqgrep [&lt;pattern&gt;]</span>: pick the source</h3>
           <p><span class="m">--firehose=&lt;path&gt;</span> is validated before any directory opens: its <span class="m">realpath</span> must sit inside <span class="m">Config::get_logs_directory()</span>, and a path already naming a partition (<span class="m">.p&lt;N&gt;</span>) reads that partition alone. The dirs come from <span class="m">Log_Manager::firehose_dirs()</span>.</p>
           <div class="src">
-            <div class="chip first"><b>stdin has data</b>A pipe or a redirected file, detected by fstat. Wins over every other source: <span class="m">--follow</span> and <span class="m">--recent</span> are ignored.</div>
+            <div class="chip first"><b>--stdin</b>Packed lines from stdin, selected by the flag alone. Refuses <span class="m">--follow</span>, <span class="m">--recent</span> and <span class="m">--firehose</span>.</div>
             <div class="chip"><b>--follow</b>One Consumer per partition, seeded at the tail, run under the event loop; prints requests as they finish.</div>
             <div class="chip"><b>otherwise: cat</b>One Consumer per partition from the first segment, or from the second-to-last with <span class="m">--recent</span>.</div>
           </div>

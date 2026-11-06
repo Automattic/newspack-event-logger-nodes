@@ -117,7 +117,7 @@ wp nodes reqgrep [<pattern>]   # application-aware firehose filter: groups match
 wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, inline vs Table-pointer
 ```
 
-[`reqgrep`](docs/API.md#wp-nodes-reqgrep-pattern) matches every request when the pattern is omitted, and takes `--follow`, `--recent`, `--raw`, `--incomplete`, `--bucket-size`, `--num-buckets` and `--firehose`; [`ruleset-bench`](docs/API.md#wp-nodes-ruleset-bench---iterationsn) takes `--iterations`.
+[`reqgrep`](docs/API.md#wp-nodes-reqgrep-pattern) matches every request when the pattern is omitted, and takes `--follow`, `--recent`, `--raw`, `--incomplete`, `--bucket-size`, `--num-buckets`, `--firehose` and `--stdin`; [`ruleset-bench`](docs/API.md#wp-nodes-ruleset-bench---iterationsn) takes `--iterations`.
 
 ## MCP
 

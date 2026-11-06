@@ -23,6 +23,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\CLI;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -79,6 +80,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		Reqgrep_Command::$stdin = null;
 		Config::reset();
 		Event_Framework::reset();
 		$this->rmdir_recursive( $this->tmp );
@@ -991,42 +993,132 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// process_stdin path: feed packed Message envelopes via in-memory stream.
+	// Source dispatch: only --stdin reads stdin, whatever kind of stream it is.
 	// -------------------------------------------------------------------------
 
-	public function test_stdin_has_data_returns_false_when_no_stdin(): void {
-		$cmd = $this->make_cmd();
-		$ref = new \ReflectionMethod( $cmd, 'stdin_has_data' );
-		// In PHPUnit, STDIN is typically a TTY/sock; expect false (no piped data).
-		$result = $ref->invoke( $cmd );
-		$this->assertIsBool( $result );
+	/** A packed request-start line, newline included, for one rid. */
+	private function packed_line( string $rid ): string {
+		return Message::packed( $this->packed_struct( [
+			'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => "/{$rid}", 'ts' => 1700000000.25,
+		] ) ) . "\n";
 	}
 
-	public function test_stdin_has_data_returns_true_for_regular_file_stream(): void {
-		// A real file (S_IFREG) qualifies as piped data — the dispatcher in
-		// __invoke uses this to choose process_stdin over cat_mode.
-		$tmp = \tempnam( \sys_get_temp_dir(), 'reqgrep-stdin-' );
-		\file_put_contents( $tmp, "anything\n" );
-		try {
-			$stream = \fopen( $tmp, 'r' );
-			$cmd    = $this->make_cmd();
-			$ref    = new \ReflectionMethod( $cmd, 'stdin_has_data' );
-			$this->assertTrue( $ref->invoke( $cmd, $stream ) );
-			\fclose( $stream );
-		} finally {
-			@\unlink( $tmp );
+	/** Write one request into the configured firehose. */
+	private function seed_firehose( string $rid ): void {
+		\mkdir( "{$this->tmp}/logs/firehose.p0", 0755, true );
+		\file_put_contents( "{$this->tmp}/logs/firehose.p0/0.log", $this->packed_line( $rid ) );
+	}
+
+	/**
+	 * A stream holding `$line`: a FIFO with both ends held open, which never
+	 * reaches EOF, as the pipe sshd hands a command does not; or a regular file.
+	 *
+	 * @return resource
+	 */
+	private function stdin_of_kind( string $kind, string $line ) {
+		$path = "{$this->tmp}/stdin-{$kind}";
+		if ( 'pipe' === $kind ) {
+			\posix_mkfifo( $path, 0600 );
+			$stream = \fopen( $path, 'r+' );
+			\fwrite( $stream, $line );
+			return $stream;
 		}
+		\file_put_contents( $path, $line );
+		return \fopen( $path, 'r' );
 	}
 
-	public function test_stdin_has_data_returns_false_for_memory_stream(): void {
-		// fstat on a closed resource returns false → method short-circuits.
-		$cmd = $this->make_cmd();
-		$ref = new \ReflectionMethod( $cmd, 'stdin_has_data' );
+	/** @return array<string,array{0:string,1:array<string,mixed>}> */
+	public static function stdin_the_caller_never_wrote(): array {
+		return [
+			'an open pipe'             => [ 'pipe', [] ],
+			'an open pipe, --recent'   => [ 'pipe', [ 'recent' => true ] ],
+			'a redirected file'        => [ 'file', [] ],
+		];
+	}
 
-		$stream = \fopen( 'php://memory', 'r+' );
+	/**
+	 * @param array<string,mixed> $flags
+	 */
+	#[DataProvider( 'stdin_the_caller_never_wrote' )]
+	public function test_without_the_flag_the_firehose_is_read_and_stdin_stays_unread( string $kind, array $flags ): void {
+		$this->seed_firehose( 'firehose-rid' );
+		$line                   = $this->packed_line( 'stdin-rid' );
+		$stream                 = $this->stdin_of_kind( $kind, $line );
+		Reqgrep_Command::$stdin = static fn () => $stream;
+
+		$cmd      = new Reqgrep_Command();
+		$captured = $this->capture_output( $cmd );
+		$cmd->__invoke( [], $flags );
+		$out = self::joined( $captured );
+
+		$this->assertStringContainsString( 'request_id:firehose-rid', $out );
+		$this->assertStringNotContainsString( 'stdin-rid', $out );
+		$this->assertSame( $line, \fgets( $stream ) );
 		\fclose( $stream );
-		$this->assertFalse( $ref->invoke( $cmd, $stream ) );
 	}
+
+	public function test_the_stdin_flag_reads_the_stream_and_leaves_the_firehose(): void {
+		$this->seed_firehose( 'firehose-rid' );
+		// A socket is neither a pipe nor a file: the flag alone selects it.
+		[ $stream, $writer ] = \stream_socket_pair( \STREAM_PF_UNIX, \STREAM_SOCK_STREAM, \STREAM_IPPROTO_IP );
+		\fwrite( $writer, $this->packed_line( 'stdin-rid' ) );
+		\fclose( $writer );
+		Reqgrep_Command::$stdin = static fn () => $stream;
+
+		$cmd      = new Reqgrep_Command();
+		$captured = $this->capture_output( $cmd );
+		$cmd->__invoke( [], [ 'stdin' => true ] );
+		$out = self::joined( $captured );
+		\fclose( $stream );
+
+		$this->assertStringContainsString( 'request_id:stdin-rid', $out );
+		$this->assertStringNotContainsString( 'firehose-rid', $out );
+	}
+
+	/** @return array<string,array{0:array<string,mixed>,1:string}> */
+	public static function flags_that_read_the_firehose(): array {
+		return [
+			'--follow'           => [ [ 'follow' => true ], '--follow' ],
+			'--recent'           => [ [ 'recent' => true ], '--recent' ],
+			'--firehose'         => [ [ 'firehose' => '/never/exists/anywhere' ], '--firehose' ],
+			'--follow, --recent' => [ [ 'recent' => true, 'follow' => true ], '--follow or --recent' ],
+		];
+	}
+
+	/**
+	 * @param array<string,mixed> $flags
+	 */
+	#[DataProvider( 'flags_that_read_the_firehose' )]
+	public function test_the_stdin_flag_refuses_a_flag_that_reads_the_firehose( array $flags, string $named ): void {
+		$this->seed_firehose( 'firehose-rid' );
+		$line                   = $this->packed_line( 'stdin-rid' );
+		$stream                 = $this->stdin_of_kind( 'file', $line );
+		Reqgrep_Command::$stdin = static fn () => $stream;
+
+		$cmd      = new Reqgrep_Command();
+		$captured = $this->capture_output( $cmd );
+		try {
+			$cmd->__invoke( [], [ 'stdin' => true ] + $flags );
+			$this->fail( 'expected a refusal' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( [ "--stdin cannot be combined with {$named}." ], $GLOBALS['_test_wp_cli_errors'] );
+		}
+
+		$this->assertSame( '', self::joined( $captured ) );
+		$this->assertSame( $line, \fgets( $stream ) );
+		\fclose( $stream );
+	}
+
+	public function test_the_synopsis_declares_the_stdin_flag(): void {
+		// WP-CLI refuses a flag the docblock synopsis does not declare.
+		$doc = ( new \ReflectionMethod( Reqgrep_Command::class, '__invoke' ) )->getDocComment();
+		$this->assertIsString( $doc );
+		$this->assertStringContainsString( '[--stdin]', $doc );
+	}
+
+	// -------------------------------------------------------------------------
+	// process_stdin path: feed packed Message envelopes via in-memory stream.
+	// -------------------------------------------------------------------------
 
 	public function test_process_stdin_consumes_lines_and_emits_matched_request(): void {
 		// Inject a memory stream pre-populated with two complete request lines
@@ -1496,8 +1588,8 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_dispatches_to_cat_mode_with_explicit_path(): void {
 		// Set up a real on-disk firehose layout under a controlled base_dir,
 		// point Config at it via use_base_dir(), and exercise __invoke
-		// end-to-end. Default `assoc_args` (no --follow, stdin not piped)
-		// routes to cat_mode.
+		// end-to-end. Default `assoc_args` (no --follow, no --stdin) routes to
+		// cat_mode.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		try {

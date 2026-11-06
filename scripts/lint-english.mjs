@@ -16,17 +16,18 @@
  *
  * Exit 0 clean; exit 1 with `file:line: [id] message` per hit.
  *
- * A false positive belongs here: add a carve-out to the rule's `keep`. The gate
- * offers no opt-out comment and honours no marker, because every opt-out in a
- * source tree teaches the next reader to write one.
+ * A false positive is carved out here, in the rule's `keep`, and never reworded
+ * around. The gate offers no opt-out comment and honours no marker, because every
+ * opt-out in a source tree teaches the next reader to write one.
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { walkFiles } from './lib/walk-files.mjs';
 
 /** The sentence every hit ends on. */
 const CARVE_OUT =
-	'A false positive belongs in this gate: carve it out in newspack-nodes/scripts/lint-english.mjs. There is no opt-out comment.';
+	'A false positive must be carved out of the gate itself, in newspack-nodes/scripts/lint-english.mjs: never reword around it. There is no opt-out comment.';
 
 /** What a code span or a tag leaves in the prose: a rule cannot match across it. */
 const CODE = '§';
@@ -44,6 +45,22 @@ const GITHUB_MARK = '‹github›';
  */
 const EXEMPT =
 	/(^|\/)(node_modules|vendor|build|dist|release|coverage|\.phpstan|\.git|fixtures|__fixtures__|templates-fixtures)\/|(^|\/)docs\/.*\/mocks\/|(^|\/)tests\/(templates\/|INVENTORY\.md$)|(^|\/)(CHANGELOG|LICENSE)\.md$|\.min\.(js|css)$/;
+
+/**
+ * Community's specs and plans, which another repo's `docs/superpowers` is not.
+ * It reads a resolved path, because a hook run inside the repo names `docs/…`.
+ */
+const COMMUNITY_DESIGN_DOCS =
+	/\/newspack-community\/docs\/(?:fdn-arch|superpowers)\//;
+
+/**
+ * Is this path outside our prose?
+ *
+ * @param {string} path Path to check.
+ * @return {boolean} True for a path the gate skips.
+ */
+const isExempt = ( path ) =>
+	EXEMPT.test( path ) || COMMUNITY_DESIGN_DOCS.test( resolve( path ) );
 
 /**
  * Where a line starts a new thought, whatever the line above it said.
@@ -726,15 +743,56 @@ const COMPLEMENTIZERS =
 	'and|not|than|front|dry-run|basis|evidence|fact|proof|claim|sign|premise|assumption|invariant|merely|only|means?|meant|proves?|proved|shows?|showed|ensures?|ensured|guarantees?|asserts?|asserted|checks?|checked|confirms?|confirmed|verif(?:y|ies|ied)|says?|said|knows?|knew|sure|given|such|so|now|except|assumes?|assumed|implies|implied|requires?|required|expects?|expected|states?|stated|tests?|tested|holds?|believes?|notes?|noted|finds?|found|sees?|saw|see';
 
 /**
+ * Where `actually` and `really` carry a contrast that cutting them would lose:
+ * after a negation, beside a word in capitals, in a noun clause asking what
+ * holds, and in a sentence that states the contrast.
+ */
+const KEEP_CONTRAST = [
+	{ before: /(?:\b(?:not|never|without|instead of)|n't) $/i },
+	{ match: /^[A-Z]+$/ },
+	{ after: /^ [A-Z]{2,}\b/ },
+	{ after: /^[^.;:!?]{0,60}\. Without\b/ },
+	{
+		before: /\b(?:what|whatever|where|wherever|whichever|whether|how)\b(?: [^ .,;:!?]+){0,5} $/i,
+	},
+	{
+		after: /^[^.;:!?]{0,60}(?:[,—–] not\b|\brather than\b|\binstead of\b)/i,
+	},
+	{
+		before: /\bbut $|\b(?:in effect|real|production code)\b[^.;:!?]{0,60}$/i,
+	},
+];
+
+/**
+ * A possessive beside another in its clause borrows that one's noun. A copula
+ * ahead of it stays a hit, because "the window is the boot's" has no parallel:
+ * its subject is the noun it stands in for.
+ */
+const COPULA = '(?:is|are|was|were)';
+const KEEP_PARALLEL = [
+	{
+		match: new RegExp( `^(?!${ COPULA }\\b)`, 'i' ),
+		before: new RegExp(
+			`(?:(?<!\\b(?:it|that|what|there|here|who|let))'s|\\b(?:its|their|our|your|his|her|whose))\\b[^.;:!?]{0,80}(?<!\\b${ COPULA } (?:still |also )?)$`,
+			'i'
+		),
+	},
+	{
+		after: /^(?:,? (?:and|or|nor|not|never|but|else|then|rather than|than)(?: [\w§-]+){1,3}|, (?:a|an|the|each|every|one|this) [\w§-]+)'s(?=[.,;:)]|$)/i,
+	},
+];
+
+/**
  * Every rule, one row each.
  *
  * `keep` lists a rule's carve-outs. Each names at least one of `before`, `match`
  * and `after`, regexes over the text ahead of the hit, the hit and the text
  * following it, or `wrapped`, true for a hit crossing a line break, and spares
- * the hit when every slot it names holds. `disabled` parks a rule, carrying the
- * reason, until it earns a place.
+ * the hit when every slot it names holds. `only` limits a rule to the paths it
+ * matches. `just` has no row, because it also means "only" and "a moment ago",
+ * and no pattern separates those from the dead use.
  *
- * @type {Array<{id:string,pattern:RegExp,message:string,keep?:Array<Object>,disabled?:string}>}
+ * @type {Array<{id:string,pattern:RegExp,message:string,keep?:Array<Object>,only?:RegExp}>}
  */
 const RULES = [
 	{
@@ -750,6 +808,10 @@ const RULES = [
 					`(?:\\b(?:${ COMPLEMENTIZERS })|,) $`,
 					'i'
 				),
+			},
+			{
+				match: /^that (?:nothing|nobody)$/i,
+				after: /^(?: [\w-]+){0,3} (?:is|are|was|were)\b/i,
 			},
 		],
 	},
@@ -767,7 +829,11 @@ const RULES = [
 			/\b(?:when|while|if|where|because|since|once|until|unless) (?:no|none)\b|\bas no [\w-]+ [a-z]+s\b|\b(?:when|while|if|where|because|since|as|once|until|unless) (?:nothing|nobody) (?:else |ever |yet |still )*(?:(?:can|will|would|could|may|might|should|must) [a-z]+|[a-z]+(?:s|ed)) (?:a|an|the|it|this|that|its|their|them|one|any)\b/gi,
 		message:
 			'A negative as the subject of a subordinate clause: say what holds ("only when every layer left it unset").',
-		keep: [ ...KEEP_IDIOMS, { match: / (?:is|was|has) \w+$/i } ],
+		keep: [
+			...KEEP_IDIOMS,
+			{ match: / (?:is|was|has) \w+$/i },
+			{ match: /^as no /i, before: /\bread(?:s|ing)? $/i },
+		],
 	},
 	{
 		id: 'folded-preposition',
@@ -778,7 +844,7 @@ const RULES = [
 		keep: [
 			...KEEP_IDIOMS,
 			{
-				after: /^ (?:particular|means|way|time|avail|use|cost|return|(?:set )?order)\b/i,
+				after: /^ (?:particular|means|way|time|avail|use|cost|return|event|(?:set )?order)\b/i,
 			},
 			{ before: /\bpulls? $/i },
 		],
@@ -792,6 +858,9 @@ const RULES = [
 			{ before: /\bthere $/i },
 			{ match: /none$/i, after: /^ or\b/i },
 			{
+				after: /^ (?:help|substitute|protection|evidence|fault|place)\b/i,
+			},
+			{
 				after: /^ (?:less|better|worse|bigger|larger|smaller|greater|wider|narrower|different|fewer|older|newer|earlier|later|sooner|faster|slower|shorter|cheaper|deeper|higher|lower)\b/i,
 			},
 		],
@@ -801,7 +870,7 @@ const RULES = [
 		pattern:
 			/\b(?:the|a|an|no|this|each|every|one) [\w-]+'s(?=[.,;:)]|$)|\b(?:is|are|was|were) (?:still |also )?[\w-]+'s(?=[.,;:)]|$)/gi,
 		message: 'A possessive standing in for its noun: name the noun.',
-		keep: [ { match: /\b(?:each|the) other's$/i } ],
+		keep: [ { match: /\b(?:each|every|the) other's$/i }, ...KEEP_PARALLEL ],
 	},
 	{
 		id: 'dropped-noun',
@@ -811,10 +880,12 @@ const RULES = [
 	},
 	{
 		id: 'arrow-chain',
-		pattern: /→[^→.,;]{1,60}→| -> [^.,;]{1,60} -> /g,
+		pattern: /→[^→.,;|]{1,60}→| -> [^.,;|]{1,60} -> /g,
 		message: 'An arrow chain: write the sentence.',
+		only: /\.md$/,
 		keep: [
 			{ wrapped: true },
+			{ match: /\band\b|^→ \*\*[^*]+\*\* →$/ },
 			{
 				before: /\b(?:WP Admin|wp-admin|Admin|WordPress|Dashboard|Inspector|Settings|Appearance|DevTools) $/i,
 			},
@@ -850,24 +921,13 @@ const RULES = [
 		id: 'dead-really',
 		pattern: /\breally\b/gi,
 		message: 'A dead qualifier: cut "really".',
+		keep: KEEP_CONTRAST,
 	},
 	{
 		id: 'dead-actually',
 		pattern: /\bactually\b/gi,
 		message: 'A dead qualifier: cut "actually".',
-	},
-	{
-		id: 'dead-just',
-		pattern: /\bjust\b/gi,
-		message: 'A dead qualifier: cut "just".',
-		disabled:
-			'588 hits at about 40% precision: it also means "only" and "a moment ago".',
-		keep: [
-			{ before: /\bnot $/i },
-			{
-				after: /^-|^ (?:past|over|under|after|before|as|like|enough|below|above|inside|outside|once|in case|about|beyond|ahead|behind)\b/i,
-			},
-		],
+		keep: KEEP_CONTRAST,
 	},
 	{
 		id: 'dead-somewhat',
@@ -887,9 +947,6 @@ const RULES = [
 			'A line number beside a GitHub link: put it in the URL as #L181 or #L84-L97.',
 	},
 ];
-
-/** The rules in force. */
-const ACTIVE = RULES.filter( ( rule ) => ! rule.disabled );
 
 /**
  * The source line a paragraph offset sits on.
@@ -934,10 +991,11 @@ function isKept( rule, { text, lines }, found ) {
  */
 function checkFile( path, read ) {
 	const reports = [];
+	const rules = RULES.filter( ( rule ) => rule.only?.test( path ) ?? true );
 	for ( const paragraph of paragraphs(
 		read( readFileSync( path, 'utf8' ) )
 	) ) {
-		for ( const rule of ACTIVE ) {
+		for ( const rule of rules ) {
 			for ( const found of paragraph.text.matchAll( rule.pattern ) ) {
 				if ( isKept( rule, paragraph, found ) ) {
 					continue;
@@ -965,7 +1023,7 @@ function* expandArg( arg ) {
 	if ( statSync( arg ).isDirectory() ) {
 		yield* walkFiles( arg, {
 			match: READABLE,
-			exempt: ( path ) => EXEMPT.test( path ),
+			exempt: isExempt,
 		} );
 	} else {
 		yield arg;
@@ -976,7 +1034,7 @@ let failed = false;
 for ( const arg of process.argv.slice( 2 ) ) {
 	for ( const path of expandArg( arg ) ) {
 		const read = READERS.find( ( [ pattern ] ) => pattern.test( path ) );
-		if ( ! read || EXEMPT.test( path ) ) {
+		if ( ! read || isExempt( path ) ) {
 			continue;
 		}
 		for ( const report of checkFile( path, read[ 1 ] ) ) {

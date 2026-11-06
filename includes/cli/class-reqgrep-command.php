@@ -20,7 +20,8 @@
  *  - `--follow`: the same Consumers seeded at the tail, run under the
  *    `Event_Framework` drain loop, where each Consumer's `fire_cb` polls for new
  *    bytes until SIGINT.
- *  - stdin: a `Stdin_Node` over a pipe or a redirected file, detected by fstat.
+ *  - `--stdin`: a `Stdin_Node` over stdin. The flag alone selects it, because a
+ *    caller with no terminal holds a pipe it never wrote to.
  *
  * Every firehose line is a 7-field positional `Message` envelope
  * (`Message::packed`): the entry hash sits at `Message::VALUE`, the request id
@@ -77,6 +78,18 @@ class Reqgrep_Command {
 
 	/** Seconds between in-flight cache rotations (60 × 3 = 180s idle ceiling). */
 	private const INFLIGHT_ROTATE_INTERVAL = 60.0;
+
+	/**
+	 * Stdin seam, standing in for the `\STDIN` constant `--stdin` reads. Lazily
+	 * defaulted at the call site; tests reassign it to a fixture stream, so the
+	 * dispatch runs with no real pipe and a stream the firehose path must leave
+	 * unread can be read back.
+	 *
+	 * Signature: `function (): resource`.
+	 *
+	 * @var (\Closure(): resource)|null
+	 */
+	public static ?\Closure $stdin = null;
 
 	/**
 	 * Output sink — lazily a Stdout_Node in production (see emit()); tests swap in
@@ -165,8 +178,7 @@ class Reqgrep_Command {
 	 *
 	 * Collects every entry sharing a request id once any line for that rid
 	 * matches, then prints them in order, indented by the (start)/(complete)
-	 * tree. Stdin wins over every other source: with data on it, --follow and
-	 * --recent are ignored.
+	 * tree. It reads the firehose unless --stdin names stdin instead.
 	 *
 	 * ## OPTIONS
 	 *
@@ -200,6 +212,9 @@ class Reqgrep_Command {
 	 * [--firehose=<path>]
 	 * : Override firehose base directory. Must be inside the configured logs dir.
 	 *
+	 * [--stdin]
+	 * : Read packed firehose lines from stdin. Cannot be combined with --follow, --recent or --firehose.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     # Search every segment for /calendar
@@ -211,12 +226,22 @@ class Reqgrep_Command {
 	 *     # Specific rid
 	 *     wp nodes reqgrep abc123def
 	 *
+	 *     # Read an archived segment
+	 *     cat archived.log | wp nodes reqgrep abc123def --stdin
+	 *
 	 * @when after_wp_load
 	 *
 	 * @param array<int,string>   $args       Positional arguments.
 	 * @param array<string,mixed> $assoc_args Associative arguments.
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
+		$use_stdin = isset( $assoc_args['stdin'] );
+		$clashes   = \array_intersect( [ 'follow', 'recent', 'firehose' ], \array_keys( $assoc_args ) );
+		if ( $use_stdin && [] !== $clashes ) {
+			\WP_CLI::error( '--stdin cannot be combined with --' . \implode( ' or --', $clashes ) . '.' );
+			return;
+		}
+
 		$this->pattern       = $args[0] ?? '.';
 		$this->incomplete    = isset( $assoc_args['incomplete'] );
 		$this->raw           = isset( $assoc_args['raw'] );
@@ -259,11 +284,8 @@ class Reqgrep_Command {
 			);
 		$this->init_core();
 
-		// Detect pipe / file redirection (stdin) vs. cat / follow mode.
-		$use_stdin = $this->stdin_has_data();
-
 		if ( $use_stdin ) {
-			$this->process_stdin();
+			$this->process_stdin( ( self::$stdin ?? static fn () => \STDIN )() );
 		} elseif ( $follow ) {
 			$this->follow_mode();
 		} else {
@@ -345,23 +367,19 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Stdin pipe mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
+	 * Stdin mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
 	 * that unpacks each packed Message envelope and runs it through
 	 * process_message, then flush incomplete requests so the operator can see
 	 * partial state, and warn with the count of lines that would not unpack.
 	 * An eof_deadline of 0 makes the reader exit on the stream's TM_EOF rather
 	 * than polling on past it.
 	 *
-	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled with
-	 * fixture lines to drive the loop deterministically.
+	 * Tests inject a `fopen('php://memory', 'r+')` filled with fixture lines to
+	 * drive the loop deterministically.
 	 *
-	 * @param resource|null $stream Source stream (defaults to STDIN).
+	 * @param resource $stream Source stream.
 	 */
-	private function process_stdin( $stream = null ): void {
-		$stream = $stream ?? ( \defined( 'STDIN' ) ? \STDIN : null );
-		if ( null === $stream ) {
-			return;
-		}
+	private function process_stdin( $stream ): void {
 		$skipped = 0;
 		$src     = new Stdin_Node( $stream, 0.0 );
 		$src->sink( new Callback_Node( function ( array $message ) use ( &$skipped ): void {
@@ -444,36 +462,6 @@ class Reqgrep_Command {
 			throw new \RuntimeException( 'reqgrep core not initialized' );
 		}
 		return $this->core;
-	}
-
-	/**
-	 * Detect whether `$stream` has piped data attached. fstat() reports the
-	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
-	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
-	 *
-	 * Defaults to STDIN; tests pass a temp-file handle so the dispatch decision
-	 * is observable without a real STDIN pipe.
-	 *
-	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
-	 * @return bool True when the stream is a pipe or a regular file.
-	 */
-	private function stdin_has_data( $stream = null ): bool {
-		if ( null === $stream ) {
-			if ( ! \defined( 'STDIN' ) ) {
-				return false;
-			}
-			$stream = STDIN;
-		}
-		// A closed or non-resource stream carries no piped data.
-		if ( ! \is_resource( $stream ) ) {
-			return false;
-		}
-		$stat = @\fstat( $stream );
-		if ( ! $stat ) {
-			return false;
-		}
-		$file_type = $stat['mode'] & 0170000;
-		return 0010000 === $file_type || 0100000 === $file_type;
 	}
 
 	/**

@@ -6,6 +6,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`wp nodes reqgrep` reads stdin only under `--stdin`.** A script piping a
+  saved segment in must add the flag, or the command reads the firehose and
+  leaves the pipe unread. `--stdin` refuses `--follow`, `--recent` and
+  `--firehose`.
 - **This release needs newspack-nodes 2.145.0.** Below it the plugin goes
   dormant behind an admin notice naming both versions. Update the
   substrate first.
