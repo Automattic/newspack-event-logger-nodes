@@ -36,7 +36,7 @@ The substrate checkout must sit at `../newspack-nodes`, because the build kit an
 
 ```bash
 # PHPUnit, as a NON-ROOT user (Log_Manager refuses root), with newspack-nodes active.
-# Use the vendored binary; the one-second per-test budget fails the run on a breach.
+# Use the vendored binary; the ten-second per-test budget fails the run on a breach.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 tests/run-coverage.sh
 
