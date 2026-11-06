@@ -87,9 +87,7 @@ jest.mock( 'd3-flame-graph', () => ( {
 } ) );
 
 // Mock the CSS import.
-jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ), {
-	virtual: true,
-} );
+jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ) );
 
 import * as React from 'react';
 import * as d3 from 'd3';
