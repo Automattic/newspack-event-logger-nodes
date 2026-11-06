@@ -1537,7 +1537,7 @@ class Log_Manager {
 	 * Drain every materialized Partition's in-memory batch to disk.
 	 *
 	 * Two callers need this. A caller handing off to a subprocess that writes the
-	 * same firehose (nuclear-gyrobase's run_gyrobase.sh) flushes BEFORE
+	 * same firehose (nuclear-gyrobase's engine) flushes BEFORE
 	 * `proc_open`, or the child appends between the parent's accumulated Messages
 	 * and the next size-threshold / timer flush and the segment ends up out of
 	 * logical order. A caller that has just written a `job` entry flushes so the
