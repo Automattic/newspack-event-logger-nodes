@@ -53,7 +53,7 @@ npm run lint:deadcode:js    # knip
 
 A test must not wait in real time: it pins `Core::$now` here, or the substrate's `Core::$clock` and `Event_Framework::$sleep`, and never buys time with `#[Medium]` or `#[Large]`. Read dead-code findings rather than obeying them — most are live by hook, reflection, `.tsl` or JS — and apply the test-only rule in `~/.claude/rules/test-seams.md`. The `event-logger-nodes-workflow` skill, Phase 3, carries the rest.
 
-`scripts/pre-push` is the gate, so don't repeat it by hand. It runs jest with its per-file 90% gate on every push and scopes the rest to the file types pushed; PHP takes phpcs, a container deploy, the PHPUnit coverage suite and a per-class 90% gate. Five checks run on every push, docs-only included: the private-data gate `scripts/lint-private-data.py` over each pushed commit, `scripts/lint-docs.sh`, `scripts/lint-wp-pin.mjs`, `scripts/check-substrate-floor.sh` and dndocker's `tools/check-firehose-parity.py`. The floor check and the parity check skip when the checkout they need is absent.
+`scripts/pre-push` is the gate, so don't repeat it by hand. It runs jest with its per-file 90% gate on every push and scopes the rest to the file types pushed; PHP takes phpcs, a container deploy, the PHPUnit coverage suite and a per-class 90% gate. Six checks run on every push, docs-only included: the private-data gate `scripts/lint-private-data.py` over each pushed commit, the prose gate `scripts/lint-english.mjs` over the whole repo, `scripts/lint-docs.sh`, `scripts/lint-wp-pin.mjs`, `scripts/check-substrate-floor.sh` and dndocker's `tools/check-firehose-parity.py`. The floor check and the parity check skip when the checkout they need is absent.
 
 ### Git hooks
 
