@@ -36,8 +36,9 @@ fi
 # is wired for 10.x.
 PHPUNIT="$SCRIPT_DIR/../vendor/bin/phpunit"
 
-# Ensure xdebug coverage mode is enabled
-export XDEBUG_MODE=coverage
+# shellcheck disable=SC1091 # this plugin's vendored copy of the shared lib
+. "$SCRIPT_DIR/../scripts/lib/coverage-php.sh"
+coverage_php "$(dirname "$SCRIPT_DIR")"
 
 # Each run's bootstrap names a per-PID base and removes it, and the
 # `-logging` tree beside it, at exit; sweep only what a crashed run left,
@@ -45,8 +46,8 @@ export XDEBUG_MODE=coverage
 # prefix, so they age out the same way.
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'newspack-event-logger-nodes-test-*' -mmin +120 -exec rm -rf {} +
 
-# Xdebug coverage runs several times slower, so a test gets 3 seconds here.
-"$PHPUNIT" --configuration phpunit.xml \
+# Collecting coverage slows a test, so one gets 3 seconds here.
+"${COVERAGE_PHP[@]}" "$PHPUNIT" --configuration phpunit.xml \
     --coverage-clover "${OUT}"/newspack-event-logger-nodes-coverage/clover.xml \
     --coverage-html "${OUT}"/newspack-event-logger-nodes-coverage \
 	--enforce-time-limit \
