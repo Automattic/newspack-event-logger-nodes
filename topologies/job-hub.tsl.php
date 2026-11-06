@@ -1,7 +1,8 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 var stale_timeout = 600
 var on_demand_idle = 30
 
-include job-feed
+include job-router
 include job-worker
 
 secure

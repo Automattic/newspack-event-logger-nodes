@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Stats_Builder topology.
 #
 #   Consumer (flames.log) ─→ StatsBuilder ─→ Row_Table (flame-facts, Flame_Facts, by message via set_facts_target)

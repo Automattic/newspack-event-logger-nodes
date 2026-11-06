@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Request_Builder topology
 #
 #   Tail (firehose.p0) ─→ Request_Builder ─→ Partition (requests:partition)

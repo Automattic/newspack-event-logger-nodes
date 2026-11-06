@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 #
 # Request_Builder + Flame_Builder + Stats_Builder topology.
 #

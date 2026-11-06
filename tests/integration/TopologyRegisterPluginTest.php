@@ -92,8 +92,8 @@ class TopologyRegisterPluginTest extends TestCase {
 	/** Every *.tsl basename ELN ships in its topologies dir. */
 	private function shipped_topology_basenames(): array {
 		$out = [];
-		foreach ( \glob( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/*.tsl' ) ?: [] as $path ) {
-			$out[] = \basename( $path, '.tsl' );
+		foreach ( \glob( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies/*.tsl.php' ) ?: [] as $path ) {
+			$out[] = \basename( $path, '.tsl.php' );
 		}
 		return $out;
 	}
@@ -116,7 +116,7 @@ class TopologyRegisterPluginTest extends TestCase {
 			$path = Topology_Registry::resolve( $name );
 			$this->assertNotNull( $path, "topology '{$name}' must resolve" );
 			$this->assertFileExists( $path );
-			$this->assertStringEndsWith( "/topologies/{$name}.tsl", $path );
+			$this->assertStringEndsWith( "/topologies/{$name}.tsl.php", $path );
 		}
 	}
 

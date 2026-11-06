@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Complete topology: one worker runs request-builder, flame-builder,
 # stats-builder, job-router, and job-worker together.
 

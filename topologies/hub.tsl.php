@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # hub.tsl — both hub legs, aggregator's firehose and PHP error-log ingest and
 # hub-control's settings/discovery egress, in one worker. Frontmatter is read
 # from the top-level file only, so all three `var` pins below must live here —

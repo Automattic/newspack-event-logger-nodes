@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # hub-sse.tsl — `hub` with `aggregator-sse` in place of `aggregator`, so the
 # hub streams each spoke over SSE rather than fetching it. Both hub legs,
 # aggregator's firehose and PHP error-log ingest and hub-control's

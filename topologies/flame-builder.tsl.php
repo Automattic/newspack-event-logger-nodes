@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Flame_Builder topology.
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition, each flame stamped with its record's request_at)

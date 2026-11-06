@@ -271,7 +271,7 @@ class TopologyShapeTest extends TestCase {
 		$composing = [];
 		$short     = [];
 		foreach ( $this->topology_files() as $path ) {
-			$name  = \basename( $path, '.tsl' );
+			$name  = \basename( $path, '.tsl.php' );
 			$types = \array_column( \Newspack_Nodes\Topology_Analyzer::graph_for( $name )['nodes'], 'type' );
 			if ( ! \in_array( 'Job_Worker', $types, true ) ) {
 				continue;
@@ -321,7 +321,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** @return list<string> Absolute paths of the stock topologies. */
 	private function topology_files(): array {
-		$files = \glob( \dirname( __DIR__, 2 ) . '/topologies/*.tsl' );
+		$files = \glob( \dirname( __DIR__, 2 ) . '/topologies/*.tsl.php' );
 		$this->assertNotEmpty( $files, 'no stock topologies found' );
 		return $files;
 	}
@@ -341,7 +341,7 @@ class TopologyShapeTest extends TestCase {
 		// Read the FLATTENED statements, not the raw file: a topology that
 		// `include`s others owns few lines of its own, and every directive here
 		// must be checked against the graph it actually builds.
-		$name  = \basename( $path, '.tsl' );
+		$name  = \basename( $path, '.tsl.php' );
 		$lines = \array_column(
 			\Newspack_Nodes\Topology_Analyzer::statements( $name )['statements'],
 			'line'

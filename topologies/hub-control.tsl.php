@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # hub-control topology — ELN overlay over the substrate settings-sync plane.
 #
 # Includes the substrate `settings-sync` topology (settings:consumer →

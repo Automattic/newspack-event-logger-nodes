@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Job_Router topology
 #
 #   Tail (firehose.p0)  ────┐

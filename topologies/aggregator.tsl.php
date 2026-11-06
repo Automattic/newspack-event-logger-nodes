@@ -1,3 +1,4 @@
+# <?php \defined( 'ABSPATH' ) || exit; ?>
 # Aggregator topology (hub side), fetching each spoke over HTTP.
 #
 #   spokes:<id> ─┬─ firehose.p<n> ─→ Remote_Job_Rewrite ─→ Topic (firehose:topic)

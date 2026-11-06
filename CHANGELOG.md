@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Stock topologies ship as `<name>.tsl.php`, so a web server runs their guard rather than serving them as text. Requires the substrate that resolves them.
+
 ## [0.160.10] - 2026-11-05
 
 ### Changed
