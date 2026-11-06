@@ -224,8 +224,8 @@ const DEFAULT_URL_PARAMS = {
 const URLS_PER_ASK = 100;
 
 /**
- * The URL modal's bucket selection while nothing narrows it: the whole
- * window. The hook's default.
+ * The URL modal's unnarrowed bucket selection: the whole window. The hook's
+ * default.
  */
 const NO_DETAIL_FILTERS = { bucket: '' };
 
@@ -835,9 +835,9 @@ export function usePerformanceGraph( opts = {} ) {
 	/**
 	 * Fire a control straight into a view's `fill` through the shared
 	 * minter, which stamps the origin that view trusts and throws for a view
-	 * declaring none. A name no node answers to is a no-op, since every caller
-	 * here names a node this hook built: the graph is torn down, and so is the
-	 * slice.
+	 * declaring none. A name that does not resolve to a node is a no-op, since
+	 * every caller here names a node this hook built: the graph is torn down,
+	 * and so is the slice.
 	 *
 	 * @param {string} viewName The view or transform node to control.
 	 * @param {Object} value    The control, such as `{ action: 'loading' }`.
@@ -1113,7 +1113,7 @@ export function usePerformanceGraph( opts = {} ) {
 					}
 				}
 			};
-			// A scroll alone leaves a pending table ask, a search's, to go.
+			// A scroll alone leaves a pending table ask, from a search, to go.
 			if ( sameQuestion && ! turned ) {
 				askScrolled();
 				return;

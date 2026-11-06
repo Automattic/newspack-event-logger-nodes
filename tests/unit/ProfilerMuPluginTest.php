@@ -52,7 +52,7 @@ class ProfilerMuPluginTest extends TestCase {
 		$GLOBALS['_wp_options']['home']                = 'https://kea-5108.test';
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
-		// Beneath the drop-in's, so an error it chains never reaches PHPUnit's.
+		// Beneath the drop-in's handler, so an error it chains never reaches PHPUnit's.
 		\set_error_handler( static fn (): bool => true );
 	}
 

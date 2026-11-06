@@ -148,8 +148,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 		}
 
 		/**
-		 * The tab draws `RequestProfile` on the station too, where no dashboard
-		 * printed the colour map: it carries the dashboards' map itself, the
+		 * The tab draws `RequestProfile` on the station too, where the dashboards
+		 * do not print the colour map: it carries the dashboards' map itself, the
 		 * platform spans beneath the configured colours.
 		 */
 		public function test_inline_data_carries_the_dashboards_span_colours(): void {

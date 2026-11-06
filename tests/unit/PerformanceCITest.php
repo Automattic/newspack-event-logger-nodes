@@ -1773,7 +1773,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
 	}
 
-	/** The two debugging switches are a rule's, so a hub pushing either is refused. */
+	/** The two debugging switches belong to a rule, so a hub pushing either is refused. */
 	public function test_set_verb_refuses_the_retired_debugging_options(): void {
 		foreach ( [ 'newspack_event_logger_nodes_log_memory', 'newspack_event_logger_nodes_flush_every_line' ] as $option ) {
 			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ $option, '1' ] );

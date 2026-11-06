@@ -288,9 +288,8 @@ export function ShowMoreRow( { more, label, colSpan } ) {
  * The time breakdown for one request, or for an average of many.
  *
  * Every percentage divides by `totalMs`, the wall clock, rather than by the
- * profiled total. The bar's unfilled remainder is therefore the time nothing
- * instrumented accounts for, and the footer reads as how much of the request
- * the logger saw.
+ * profiled total. The bar's unfilled remainder is therefore the uninstrumented
+ * time, and the footer reads as how much of the request the logger saw.
  *
  * A category's time is exclusive of its children, `Request_Builder_Node`
  * having subtracted each closing span from its ancestors, so the segments
@@ -360,7 +359,7 @@ export default function RequestProfile( {
 		return null;
 	}
 
-	// A share of the wall clock, or null where none was measured.
+	// A share of the wall clock, or null where nothing was measured.
 	const shareOf = ( time ) =>
 		totalMs > 0 && null !== time ? ( time / totalMs ) * 100 : null;
 	const shareText = ( share ) =>

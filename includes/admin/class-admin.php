@@ -262,7 +262,7 @@ class Admin {
 	 * holds the default leaves it alone.
 	 *
 	 * Runs on every option WordPress updates, so it bails unless the name
-	 * actually carries our prefix and the remainder is a key the file defaults
+	 * carries our prefix and the remainder is a key the file defaults
 	 * declare — matched, not stripped by length, or another plugin's option
 	 * whose tail happened to equal one of our keys would be judged against our
 	 * defaults and deleted.

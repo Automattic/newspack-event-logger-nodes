@@ -148,7 +148,7 @@ class Query_Monitor_Actions {
 
 	/**
 	 * The running timer a timer started at `$hr` sits inside: the latest one
-	 * started no later than it, or null when none is running.
+	 * started no later than it, or null when there is no such timer.
 	 *
 	 * @param int|float $hr The timer's monotonic start.
 	 */

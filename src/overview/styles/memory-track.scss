@@ -1,10 +1,10 @@
 /**
  * The peak-memory chart under the flame graph.
  *
- * The plot stretches edge to edge because its X axis IS the flame's, so the
- * axis labels sit over it rather than in a gutter that would shift the two out
- * of register. Colors are the skin's chart vocabulary, the same one
- * `AreaTimeChart` reads.
+ * The plot stretches edge to edge because its X axis IS the flame graph's
+ * axis, so the axis labels sit over it rather than in a gutter that would
+ * shift the two out of register. Colors are the skin's chart vocabulary, the
+ * same one `AreaTimeChart` reads.
  */
 
 .event-logger-memory-track {

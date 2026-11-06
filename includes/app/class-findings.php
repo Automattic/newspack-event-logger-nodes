@@ -240,7 +240,7 @@ class Findings {
 	 * finding then carries the stamp, so one record names one rule.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record (`requests.p*`).
-	 * @param Rule|null              $rule   The rule governing this request's URL, or null when none resolves.
+	 * @param Rule|null              $rule   The rule governing this request's URL, or null when it does not resolve to one.
 	 * @return list<array<string,mixed>>
 	 */
 	public static function for_request( array $record, ?Rule $rule = null ): array {
@@ -311,7 +311,7 @@ class Findings {
 	 *
 	 * @param array<array-key,mixed> $record  The request record.
 	 * @param list<mixed>            $entries The record's entries.
-	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
+	 * @param string|null            $rule_id The governing rule's id, or null when the URL has no rule.
 	 * @return array<string,mixed>|null The finding, or null when the record arrived whole.
 	 */
 	private static function truncation( array $record, array $entries, ?string $rule_id ): ?array {
@@ -367,7 +367,7 @@ class Findings {
 	 * inside it.
 	 *
 	 * @param list<mixed>              $entries  The record's entries.
-	 * @param Rule|null                $rule     The governing rule, or null when none does.
+	 * @param Rule|null                $rule     The governing rule, or null when the URL has no rule.
 	 * @param array<string,mixed>|null $cold     The cold-start finding, when there is one.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
 	 * @param bool                     $worker   Whether the record belongs to a worker.
@@ -514,7 +514,7 @@ class Findings {
 	 * `$to`: null unless that row opens a hook, else that hook as `ends`, the
 	 * last `LIFECYCLE_BRACKET` hook logged ahead of it as `after`, and as
 	 * `omitted` the bracket hooks after that one and before the first logged
-	 * at or after `$to`, or before `shutdown` where none is, that the rule
+	 * at or after `$to`, or before `shutdown` where the log holds no such hook, that the rule
 	 * binds neither as a hook nor as a significant event. Whether an omitted
 	 * hook fires at all, or before the window opens rather than inside it, is
 	 * not known: binding one that never fires costs nothing, and once bound it
@@ -658,11 +658,11 @@ class Findings {
 	 * A name the dominant span already names, down its chain, is for
 	 * that finding to tell; one it explains, per `defers()`, repeats here too,
 	 * counted request-wide, and points at that finding in its detail with no
-	 * proposal of its own. It takes the one slot only when no repeat the
-	 * reader can act on qualifies.
+	 * proposal of its own. It takes the one slot only when the reader cannot
+	 * act on any repeat that qualifies.
 	 *
 	 * @param array<array-key,mixed>   $record   The request record.
-	 * @param Rule|null                $rule     The governing rule, or null when none does.
+	 * @param Rule|null                $rule     The governing rule, or null when the URL has no rule.
 	 * @param float                    $duration Request duration in milliseconds.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
 	 * @param list<Flame_Entry>        $nodes    Flattened flame nodes.
@@ -743,7 +743,7 @@ class Findings {
 	 * has no rule edit, so its verdict names the labelled span it found.
 	 *
 	 * @param string    $name The repeated span's name, label included.
-	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @param Rule|null $rule The governing rule, or null when the URL has no rule.
 	 * @return array<string,mixed>
 	 */
 	private static function repeat_proposal( string $name, ?Rule $rule ): array {
@@ -864,7 +864,7 @@ class Findings {
 	 * beside it are a finding only when they reach `PLUGIN_LOAD_SHARE` alone.
 	 *
 	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
-	 * @param string|null       $rule_id  The governing rule's id, or null when none governs.
+	 * @param string|null       $rule_id  The governing rule's id, or null when the URL has no rule.
 	 * @param float             $duration Request duration in milliseconds.
 	 * @return array<string,mixed>|null The finding, or null when the loads, less any dominant one, hold under `PLUGIN_LOAD_SHARE`.
 	 */
@@ -949,7 +949,7 @@ class Findings {
 	 * It carries no proposal: no rule edit fixes a fatal.
 	 *
 	 * @param array<array-key,mixed> $record  The request record.
-	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
+	 * @param string|null            $rule_id The governing rule's id, or null when the URL has no rule.
 	 * @return array<string,mixed>|null The finding, or null when the request did not die.
 	 */
 	private static function fatal( array $record, ?string $rule_id ): ?array {
@@ -998,7 +998,7 @@ class Findings {
 	 * that sentence is the split, and `spent_detail()` is left out.
 	 *
 	 * @param list<Flame_Entry> $nodes      Flattened flame nodes.
-	 * @param Rule|null         $rule       The governing rule, or null when none does.
+	 * @param Rule|null         $rule       The governing rule, or null when the URL has no rule.
 	 * @param float             $duration   Request duration in milliseconds.
 	 * @param bool              $rule_known Whether `$rule` is the record's resolution; false when the record's stamp did not resolve, and what the rule logged inside the span is not known here.
 	 * @param list<mixed>       $entries    The record's entries, which time the nested engine's exits.
@@ -1099,7 +1099,7 @@ class Findings {
 	 * What rule edit would make this span's interior visible, and what it costs.
 	 *
 	 * @param string    $span The span's name, as the flame carries it.
-	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @param Rule|null $rule The governing rule, or null when the URL has no rule.
 	 * @param string    $undo The undo sentence for a `more` proposal.
 	 * @return array<string,mixed>
 	 */
@@ -1130,7 +1130,7 @@ class Findings {
 	 * The `SPAN_ADVICE` row governing one span.
 	 *
 	 * @param string    $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @param Rule|null $rule The governing rule, or null when the URL has no rule.
 	 * @return array<string,string>
 	 */
 	private static function span_advice( string $base, ?Rule $rule ): array {
@@ -1370,7 +1370,7 @@ class Findings {
 
 	/**
 	 * The child of a node one call of which holds `HOLDING_SHARE` of it —
-	 * the slowest such call's, where two qualify — or null where none does.
+	 * the slowest such call's, where two qualify — or null where every call holds less.
 	 *
 	 * @param list<Flame_Entry> $nodes Flattened flame nodes.
 	 * @param int               $index The node's index.
@@ -1506,7 +1506,7 @@ class Findings {
 	 *
 	 * @param array<array-key,mixed> $record  The request record.
 	 * @param list<mixed>            $entries The record's entries.
-	 * @param Rule|null              $rule    The governing rule, or null when none resolves.
+	 * @param Rule|null              $rule    The governing rule, or null when the request does not resolve to one.
 	 * @return array<string,mixed>|null The finding, or null when the request ran to its end.
 	 * @throws \UnexpectedValueException When the record carries no `last_log_ts` or `timestamp`.
 	 */
@@ -1938,7 +1938,7 @@ class Findings {
 	 * explanation but WHICH INSTRUMENTATION TO SWITCH ON.
 	 *
 	 * @param array<array-key,mixed> $stats A URL index row (`hash`, `url`, `count`, `avg_ms`, `max_ms`, …).
-	 * @param Rule|null              $rule  The rule governing that URL, or null when none does.
+	 * @param Rule|null              $rule  The rule governing that URL, or null when the URL has no rule.
 	 * @return list<array<string,mixed>> One finding, or [] when the rule already registers hooks.
 	 */
 	public static function for_url( array $stats, ?Rule $rule = null ): array {
@@ -1956,13 +1956,13 @@ class Findings {
 	}
 
 	/**
-	 * The insufficient-instrumentation finding: create a rule for a URL nothing
-	 * governs, which only `for_url()` asks, or bracket the lifecycle on a rule
+	 * The insufficient-instrumentation finding: create a rule for a URL without
+	 * one, which only `for_url()` asks, or bracket the lifecycle on a rule
 	 * that registers nothing. Both propose MORE, and both name their own
 	 * removal. A rule whose hooks ran nowhere in the record proposes nothing.
 	 *
 	 * @param string                 $url      The URL, whose rule path a `create_rule` proposal takes as its pattern.
-	 * @param Rule|null              $rule     The governing rule, or null when none does.
+	 * @param Rule|null              $rule     The governing rule, or null when the URL has no rule.
 	 * @param array<array-key,mixed> $metric   The numbers that ARE known.
 	 * @param string                 $measured Where they came from.
 	 * @param bool                   $hookless Whether the rule registers no hooks.
@@ -2020,7 +2020,7 @@ class Findings {
 	 * no edit and says why.
 	 *
 	 * @param string              $action  What the edit does.
-	 * @param string|null         $rule_id The rule it lands on, or null when none governs.
+	 * @param string|null         $rule_id The rule it lands on, or null when the URL has no rule.
 	 * @param string              $why     Why it acts on the finding, or why nothing does.
 	 * @param string              $undo    How to take it back.
 	 * @param array<string,mixed> $extra   What the action needs: a pattern, hooks, a field and value.

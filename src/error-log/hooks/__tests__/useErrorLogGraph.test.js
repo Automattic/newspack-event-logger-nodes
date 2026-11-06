@@ -17,7 +17,7 @@
  * stamp the server gives it. The slot keep-alive
  * bridge mirrors useRequestLogGraph exactly: a `connected` envelope populates
  * the composed heartbeat's `{slot,partition}`, and the Router TIMER drives
- * `heartbeat.fire` (via notify_timer) so the slot keep-alive actually fires.
+ * `heartbeat.fire` (via notify_timer) so the slot keep-alive fires.
  *
  * usePageVisibility is mocked to a controllable value so the visibility effect
  * is deterministic under jsdom.

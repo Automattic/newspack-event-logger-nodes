@@ -583,7 +583,7 @@ describe( 'AggregateTimeChart', () => {
 	it( 'draws nothing while the selected dimension has not arrived', () => {
 		// The payload still in state predates the dropdown switch, so the new
 		// dimension's key is absent. A totals series legended "Total" under a
-		// dropdown reading "User Agent" answers a question nobody asked, so
+		// dropdown reading "User Agent" answers an unasked question, so
 		// the totals are handed over here and must still draw nothing.
 		const bk = bucketKeyNow();
 		const { container, unmount } = renderComponent(

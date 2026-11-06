@@ -292,7 +292,7 @@ describe( 'CategoryTimeChart', () => {
 
 		// renderFn must have been wired up by useTimeChart.
 		expect( globalThis.__lastRenderFn ).toEqual( expect.any( Function ) );
-		// d3.select must have been called (chart actually rendered).
+		// d3.select must have been called (chart rendered).
 		expect( d3Mock.select ).toHaveBeenCalled();
 		const tooltips = container.querySelectorAll(
 			'.newspack-nodes-chart__tooltip'

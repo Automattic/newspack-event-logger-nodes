@@ -104,7 +104,7 @@ final class Url_Snapshot {
 		'views'  => 'views <> ?',
 	];
 
-	/** Whether a `pages` kind folds an `i` row: kind 1 each, kind 2 a visitor's. */
+	/** Whether a `pages` kind folds an `i` row: kind 1 each row, kind 2 a visitor row. */
 	private const KIND_KEEPS = 'k.kind = 1 OR i.worker = 0';
 
 	/**
@@ -284,7 +284,7 @@ final class Url_Snapshot {
 	/**
 	 * Run one step's statements in order, as a `$span` span closing on the
 	 * tables those reading the stats answered from, as `into_statement()`
-	 * names one third, or `ok` where none does.
+	 * names one third, or `ok` where the statements name no table.
 	 *
 	 * @param Row_Reader                                            $db         The building connection.
 	 * @param string                                                $span       A `Flame_Tree` snapshot step.

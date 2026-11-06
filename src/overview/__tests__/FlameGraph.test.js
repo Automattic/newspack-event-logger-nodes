@@ -910,7 +910,7 @@ describe( 'withTimeSpacers', () => {
 
 	it( 'is not defeated by a microsecond of rounding between siblings', () => {
 		// `Flame_Tree::offset_ms()` rounds `t` to 3 decimals and the duration
-		// is rounded too, so two spans that really abut can land 0.001ms apart
+		// is rounded too, so two spans that do abut can land 0.001ms apart
 		// the wrong way. That read as an overlap, which declines the WHOLE
 		// family — one microsecond threw away the time axis for 46 siblings on
 		// a real request, packing every one of them flush left.

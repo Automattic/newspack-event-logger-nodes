@@ -53,7 +53,7 @@ class RequestBuilderValidationTest extends TestCase {
 	}
 
 	/**
-	 * The last request the builder actually finished, or null when it finished
+	 * The last request the builder finished, or null when it finished
 	 * none — which is the interesting case for a broken sequence.
 	 *
 	 * @param Request_Builder_Node $rb The builder under test.

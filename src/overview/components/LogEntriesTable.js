@@ -166,7 +166,7 @@ const CENTERED = { behavior: 'smooth', block: 'center' };
  *
  * @param {Element} table    The table element.
  * @param {Object}  selector Either { pairId: number } or { entryIdx: number }.
- * @return {?Element} The row, or null when none is on screen.
+ * @return {?Element} The row, or null when it is off screen.
  */
 const findRow = ( table, selector ) => {
 	if ( selector.pairId !== undefined ) {
@@ -313,7 +313,7 @@ function cancelModifiedPress( event ) {
  * @param {number} [props.realCount] Count of real (non-placeholder) entries; the heading falls back to entries.length.
  * @param {Object} [props.revealRef] Ref the component fills with `reveal( n, path )`, the flame graph's way in.
  * @param {Object} [props.request]   The record the entries belong to; its `fatal_*` fields render on the request's terminal row, `(complete)` or `(aborted)`, whose stored entry `Request_Builder_Node` keeps without them.
- * @return {import('react').ReactElement|null} Rendered component or null if no entries.
+ * @return {import('react').ReactElement|null} Rendered component or null if there are no entries.
  */
 export default function LogEntriesTable( {
 	entries,
@@ -383,7 +383,7 @@ export default function LogEntriesTable( {
 	}, [ request ] );
 
 	/**
-	 * The fatal a row draws: the record's, on the request's terminal row.
+	 * The fatal a row draws: the record's fatal, on the request's terminal row.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {?{message: string, where: string}} The fatal, or null.

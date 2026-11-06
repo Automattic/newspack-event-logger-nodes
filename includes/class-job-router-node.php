@@ -91,7 +91,7 @@ class Job_Router_Node extends Node {
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
 	 * @param array<int,mixed> $message Message whose VALUE is the ingress entry array.
-	 * @throws \RuntimeException When no sink is wired, which the first forwarded job surfaces.
+	 * @throws \RuntimeException When the node has no sink, which the first forwarded job surfaces.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;

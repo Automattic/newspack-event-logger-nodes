@@ -994,7 +994,7 @@ class Log_Manager {
 	 * rebind its hook instrumentation to the restored scope's rule.
 	 *
 	 * A null $outcome means the job did not finish — but ONLY when the caller
-	 * actually supplied one. A bare `end_job_context()` is a context restore
+	 * supplied one. A bare `end_job_context()` is a context restore
 	 * (the reconcile bridge does exactly that around every WP-Cron pass) and
 	 * must not read as an abort, so the arity is the discriminator: the
 	 * `after_job` hook is registered with accepted_args 3 and always passes it.
@@ -1558,7 +1558,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * Resolve the rule governing a URL and keep it as this request's.
+	 * Resolve the rule governing a URL and keep it as this request's rule.
 	 *
 	 * No match means skip: there is no log-all baseline, so a deployment that
 	 * wants everything logged declares a `/` rule. A log rule with a sample

@@ -59,7 +59,7 @@ final class UrlSnapshotTest extends TestCase {
 	 * seconds into its bucket.
 	 *
 	 * @param string              $path   The URL's path on its server.
-	 * @param int                 $age    Buckets before the tick's.
+	 * @param int                 $age    Buckets before the tick's bucket.
 	 * @param int                 $second Seconds into the bucket.
 	 * @param array<string,mixed> $over   Columns by name.
 	 * @return array<string,mixed>

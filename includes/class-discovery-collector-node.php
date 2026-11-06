@@ -170,7 +170,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * record of what spokes report, never the ruleset (the editor is the only
 	 * rules writer). Non-autoloaded; once the option holds MAX_HOOKS names,
 	 * further new ones are dropped, and one rate-limited line per spoke says
-	 * how many. Writes only when something actually changed. The stored shape
+	 * how many. Writes only when something changed. The stored shape
 	 * is `name => true`, a presence flag.
 	 *
 	 * @param array<int,int|string> $names Names to union in (array_keys output; numeric names coerce to int).

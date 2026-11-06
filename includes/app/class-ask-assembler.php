@@ -523,9 +523,9 @@ class Ask_Assembler {
 
 	/**
 	 * One URL or one page: its stats and its worst recent requests — plus,
-	 * when it falls under no rule, the cold-start finding that says which
-	 * instrumentation to switch on. A page's brief is a URL's of every shape
-	 * of it, named and hashed as its page. A dimensional breakdown is for
+	 * when it does not fall under any rule, the cold-start finding that says
+	 * which instrumentation to switch on. A page's brief is a URL's of every
+	 * shape of it, named and hashed as its page. A dimensional breakdown is for
 	 * `query` to answer; a brief carries no unbounded series.
 	 *
 	 * The requests are the newest `dump_url` lists, and `$requests_capped`
@@ -678,7 +678,7 @@ class Ask_Assembler {
 	/**
 	 * The URL the record's request fetched, query kept, redacted through the
 	 * one path the firehose uses. The stored `url` masks every value but a
-	 * route's, so it cannot say which page or post a request asked for.
+	 * route value, so it cannot say which page or post a request asked for.
 	 *
 	 * The builder sets `request_url` from the same request line that sets the
 	 * `url` it stores a record by, so a record without one is refused.

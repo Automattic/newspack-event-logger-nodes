@@ -39,7 +39,7 @@ $_SERVER['SERVER_NAME'] = 'kea-7713.test';
 // Rule_Set's orphan reconcile uses both, with `$options`: without them a run
 // fails with "undefined method", which reads as a Rule_Set bug rather than a
 // harness gap. get_col answers from the stubbed options store so the
-// reconcile actually reconciles.
+// reconcile reconciles.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/WpdbStub.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/SqliteWpdb.php';
 $GLOBALS['wpdb'] = new class() extends \Newspack_Nodes\Tests\Helpers\Sqlite_Wpdb {
@@ -277,8 +277,8 @@ if ( ! function_exists( 'wp_enqueue_style' ) ) {
 
 if ( ! function_exists( 'get_bloginfo' ) ) {
 	/**
-	 * Seeded 9.9.9 — no WordPress release carries it, so a test that reads a
-	 * version really read this one. A test that sets `$wp_version` reads its
+	 * Seeded 9.9.9 — no WordPress release carries it, so a test reading 9.9.9
+	 * has read this one. A test that sets `$wp_version` reads its
 	 * own, as WordPress's reads that global.
 	 */
 	function get_bloginfo( string $show = '', string $filter = 'raw' ): string {

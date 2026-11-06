@@ -17,7 +17,7 @@ return [
 	'segment_size'     => 1024,
 	'min_segments'     => 2,
 	'num_segments'     => 2,
-	// A 24-bucket stats span, so a test never reads the default's.
+	// A 24-bucket stats span, so a test never reads the default span.
 	'min_lifetime'     => 7200,
 	'lifetime'         => 0,
 	'memcache_servers' => [],

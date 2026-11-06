@@ -8,7 +8,7 @@
  * dashboard that summarises itself to one model behind one proxy publishers
  * cannot reach, and it cannot see a Linear issue at all. Exposing the data lets
  * an agent that ALREADY holds those context providers do the correlation, which
- * is the thing actually wanted.
+ * is the thing wanted.
  *
  * The door is a declaration on the substrate's `Mcp_Door`, which owns the
  * protocol, the session ceiling, the meter and the `<site-data>` fence. This

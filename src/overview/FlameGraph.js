@@ -472,9 +472,9 @@ const restamp = ( container, order ) => {
 
 /**
  * The position in the record of the log entry a frame opened at, or null for
- * a frame that carries none: an aggregate's, or any frame of a request folded
- * under load. Two frames that share a name share nothing else but this, and a
- * nested render repeats n, so it is what the log table finds a row by.
+ * a frame that carries none: an aggregate frame, or any frame of a request
+ * folded under load. Two frames that share a name share nothing else but this,
+ * and a nested render repeats n, so it is what the log table finds a row by.
  *
  * @param {Object} d A d3 hierarchy node.
  * @return {?number} The frame's `i`.
@@ -671,7 +671,7 @@ const isPositioned = ( node ) => typeof node.t === 'number' && ! node.merged;
  * How far two siblings may overlap and still count as abutting.
  *
  * `Flame_Tree::offset_ms()` rounds `t` to 3 decimals and a span's duration is
- * rounded as well, so two that really do abut can land a microsecond the wrong
+ * rounded as well, so two that do abut can land a microsecond the wrong
  * way. Reading that as a true overlap declines the whole FAMILY: on a real
  * request one such pair costs the other 45 siblings their positions and packs
  * every one of them flush left. A hundredth of a millisecond is far above the
@@ -790,7 +790,7 @@ const insertSpacers = ( node, cutoff ) => {
  *
  * @param {Object} root         Flame graph root.
  * @param {number} [maxSpacers] Spacers to emit at most (default 5000).
- * @return {Object} The tree with spacers, or the input when none were placed; never mutated.
+ * @return {Object} The tree with spacers, or the input when it placed no spacers; never mutated.
  * @testonly Exported for FlameGraph.test.js; the component applies it internally.
  */
 export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {

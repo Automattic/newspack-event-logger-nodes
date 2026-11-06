@@ -754,7 +754,7 @@ export default function PerformanceDashboard( {
 	/**
 	 * Open a request the server has just located, showing it now and letting the
 	 * title fill in when `lookupUrl` answers. It opens inside `linked`, the
-	 * subject a link named beside it, and inside its own URL when none did.
+	 * subject a link named beside it, and inside its own URL when `linked` is null.
 	 *
 	 * @param {string}  rid      The request id that was found.
 	 * @param {Object}  data     The `search_requests` reply, carrying `url_hash`.

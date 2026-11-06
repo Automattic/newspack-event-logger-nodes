@@ -1100,7 +1100,7 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * A profiled request's timing and window rows name each category and
-	 * entry by id, both timing tables naming the server's.
+	 * entry by id, both timing tables naming the server by id too.
 	 */
 	public function test_a_profiled_requests_timing_rows_name_their_category_and_entry_by_id(): void {
 		$sb = $this->armed_stats_builder();

@@ -116,7 +116,7 @@ class Current_Request_Overlay {
 
 	/**
 	 * Inject this request's id and performance-dashboard URL into the
-	 * tab's global — but only once the handle is actually enqueued on this page,
+	 * tab's global — but only once the handle is enqueued on this page,
 	 * by either path (the substrate's filter on the station, ours everywhere else).
 	 * A page that never loaded the bundle gets no global and no inline script.
 	 *

@@ -20,7 +20,7 @@
  *     'Hidden' would mislabel it; this fails loudly on either.
  *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
  *     verb in its node_schema()['commands'] is a key in `commands()` — the
- *     schema→commands derivation actually installed each verb (symmetry with the
+ *     schema→commands derivation installed each verb (symmetry with the
  *     substrate's ServiceCiSchemaCommandsTest install guard).
  *
  * Mirrors the substrate's ClassesCITest + ServiceCiSchemaCommandsTest guards.
@@ -128,7 +128,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 * Install-as-command guard: for each guarded CI, every verb declared in its
 	 * node_schema()['commands'] is present as a key in `commands()`. The
 	 * schema→commands derivation (Service_CI_Node::commands_from_schema) must
-	 * actually install each verb — this catches a verb that lists in the schema
+	 * install each verb — this catches a verb that lists in the schema
 	 * but gets filtered out of dispatch.
 	 *
 	 * Non-vacuous: the assertion can fail — it would if a schema verb were

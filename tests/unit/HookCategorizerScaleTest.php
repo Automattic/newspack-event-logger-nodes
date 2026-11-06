@@ -39,7 +39,7 @@ class HookCategorizerScaleTest extends TestCase {
 	}
 
 	/**
-	 * A deterministic list of hook names shaped like a fleet's: names built
+	 * A deterministic list of hook names shaped like a fleet's hooks: names built
 	 * from the shipped patterns' literal text, the same with a prefix in front
 	 * of them, and names of random words.
 	 *

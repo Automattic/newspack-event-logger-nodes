@@ -47,7 +47,7 @@ const subjectFacts = ( subject ) =>
  * sits under, and that better than the totals of the URL set on screen.
  * `surface` says which it is — `request`, `url`, `page` or `overview` — and
  * `filters` rides on every one, because a narrowed number that does not say
- * what narrowed it reads as the site's.
+ * what narrowed it reads as the number for the whole site.
  *
  * @param {Object}   [state]                 The dashboard's current selection.
  * @param {?Object}  [state.urlTotals]       Totals for the URL set the filters selected.

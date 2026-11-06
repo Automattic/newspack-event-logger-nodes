@@ -216,7 +216,7 @@ class AskAssemblerTest extends TestCase {
 	/**
 	 * A per-request brief names the URL its request fetched, query and all,
 	 * from the record's `request_url`, redacted: the stored `url` masks every
-	 * value but a route's, so it cannot say what the request asked for.
+	 * value but a route value, so it cannot say what the request asked for.
 	 */
 	#[DataProvider( 'per_request_briefs' )]
 	public function test_a_per_request_brief_carries_the_url_its_request_fetched( \Closure $brief ): void {
@@ -624,8 +624,9 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/**
-	 * Whether a record holds no SQL because none ran or because none was
-	 * logged is the rule's transport and trace flags, so the brief carries them.
+	 * Whether a record holds no SQL because the request ran none or because
+	 * the rule did not log it is the rule's transport and trace flags, so the
+	 * brief carries them.
 	 */
 	public function test_a_rule_carries_what_it_logs_beyond_hooks(): void {
 		$rule  = $this->rule()->with(
@@ -1306,7 +1307,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/**
-	 * `dump_url` rows carry a null duration where none was measured (decision
+	 * `dump_url` rows carry a null duration where nothing was measured (decision
 	 * 24), so a null ranks after every number and a number ranks by itself:
 	 * the brief trusts the row rather than reading its status a second time.
 	 */

@@ -94,7 +94,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 	public function test_reuses_existing_firehose_topic(): void {
 		$this->require_config_or_skip();
 
-		// Pre-register a configured Topic under the canonical name (stands in for the topology's).
+		// Pre-register a configured Topic under the canonical name (stands in for the topology's Topic).
 		$preexisting = new Topic_Node();
 		$preexisting->name( '_firehose:topic' );
 		$preexisting->arguments( [ self::test_dir() . '/logs/firehose.p{partition}', '1' ] );

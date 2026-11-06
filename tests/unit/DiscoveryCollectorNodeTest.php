@@ -246,7 +246,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 
 		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] ) );
 
-		// The merge must actually stage the hook — otherwise the no-event assertion
+		// The merge must stage the hook — otherwise the no-event assertion
 		// below would pass vacuously on a broken staging path.
 		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks(), 'the hook was staged' );
 

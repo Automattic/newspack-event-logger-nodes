@@ -2,7 +2,7 @@
 
 The substrate's [browser runtime](https://github.com/Automattic/newspack-nodes/blob/main/docs/browser-runtime.md) chapter covers the graph every page mounts, the command POST, the record stream and the slot pool. This chapter covers what the Event Logger builds on it: five dashboards, one overlay tab, six build entries.
 
-Every dashboard is a React page in wp-admin, and none runs a fetch loop. Each is a topology in the browser: a Timer ticks on the page's heartbeat, a Fetcher per verb sends its command, and the reply lands on a view node that one widget draws. A page reaches a worker two ways, both the substrate's: a verb answered on [`POST /wp-json/newspack-nodes/v1/command`](API.md#sending-a-command), and a subscription on [`GET /wp-json/newspack-nodes/v1/messages/stream`](API.md#sse-messagesstream).
+Every dashboard is a React page in wp-admin, and none runs a fetch loop. Each is a topology in the browser: a Timer ticks on the page's heartbeat, a Fetcher per verb sends its command, and the reply lands on a view node that one widget draws. A page reaches a worker two ways, both of them substrate routes: a verb answered on [`POST /wp-json/newspack-nodes/v1/command`](API.md#sending-a-command), and a subscription on [`GET /wp-json/newspack-nodes/v1/messages/stream`](API.md#sse-messagesstream).
 
 ## The five dashboards
 

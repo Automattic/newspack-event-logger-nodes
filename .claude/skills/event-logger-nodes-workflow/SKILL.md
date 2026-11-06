@@ -102,7 +102,7 @@ Logging is per-URL, never global: there is no `log_urls`, `skip_urls`, `log_even
 1. The verb must exist first, with its own `capability`. A tool is a wrapper, never a second implementation.
 2. Add one `TOOLS` entry naming the node, its class and the verb. The tool carries no role: `tools/list` and `tools/call` read the verb's declared `capability`, so a session is offered only what its scope covers, and `tools/list` reads each arg's type, requiredness and variadic-ness from the verb's `args` too. A node mounted under another class, or a verb the class does not declare, throws `\LogicException`.
 3. Write the `summary` for an agent that cannot see the code. `Findings::caveat()` rides every tool description, so the measurement caveat is already carried — say what the tool answers and what an error means.
-4. Every argument rides by name, as `--key=value` through `Command_Args::format()`, and the verb binds it against its declared args, so a tool arg must name a declared arg, and the order here does not follow the verb's.
+4. Every argument rides by name, as `--key=value` through `Command_Args::format()`, and the verb binds it against its declared args, so a tool arg must name a declared arg, and the order here does not follow the order the verb declares.
 
 Authorization takes a `Bearer <handle>.<secret>` scoped session: the door becomes that session's minting user and installs the scope as a ceiling, so a scope can only ever subtract. A session an OAuth grant minted for another resource than the door's `resource()` is refused, and every 401 names the door's sign-in metadata in `WWW-Authenticate`. Each session is metered in the slot `mcp:newspack-event-logger-nodes/v1:<handle>`; the substrate's [MCP doors](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/docs/API.md#mcp-doors) section owns the budget.
 
@@ -179,11 +179,12 @@ Two contracts tie it to this plugin, and both fail quietly when they move:
 # NON-ROOT user: Log_Manager refuses root, and the suite instantiates it.
 # Always pass --enforce-time-limit so a hung test (readline without a TTY,
 # infinite drain loop) aborts at the per-test budget instead of stalling the
-# suite. phpunit.xml sets no defaultTimeLimit, so that budget is one second for
-# every test, and failOnRisky="true" makes a breach fail the run rather than
-# warn. No class declares #[Medium] or #[Large] to buy more: a test that would
-# wait pins a clock instead — Core::$now, the tick every reader here dates
-# from, and Core::$clock and Event_Framework::$sleep in the substrate.
+# suite. phpunit.xml sets enforceTimeLimit="true" and defaultTimeLimit="10", so
+# a test aborts at ten seconds with or without the flag, and failOnRisky="true"
+# makes a breach fail the run rather than warn. No class declares #[Medium] or
+# #[Large] to buy more: a test that would wait pins a clock instead —
+# Core::$now, the tick every reader here dates from, and Core::$clock and
+# Event_Framework::$sleep in the substrate.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 # Filter to one test file or method.

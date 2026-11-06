@@ -857,7 +857,7 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	/** The diagnostic switches are each rule's, so the page has no Debugging section. */
+	/** Each rule owns the diagnostic switches, so the page has no Debugging section. */
 	public function test_register_settings_registers_no_debugging_section(): void {
 		$admin = new Admin();
 		$admin->register_settings();

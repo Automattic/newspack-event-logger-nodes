@@ -32,7 +32,7 @@ table.m td .r { display:inline-block; width:18px; height:18px; border-radius:4px
 
 <div class="cols">
   <div class="ranks">
-    <div class="rank"><div class="n">0<small>rank</small></div><div class="card"><h3>Exact path + query prefix</h3><p><span class="mono">/jobs/x?job-work</span>: the path is equal and the query starts with the pattern's. A raw string prefix, so <span class="mono">/jobs/x?job-worker</span> governs <span class="mono">/jobs/x?job-worker&amp;n=1</span> and not the same two parameters reversed.</p></div></div>
+    <div class="rank"><div class="n">0<small>rank</small></div><div class="card"><h3>Exact path + query prefix</h3><p><span class="mono">/jobs/x?job-work</span>: the path is equal and the query starts with the pattern's query. A raw string prefix, so <span class="mono">/jobs/x?job-worker</span> governs <span class="mono">/jobs/x?job-worker&amp;n=1</span> and not the same two parameters reversed.</p></div></div>
     <div class="gt">outranks every</div>
     <div class="rank"><div class="n">1<small>rank</small></div><div class="card"><h3>Exact path</h3><p><span class="mono">/about?</span>: the trailing <span class="mono">?</span> is the marker, the path must be equal, the query is ignored.</p></div></div>
     <div class="gt">outranks every</div>

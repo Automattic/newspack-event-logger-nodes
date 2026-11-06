@@ -640,7 +640,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * abort's are fictions, and would skew the mean and the max.
 	 *
 	 * @param float $duration_ms  The record's duration.
-	 * @param mixed $error_status The record's error status, `-` when none.
+	 * @param mixed $error_status The record's error status, `-` when it has none.
 	 */
 	public static function timing_counts( float $duration_ms, mixed $error_status ): bool {
 		return $duration_ms > 0 && ! \in_array( $error_status, self::UNTIMED_STATUSES, true );
@@ -661,7 +661,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * whatever status code it answered, and whether or not its duration
 	 * times it.
 	 *
-	 * @param mixed $error_status The record's error status, `-` when none.
+	 * @param mixed $error_status The record's error status, `-` when it has none.
 	 */
 	public static function error_counts( mixed $error_status ): bool {
 		return \in_array( $error_status, self::ERROR_KINDS, true );
@@ -878,7 +878,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * buckets: per URL and worker flag, the negation of the bucket's sums,
 	 * then, where the bucket held the row's stored minimum, maximum or peak,
 	 * a `set` of the whole row from the requests after it,
-	 * `url_window_sets()`, spent where none remains. The buckets run oldest
+	 * `url_window_sets()`, spent where those requests have run out. The buckets run oldest
 	 * first, each comparing the extremes the last one left.
 	 *
 	 * @param Row_Reader $reader The file's reader, from `own_reader()`.

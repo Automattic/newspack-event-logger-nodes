@@ -402,7 +402,7 @@ class Core {
 	 *
 	 * Keys are kept whatever they are — they say what the argument WAS, which
 	 * is the diagnostic — and a leaf is kept only when `HOOK_ARG_KEEP` names its
-	 * key. This is where a credential in a hook frame actually sits: the
+	 * key. This is where a credential in a hook frame sits: the
 	 * `Authorization` header of `http_request_args`, an option array carrying an
 	 * integration key. A list of leaves shapes to one `?`, as SQL's `IN (?)`
 	 * does, because its length is data too.
@@ -1113,7 +1113,7 @@ class Core {
 		if ( null === $label || null === $lm ) {
 			return $data;
 		}
-		// Only here is the statement the one the database was actually asked.
+		// Only here is the statement the one the database was asked.
 		$sql  = self::without_literals( self::without_host_annotation( $query ) );
 		$done = ( '' === $sql ? [] : [ 'm' => $sql ] ) + ( \is_object( $wpdb ) ? self::query_outcome( $wpdb, $query ) : [] );
 		$lm->complete( $label, $done, shaped: true );

@@ -6,7 +6,7 @@
  * time axis — not the slot-bucketed series its `AreaTimeChart` siblings draw —
  * colored by HTTP status class and clickable to open that request; a monotone
  * trend line and a dashed mean line sit behind them, and the legend beside
- * the plot lists the status classes actually present. Picking a class there
+ * the plot lists the status classes present. Picking a class there
  * keeps its dots alone on the plot, trend and mean recomputed over them.
  *
  * D3 owns this SVG subtree, not React: `useTimeChart` calls the render
@@ -81,7 +81,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	 * Plottable points, ascending by time.
 	 *
 	 * A request needs both a timestamp and a duration to place a dot; `dump_url`
-	 * sends a null duration where none was measured (decision 24), so a
+	 * sends a null duration where nothing was measured (decision 24), so a
 	 * timeout's eviction wait never reaches the mean or the trend.
 	 * Timestamps arrive in seconds and become `Date` objects for the time
 	 * scale.

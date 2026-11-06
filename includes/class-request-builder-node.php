@@ -104,7 +104,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted, incomplete.
 	 * The `process (complete)` validator and the stats builder's row both
-	 * read this one list, so a status the builder writes is one a reader names.
+	 * read this one list, so a reader names every status the builder writes.
 	 */
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
 
@@ -694,7 +694,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * With no resync there is exactly one hole and it is always at the tail:
 	 * entries run 1..gap_after, everything after is dropped, and the terminal
 	 * marker lands last. So this row sits between the two — the point the
-	 * entries actually went missing.
+	 * entries went missing.
 	 *
 	 * @param \stdClass            $request Request being closed.
 	 * @param array<string,mixed> $entry   The terminal entry, for its timestamp.

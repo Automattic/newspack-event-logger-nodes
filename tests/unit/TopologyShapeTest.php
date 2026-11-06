@@ -340,7 +340,7 @@ class TopologyShapeTest extends TestCase {
 
 		// Read the FLATTENED statements, not the raw file: a topology that
 		// `include`s others owns few lines of its own, and every directive here
-		// must be checked against the graph it actually builds.
+		// must be checked against the graph it builds.
 		$name  = \basename( $path, '.tsl.php' );
 		$lines = \array_column(
 			\Newspack_Nodes\Topology_Analyzer::statements( $name )['statements'],

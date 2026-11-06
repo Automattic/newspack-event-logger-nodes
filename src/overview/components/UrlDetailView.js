@@ -64,7 +64,7 @@ const ROW_HEIGHT = 40;
 
 /**
  * What a row's bar measures: its peak memory under the memory metric, else
- * its duration, which `dump_url` nulls where none was measured (decision 24).
+ * its duration, which `dump_url` nulls where nothing was measured (decision 24).
  *
  * @param {Object} req    A request row.
  * @param {string} metric The chart metric.

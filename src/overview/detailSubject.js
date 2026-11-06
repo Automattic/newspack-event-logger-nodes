@@ -48,7 +48,7 @@ export const sameSubject = ( a, b ) =>
  *
  * @param {Object[]} rows    One page of the URL table's rows.
  * @param {?Object}  subject The subject sought, `{ field, hash }`.
- * @return {?Object} That row's subject, titled; null when none opens it.
+ * @return {?Object} That row's subject, titled; null when the rows hold no such subject.
  */
 export const findSubject = ( rows, subject ) =>
 	( subject &&

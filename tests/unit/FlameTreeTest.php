@@ -21,7 +21,7 @@ class FlameTreeTest extends TestCase {
 	private const NOW = 1_700_000_000;
 
 	/**
-	 * Request start as the firehose actually carries it: `microtime( true )`,
+	 * Request start as the firehose carries it: `microtime( true )`,
 	 * unix seconds with a fraction. The fraction is the point — a whole second
 	 * here would pass against the truncating `num_int()` this replaced.
 	 */

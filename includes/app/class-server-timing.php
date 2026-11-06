@@ -85,7 +85,7 @@ class Server_Timing {
 	}
 
 	/**
-	 * `send_headers`: send the header with the page's.
+	 * `send_headers`: send the header with the page's headers.
 	 */
 	public function send(): void {
 		$value = self::value();

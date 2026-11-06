@@ -24,7 +24,7 @@
  * holds all three, and the table reads them only to start a new set on its
  * first page.
  *
- * Which pages are expanded is the dashboard's, which keeps it as `?expand=`.
+ * The dashboard owns which pages are expanded, and keeps that as `?expand=`.
  *
  * Pages and the shapes beneath them virtualize as one list against window
  * scroll, and each row's URL cell carries a background bar scaling the

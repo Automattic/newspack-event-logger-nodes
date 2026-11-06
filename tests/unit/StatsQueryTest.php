@@ -51,7 +51,7 @@ final class StatsQueryTest extends TestCase {
 		return [ [ $now - Bucket::window() + 1, $now ] ];
 	}
 
-	/** The 24 whole hours ending with the tick's. */
+	/** The 24 whole hours ending with the tick's hour. */
 	private function last_hours(): array {
 		$hour = Bucket::hour( self::NOW );
 		return [ [ ( $hour - 23 ) * 12, $hour * 12 + 11 ] ];
@@ -277,7 +277,7 @@ final class StatsQueryTest extends TestCase {
 
 	/**
 	 * Only a requests spec over the whole window ending at the tick, naming
-	 * no field but a URL's, its server and the worker flag, measuring only
+	 * no field but a URL field, its server and the worker flag, measuring only
 	 * what a URL row stores and searching nothing, reads the URL window.
 	 */
 	public function test_the_picker_reads_urls_window_only_for_the_whole_window(): void {

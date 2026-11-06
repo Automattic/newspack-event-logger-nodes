@@ -453,7 +453,7 @@ describe( 'canonical appearance ownership', () => {
 			'utf8'
 		);
 
-		// The three selector rows take a visual label; the tag box, a BaseControl's.
+		// The three selector rows take a visual label; the tag box, a BaseControl label.
 		expect(
 			source.match( /<BaseControl\.VisualLabel(?:\s|>)/g ) || []
 		).toHaveLength( 3 );

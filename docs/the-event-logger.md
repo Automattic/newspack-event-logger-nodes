@@ -4,7 +4,7 @@ Newspack Event Logger Nodes is an application on the runtime: it records what a 
 
 ## One line per event
 
-The writer sits on the critical path of the request it measures. [Log_Manager](../includes/class-log-manager.php) appends one line per event to the firehose, an append-only topic, and forgets it: it reads nothing, aggregates nothing and waits on no other process.
+The writer sits on the critical path of the request it measures. [Log_Manager](../includes/class-log-manager.php) appends one line per event to the firehose, an append-only topic, and forgets it: it reads nothing, aggregates nothing and does not wait on any other process.
 
 Four gates stand before the append. `enable_logging` is the master switch. The writer refuses to run as root. A rule pairs a URL pattern with a verdict, log or skip, and specificity outranks list order: a pattern with a query beats an exact path, which beats a prefix, and length breaks ties only within a rank. No match means skip, so the seed ruleset is one log rule on `/`; cron and the runtime's own endpoints log as worker traffic rather than being skipped. A rule's id is the hash of its pattern, so one URL never carries two rules.
 

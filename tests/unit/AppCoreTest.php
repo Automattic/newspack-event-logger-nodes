@@ -1794,7 +1794,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_significant_events_injected_into_log_events(): void {
 		// Significant events whose name doesn't already appear in log_events
-		// must auto-register so the hook actually gets instrumented.
+		// must auto-register so the hook gets instrumented.
 		// Custom events (registered via custom_events) should be excluded.
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
@@ -2106,7 +2106,7 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * Install a governing rule whose significant events cover `the_content`, so
-	 * hook_start('the_content') actually invokes wrap_callbacks — a wrap test
+	 * hook_start('the_content') invokes wrap_callbacks — a wrap test
 	 * with `significant` empty would make the wrap a no-op. Returns the enabled Core with current_filter set to the_content.
 	 *
 	 * @param array<string, mixed> $config Extra global config (e.g. hook_start_priority).
@@ -2124,7 +2124,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_wrapper_body_runs_original_and_returns_result(): void {
 		// The wrapper closure's body (start/call/complete/return) only executes
-		// when the wrapper is actually invoked — this drives it end to end.
+		// when the wrapper is invoked — this drives it end to end.
 		$core = $this->significant_core();
 
 		$original = function ( $v ) { return $v . ' WRAPPED'; };
@@ -2786,7 +2786,7 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * The last firehose entry emitted under $category, flushed or still
-	 * batched, or null when none was.
+	 * batched, or null when the category has no entry.
 	 *
 	 * @param string $category The entry's `k`.
 	 * @return array<string,mixed>|null

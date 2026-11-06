@@ -91,7 +91,7 @@ A fresh clone needs `npm install && composer install && npm run build`. The `new
 
 ## Dashboards
 
-A dashboard reaches the server two ways, both of them the substrate's: a TM_COMMAND envelope to a service CI through `POST /wp-json/newspack-nodes/v1/command`, and a subscription on `GET /wp-json/newspack-nodes/v1/messages/stream`. Most surfaces use one or the other. The verbs column lists what each one calls; the live-data column lists what it subscribes to.
+A dashboard reaches the server two ways, both of them substrate routes: a TM_COMMAND envelope to a service CI through `POST /wp-json/newspack-nodes/v1/command`, and a subscription on `GET /wp-json/newspack-nodes/v1/messages/stream`. Most surfaces use one or the other. The verbs column lists what each one calls; the live-data column lists what it subscribes to.
 
 | Surface | Service CI verbs | Live data | Source |
 |---------|------------------|-----------|--------|

@@ -492,7 +492,7 @@ class FlameFoldTest extends TestCase {
 	public function test_statements_the_bucket_swallowed_cost_the_record_nothing(): void {
 		// One caller running hundreds of cheap distinct statements stores none
 		// of them past its cap; charging the record for each would strip every
-		// other node's table — measured at 7.1x the bytes actually stored.
+		// other node's table — measured at 7.1x the bytes stored.
 		$entries = [];
 		$at      = 0.0;
 		for ( $i = 0; $i < 400; $i++ ) {
@@ -624,7 +624,7 @@ class FlameFoldTest extends TestCase {
 		$this->assertSame( 'sql: ordinary', $ordinary['name'] );
 		$this->assertSame( [ 2, 12.0 ], $ordinary['shapes'][ $kept ] ?? null );
 		$this->assertArrayNotHasKey( Flame_Fold::SHAPES_OVERFLOW, $ordinary['shapes'] );
-		// The premise: the spenders really did exhaust the budget, so the
+		// The premise: the spenders did exhaust the budget, so the
 		// repeat above was kept by the guard and not by a budget still whole.
 		$this->assertArrayHasKey( Flame_Fold::SHAPES_OVERFLOW, $last['shapes'] );
 	}

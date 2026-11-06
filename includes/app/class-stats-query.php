@@ -868,7 +868,7 @@ final class Stats_Query {
 	 * @param string       $grouped The grouped SELECT.
 	 * @param list<string> $columns The answer's columns, as it names them.
 	 * @param string       $first   The first page's ORDER BY clause, or ''.
-	 * @param string       $second  The second's.
+	 * @param string       $second  The second page's ORDER BY clause, or ''.
 	 */
 	private static function paged_twice( string $grouped, array $columns, string $first, string $second ): string {
 		$listed = \implode( ', ', $columns );
@@ -1213,7 +1213,7 @@ final class Stats_Query {
 
 	/**
 	 * The `requests` row a rid keys, every bucket read, as `newest_requests()`
-	 * lists it: `row` null where none names it, and `available` false, `row`
+	 * lists it: `row` null where the rid keys no row, and `available` false, `row`
 	 * null, where the stats file will not open, so an outage is never read
 	 * as an absence.
 	 *

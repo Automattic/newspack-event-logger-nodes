@@ -1,7 +1,7 @@
 <?php
 /**
  * TopologyLockHarness: per-partition lock-dir fixtures for the tests that
- * assert a config write actually reaches the live fleet.
+ * assert a config write reaches the live fleet.
  *
  * Every worker holds a WP option cache frozen at boot, so a write only lands
  * within the 15s scan window if the writer touches a restart or reload flag in

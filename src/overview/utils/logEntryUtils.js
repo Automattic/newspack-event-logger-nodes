@@ -845,7 +845,7 @@ const foldedSpanEntries = (
 				fromFold: true,
 			} );
 			walk( node.children, depth + 1, claimed, here );
-			// @longform Only a node the producer's drain actually closed may
+			// @longform Only a node the producer's drain closed may
 			// spend the debt. The record's trailing `(orphaned)` completes name
 			// the spans still open at the end, innermost first — the tree's
 			// deepest path by `t`. Keyed on the bare base alone, the FIRST

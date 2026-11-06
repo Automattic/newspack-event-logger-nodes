@@ -3,7 +3,7 @@
  * M2CommandDispatchE2ETest: acceptance test for the whole stack.
  *
  * Proves that every service CI mounted by the plugin's
- * `newspack_nodes/request_graph_ready` listener actually responds
+ * `newspack_nodes/request_graph_ready` listener responds
  * end-to-end to a representative verb when driven through the
  * substrate's production `HTTP_In` endpoint. The path under
  * test:

@@ -2,7 +2,7 @@
  * Tests for ResponseTimeChart — D3 scatter plot on the shared useTimeChart.
  *
  * Real d3 against jsdom, the way the sibling `AreaTimeChart` suite runs it.
- * This chart is very nearly nothing but accessors — `.attr( 'cx', ( d ) =>
+ * This chart is nearly nothing but accessors — `.attr( 'cx', ( d ) =>
  * x( d.time ) )`, the trend line's `.x`/`.y`, the tooltip `.text`, the axis
  * `yFormat` — and d3 invokes those only when it draws a non-empty selection.
  * A chainable mock resolves every one of them to the same stub, so it can

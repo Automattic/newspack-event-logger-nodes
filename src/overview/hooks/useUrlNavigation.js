@@ -235,7 +235,7 @@ export default function useUrlNavigation( urls ) {
 				? selectedSubjectRef.current
 				: findSubject( urlsRef.current, linked );
 
-			// @longform Armed only when this popstate really moves the
+			// @longform Armed only when this popstate moves the
 			// selection, so the flush that move causes is what spends it.
 			// Armed unconditionally it outlives a Forward that selects
 			// nothing — the rid is REPORTED, never selected — and the

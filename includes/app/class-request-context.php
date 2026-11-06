@@ -109,7 +109,7 @@ class Request_Context {
 	/**
 	 * The map, each key only where WordPress set something.
 	 *
-	 * @param string $template The included file, '' when none was.
+	 * @param string $template The included file, '' when nothing was included.
 	 * @return array<string,mixed>
 	 */
 	private static function context( string $template ): array {

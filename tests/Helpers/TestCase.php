@@ -515,7 +515,7 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * The last entry of one category, or null when none was written.
+	 * The last entry of one category, or null when the category has no entry.
 	 *
 	 * @param list<array<string,mixed>> $entries  What `firehose_entries()` read.
 	 * @param string                    $category The category `k`.

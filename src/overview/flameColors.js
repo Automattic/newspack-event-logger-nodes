@@ -82,7 +82,7 @@ export const parseColor = ( color ) => {
  * before measuring it, and leaves the label alone when it fails. An
  * unmeasurable fill is routine rather than a fault: a spacer frame is filled
  * `transparent`, and a `custom_colors` entry is whatever the deployment config
- * wrote, which nothing between there and the palette checks the format of.
+ * wrote, and its format goes unchecked between there and the palette.
  *
  * @param {string} color Candidate color string.
  * @return {boolean} True when `parseColor` yields finite channels.

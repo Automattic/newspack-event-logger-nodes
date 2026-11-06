@@ -145,7 +145,7 @@ const slotValue = ( metric, { count, sum_ms: ms, sum_peak_mb: mb, timed } ) => {
  * `pending` and `empty` are distinct answers with distinct wordings: an
  * answer whose columns are not the ones these dimensions ask for predates
  * the dropdown switch, while one carrying no rows means the dimensions
- * really have nothing in the window. Calling the first "no data" is a lie
+ * have nothing in the window. Calling the first "no data" is a lie
  * that flickers. An answer `decodeRows()` refuses is `empty`: it arrived,
  * and it holds nothing this panel can draw; so is one whose stats rows did
  * not open, which answers no rows.

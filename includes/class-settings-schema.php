@@ -236,7 +236,7 @@ class Settings_Schema {
 					register_args: [],
 				),
 
-				// A URL, hook, threshold or switch is a rule's, not a setting.
+				// A rule, not a setting, owns a URL, hook, threshold or switch.
 
 				// The rules editor owns this option; config only seeds it.
 				new Field(

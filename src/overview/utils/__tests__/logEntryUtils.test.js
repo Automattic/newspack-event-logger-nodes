@@ -1084,7 +1084,7 @@ describe( 'computeIndentedEntries', () => {
 								{
 									// Starts LAST but closed; `latestPath()` picks
 									// by max `t`, so it points here, not at the
-									// chain the drain actually left open.
+									// chain the drain left open.
 									name: 'render',
 									k: 'render',
 									l: '',
@@ -1302,7 +1302,7 @@ describe( 'computeIndentedEntries', () => {
 		// the two passes hold different stacks and the fold emits a start-only
 		// `B`. Counting that synthetic row consumed the real `B (complete)`
 		// and severed the frame it proves is still open.
-		// The tree `Flame_Fold` actually builds from these rows: it opens B
+		// The tree `Flame_Fold` builds from these rows: it opens B
 		// inside A, so B's path is `process/A/B`, not `process/B`.
 		const flame = {
 			name: 'request',
@@ -1977,7 +1977,7 @@ describe( 'a merged span beside the one the head left open', () => {
 	it( 'unwinds the stack when reading which spans the head left open', () => {
 		// Three readers share one LIFO walk, so its unwind is load-bearing:
 		// leave a CLOSED span in `openPath` and every depth shifts, so the span
-		// actually open is re-emitted as a merged frame. Pins the rule.
+		// still open is re-emitted as a merged frame. Pins the rule.
 		const rows = indentsOf(
 			[
 				{ k: 'process (start)', ts: 1000 },
@@ -2000,7 +2000,7 @@ describe( 'a merged span beside the one the head left open', () => {
 	} );
 
 	it( 'gives a middle-born span of the same name its own frame', () => {
-		// Three `gyrobase` instances merge into one node: the head's, plus two
+		// Three `gyrobase` instances merge into one node: the head instance, plus two
 		// from the middle. Skipping the node whole would leave the second tail
 		// `(complete)` with nothing to close, orphaning it outside the request.
 		const rows = indentsOf(
@@ -2180,7 +2180,7 @@ describe( 'spliceFoldedSpans', () => {
 		expect(
 			keywords.filter( ( k ) => 'locale hook (complete)' === k )
 		).toHaveLength( 1 );
-		// The one that really is in the gap still comes through.
+		// The one inside the gap still comes through.
 		expect( keywords ).toContain( 'loop (complete)' );
 	} );
 

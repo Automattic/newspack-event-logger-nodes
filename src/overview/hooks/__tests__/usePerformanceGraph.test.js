@@ -90,7 +90,7 @@ jest.setTimeout( 20000 );
 // specific reply installs its own over this one.
 beforeEach( () => {
 	Core.reset();
-	// Every ask counted here is one a test asked for.
+	// A test asked for every ask counted here.
 	holdRouterCadence();
 	installWire();
 } );

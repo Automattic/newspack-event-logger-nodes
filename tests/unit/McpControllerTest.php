@@ -603,7 +603,7 @@ class McpControllerTest extends TestCase {
 		// verb arg. Omission is the other failure, and it is worse for exactly
 		// one class of option — a filter that is ON unless asked otherwise.
 		// An agent reading this table sees no worker filter, so it reads the
-		// worker-excluded totals as the site's.
+		// worker-excluded totals as the totals for the whole site.
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 
 		$this->assertArrayHasKey( 'include_workers', $tools['performance_urls']['args'] );

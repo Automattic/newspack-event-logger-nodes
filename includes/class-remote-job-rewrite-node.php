@@ -53,7 +53,7 @@ class Remote_Job_Rewrite_Node extends Node {
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
 	 * @param array<int,mixed> $message Message reference; VALUE is the entry array.
-	 * @throws \RuntimeException When no sink is wired, which the first entry surfaces.
+	 * @throws \RuntimeException When the node has no sink, which the first entry surfaces.
 	 */
 	public function fill( array $message ): void {
 		$value = $message[ Message::VALUE ];

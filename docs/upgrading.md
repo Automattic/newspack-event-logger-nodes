@@ -235,13 +235,13 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   row is one page on one server, folding every URL of it. A row carries
   `page_hash` (`Log_Manager::url_hash()` of the page), `page`, `server`,
   `shapes` (the URLs folded) and `url`, then the measures a URL row carried.
-  `url` is now the name the row shows, not one URL's: a one-shape page's URL
+  `url` is now the name the row shows, not one URL name: a one-shape page's URL
   as its own row names it, a page of more `https://` and the page, so never
   read a page row's `url` as a URL `dump_url` takes; it is a display name.
   `hash` is the URL's hash only where the page folds one shape; on a page of
   more it is null, so key a row by `page_hash` and `server`, and never pass
   a `page_hash` where a URL hash goes (`dump_url`, `?url=`, `ask url:`,
-  `url=` filters). A page's `worker` is true where any shape is a worker's.
+  `url=` filters). A page's `worker` is true where any shape is a worker shape.
   `rows` counts the pages matching, `totals.pages` is new beside
   `totals.urls`, the `url` sort orders by `page`, and `slowest` lists pages.
   For URL rows as `urls` answered them before, ask `--page=<page hash>`: it
@@ -494,7 +494,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **A topology writing `<partition>` fails to load; write `{partition}`.**
   The substrate resolves `{partition}` in each argument a node's schema
   marks, at the worker's partition, and the Shell refuses `<partition>`
-  anywhere in a line. A custom topology built on this plugin's, such as a
+  anywhere in a line. A custom topology built on a stock one, such as a
   fork of `request-builder` or `flame-builder`, rewrites
   `<config:logs_dir>/requests.p<partition>` as
   `<config:logs_dir>/requests.p{partition}` and the stats Tables'

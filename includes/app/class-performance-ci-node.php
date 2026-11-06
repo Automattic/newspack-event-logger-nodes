@@ -623,7 +623,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `url:` or `page:` brief — stats, worst recent requests, and the
-	 * cold-start finding when it falls under no rule, of the requests
+	 * cold-start finding when it does not fall under any rule, of the requests
 	 * `dump_url` reads under the same server, `filter` and `bucket`, under the
 	 * rule `subject_rule()` finds.
 	 *
@@ -767,15 +767,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * each request's partition off, whether the list holds fewer than the
 	 * stats count, and the filter both were read under. A filter narrows the
 	 * stats and the list together, and a filter on `worker` replaces the
-	 * scope's. A stats file that will not open answers zero stats and no
-	 * list, `available` false (decision 3).
+	 * scope's worker filter. A stats file that will not open answers zero
+	 * stats and no list, `available` false (decision 3).
 	 *
 	 * @param string       $field    A `SUBJECTS` field, the one the reads key on.
 	 * @param string       $hash     The hash it names.
 	 * @param array{0:string,1:string} $owner What owns `$field` for the caller and the noun it names, which a refusal points to.
 	 * @param string       $server   Server to scope to; '' is every server.
 	 * @param list<string> $tokens   `field=value` filter tokens.
-	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
+	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's selection.
 	 * @param int          $now      The reply's clock.
 	 * @param int          $limit    Most requests listed, newest first.
 	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, filter: array<string,list<scalar>>, requests_capped: bool, bucket: string, buckets: list<array{0:int,1:int}>, available: bool}
@@ -863,7 +863,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The listed requests as `dump_url` answers them, each named by its rid
 	 * alone, which is all `dump_request` is asked with. A row's
-	 * `duration_ms` is null where no sample was taken (decision 24), and its
+	 * `duration_ms` is null where nothing was sampled (decision 24), and its
 	 * `timestamp` is the second its record says it started.
 	 *
 	 * @param list<array<string,mixed>> $listed The rows `Stats_Query::newest_requests()` listed.
@@ -1951,7 +1951,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * pages or one page's URLs, with the slowest ten beside them, shaped by
 	 * `url_reply()`. Worker traffic is left out unless asked for. A filter
 	 * narrows the rows, the totals and the slowest ten together, and a filter
-	 * on `worker`, negated or not, replaces the scope's.
+	 * on `worker`, negated or not, replaces the scope's worker filter.
 	 *
 	 * @param string       $page    The page whose URLs to list, by its hash; '' lists pages.
 	 * @param string       $server  Server to scope to; '' is every server.
@@ -2217,7 +2217,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the one URL's own name, its case, query and scheme kept, or for a page
 	 * of more `https://` and the page; then its measures, as `measured()`
 	 * shapes them. A page's `worker` is true where any shape folded is a
-	 * worker's.
+	 * worker shape.
 	 *
 	 * @param array{columns: list<string>, rows: list<list<mixed>>} $answer A page listing over `URL_MEASURES`, `shapes`, `hash` and `url_name`.
 	 * @return list<array<string,mixed>>
@@ -2459,7 +2459,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The buckets a selection's spelling names, or the chart's when it
 	 * names none.
 	 *
-	 * @param string   $spelling A `Bucket::selection()` spelling; '' for the chart's.
+	 * @param string   $spelling A `Bucket::selection()` spelling; '' for the chart's selection.
 	 * @param int      $now      The reply's clock.
 	 * @param int|null $max      Most buckets the spelling may name; null is the chart's span.
 	 * @return list<array{0:int,1:int}>

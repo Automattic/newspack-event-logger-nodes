@@ -836,7 +836,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertGreaterThanOrEqual( 2, \count( $urls ) );
 	}
 
-	/** The record's peak is the terminal's, an aborted one's included. */
+	/** The record's peak comes from its terminal entry, an aborted one included. */
 	public function test_the_terminal_carries_the_records_peak(): void {
 		foreach ( [ 'process (complete)' => 32.75, 'process (aborted)' => 41 ] as $terminal => $peak ) {
 			$rb      = new Request_Builder_Node();
@@ -1317,7 +1317,7 @@ class RequestBuilderTest extends TestCase {
 	/**
 	 * A hook timed inside a listener is the listener's owner's, and so is the
 	 * query it asks for, less what that query's own owner took; the listener's
-	 * time leaves the top-level hook, whose own time is core's, and an
+	 * time leaves the top-level hook, whose own time belongs to core, and an
 	 * inherited span adds time and no call.
 	 */
 	public function test_owners_inherit_down_the_stack_and_a_listener_leaves_its_hook(): void {
@@ -1347,7 +1347,7 @@ class RequestBuilderTest extends TestCase {
 
 	/**
 	 * A top-level hook whose listeners are timed spends the rest of its time
-	 * in core's dispatch, so that time is core's. A top-level hook that timed
+	 * in core's dispatch, so that time belongs to core. A top-level hook that timed
 	 * no listener, and a listener timed outside any hook, leave the time
 	 * `(unowned)`: nothing says who ran it.
 	 */
@@ -1409,7 +1409,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Only a hook the request itself fired is core's: one fired inside an
+	 * Only a hook the request itself fired belongs to core: one fired inside an
 	 * ownerless listener keeps that listener's `(unowned)`, though its own
 	 * listener is timed.
 	 */
@@ -1555,7 +1555,7 @@ class RequestBuilderTest extends TestCase {
 	/**
 	 * A Query Monitor timer credits and debits nothing, even when its label
 	 * names an owner, and the query timed inside it is its enclosing span's
-	 * child: here the request's, so it covers the request's own time.
+	 * child: here the request's child, so it covers the request's own time.
 	 */
 	public function test_a_query_monitor_timer_credits_nothing_and_is_transparent(): void {
 		$record = $this->record_after(
@@ -1783,7 +1783,7 @@ class RequestBuilderTest extends TestCase {
 
 	/**
 	 * The object cache's row and the request context stay log rows: the
-	 * record lifts the context onto no field of its own.
+	 * record does not lift the context onto a field of its own.
 	 */
 	public function test_the_cache_row_and_the_context_stay_log_rows(): void {
 		$rb      = new Request_Builder_Node();
@@ -2656,8 +2656,8 @@ class RequestBuilderTest extends TestCase {
 		$message = $this->request_msg( 'GET_STATS' );
 		$rb->fill( $message );
 
-		// Discard early captured emits (this test doesn't emit any since no
-		// `process (complete)`). The GET_STATS reply is the only message.
+		// Discard early captured emits (this test doesn't emit any because it
+		// sends no `process (complete)`). The GET_STATS reply is the only message.
 		$this->assertCount( 1, $capture->captured );
 		$payload = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'GET_STATS', $payload['verb'] );
@@ -3059,7 +3059,7 @@ class RequestBuilderTest extends TestCase {
 
 	// --- emit_entry: packed-size fit under PIPE_BUF -----------------------
 
-	/** The lone message the node forwarded to its errors target (null if none). */
+	/** The lone message the node forwarded to its errors target (null if there is none). */
 	private function captured_error( Capture_Sink_Node $capture ): ?array {
 		foreach ( $capture->captured as $m ) {
 			if ( 'errors:target' === Core::as_string( $m[ Message::TO ] ?? '' ) ) {

@@ -334,7 +334,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		}
 
 		/**
-		 * A malformed `noisy_log_events` reads as no noisy names: the owner
+		 * A malformed `noisy_log_events` reads as an empty list of noisy names: the owner
 		 * list is published whole, and the notice names that key.
 		 */
 		public function test_a_malformed_noisy_list_publishes_the_owner_list_whole(): void {
