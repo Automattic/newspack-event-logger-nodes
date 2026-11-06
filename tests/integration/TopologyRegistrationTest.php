@@ -71,7 +71,7 @@ class TopologyRegistrationTest extends TestCase {
 			$path = Topology_Registry::resolve( $topologies[ $name ]['topology'] );
 			$this->assertNotNull( $path, "topology '{$name}' must resolve to a TSL file" );
 			$this->assertFileExists( $path );
-			$this->assertStringEndsWith( '.tsl', $path );
+			$this->assertStringEndsWith( "/{$topologies[ $name ]['topology']}.tsl.php", $path );
 		}
 	}
 

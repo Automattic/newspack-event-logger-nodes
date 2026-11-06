@@ -515,8 +515,8 @@ class LogManagerTest extends TestCase {
 		// let a >PIPE_BUF append tear a peer's atomic write on the multi-writer
 		// firehose. Pin that a shipped topology never grants it.
 		$dir   = \dirname( __DIR__, 2 ) . '/topologies';
-		$files = \glob( $dir . '/*.tsl' ) ?: [];
-		$this->assertNotEmpty( $files, 'the topologies dir resolved to .tsl files' );
+		$files = \glob( $dir . '/*.tsl.php' ) ?: [];
+		$this->assertNotEmpty( $files, 'the topologies dir resolved to .tsl.php files' );
 		foreach ( $files as $file ) {
 			foreach ( \file( $file ) ?: [] as $line ) {
 				if ( \preg_match( '/void_warranty|allow_large_writes/', $line ) ) {
