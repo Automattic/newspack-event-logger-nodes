@@ -331,11 +331,11 @@ Two things about `include` are easy to trip over. Frontmatter is read from the T
 
 The `make_node` first argument is a **shell name** the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the unqualified substrate types (`Consumer`, `Partition`, `Tee`, `Topic`, `Age_Sieve`, `Remote_Source`) resolve under the substrate's own prefix.
 
-Fourteen `.tsl` files ship. Seven are primitives that declare their own nodes — [`request-builder`](../topologies/request-builder.tsl), [`flame-builder`](../topologies/flame-builder.tsl), [`stats-builder`](../topologies/stats-builder.tsl), [`job-router`](../topologies/job-router.tsl), [`job-feed`](../topologies/job-feed.tsl), [`aggregator`](../topologies/aggregator.tsl) and [`aggregator-sse`](../topologies/aggregator-sse.tsl), which differ only in the broker each builds per spoke — and seven compose those with substrate stock topologies: [`performance`](../topologies/performance.tsl), [`job-hub`](../topologies/job-hub.tsl), [`job-spoke`](../topologies/job-spoke.tsl), [`complete`](../topologies/complete.tsl), [`hub-control`](../topologies/hub-control.tsl), [`hub`](../topologies/hub.tsl) (`aggregator` + `hub-control` in one worker, pinning its own `num_partitions = 1` since an included file's frontmatter is skipped) and [`hub-sse`](../topologies/hub-sse.tsl), which includes `aggregator-sse` in its place. Each aggregator and `hub-control` ship a `Vault_Group` leg over Vault group `spoke` — the per-spoke broker and `HTTP_Out` nodes, respectively — so standing a hub up is a Vault edit, not a topology edit. Job *dispatch* (`Job_Worker_Node` tailing `jobs.pN`) is the substrate's stock [`job-worker`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) topology, which `job-hub` and `job-spoke` include.
+Fourteen `.tsl` files ship. Seven are primitives that declare their own nodes — [`request-builder`](../topologies/request-builder.tsl.php), [`flame-builder`](../topologies/flame-builder.tsl.php), [`stats-builder`](../topologies/stats-builder.tsl.php), [`job-router`](../topologies/job-router.tsl.php), [`job-feed`](../topologies/job-feed.tsl.php), [`aggregator`](../topologies/aggregator.tsl.php) and [`aggregator-sse`](../topologies/aggregator-sse.tsl.php), which differ only in the broker each builds per spoke — and seven compose those with substrate stock topologies: [`performance`](../topologies/performance.tsl.php), [`job-hub`](../topologies/job-hub.tsl.php), [`job-spoke`](../topologies/job-spoke.tsl.php), [`complete`](../topologies/complete.tsl.php), [`hub-control`](../topologies/hub-control.tsl.php), [`hub`](../topologies/hub.tsl.php) (`aggregator` + `hub-control` in one worker, pinning its own `num_partitions = 1` since an included file's frontmatter is skipped) and [`hub-sse`](../topologies/hub-sse.tsl.php), which includes `aggregator-sse` in its place. Each aggregator and `hub-control` ship a `Vault_Group` leg over Vault group `spoke` — the per-spoke broker and `HTTP_Out` nodes, respectively — so standing a hub up is a Vault edit, not a topology edit. Job *dispatch* (`Job_Worker_Node` tailing `jobs.pN`) is the substrate's stock [`job-worker`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) topology, which `job-hub` and `job-spoke` include.
 
 ![The fourteen topologies as compositions: four substrate stock files on the left (topic-probe, job-intake, job-worker, settings-sync) with what each reads and writes; the seven primitives in the middle, each naming its includes and its logs; the seven compositions on the right, each a list of includes, with the frontmatter it restates and the Tee complete adds; beneath, the fleet name scoping every cursor, the eln token, and shell-name resolution.](img/ag-topologies.png)
 
-### `topologies/request-builder.tsl`
+### `topologies/request-builder.tsl.php`
 
 The assembly branch. Tails `firehose.pN`; `Request_Builder` writes `requests.pN`, forwards errors to `errors.p0` and alerts to `alerts.p0`, and fans completed summaries through `completed:tee` to `completed.p0` + `gyroscope.p0`.
 
@@ -374,7 +374,7 @@ Four things in that file are load-bearing.
 
 **`add_snapshot_node` + `set_multi_writer`.** The first wires the consumer's offsetlog to checkpoint `Request_Builder`'s in-flight cache, so in-flight requests survive a worker respawn. The second tells the firehose Consumer to expect concurrent producers, since many FPM workers append to `firehose.pN`.
 
-### `topologies/flame-builder.tsl`
+### `topologies/flame-builder.tsl.php`
 
 Per-partition flame builder. Tails `requests.pN`; `Flame_Builder` writes each request's flame to `flames.pN`, stamped with `request_at`, the record's own ID in `requests.pN`, and runs auto-tune ([Flame_Builder_Node](#flame_builder_node)).
 
@@ -393,7 +393,7 @@ secure
 
 The Consumer names no snapshot node: the flame builder buffers nothing a checkpoint must write, because a flame is written as it is built and an auto-tune decision waits for the next flush or a clean stop. Auto-tune thresholds live on each LOG rule, not on a topology token; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)).
 
-### `topologies/stats-builder.tsl`
+### `topologies/stats-builder.tsl.php`
 
 Per-partition stats builder. Tails `flames.pN`; `Stats_Builder` reads the record each flame's `request_at` names in `requests.pN` and writes the request's stats as rows of the `flame-facts` Row_Table ([Stats Rows](#stats-rows)). `include table-probe` reports the Row_Table's operations to the station's Tables tab.
 
@@ -416,7 +416,7 @@ secure
 
 `set_requests_partition` names the directory the records are read from, and keeps its `{partition}` until the builder builds its reader at the bound partition. That reader is a private `Partition_Node` that other nodes cannot address, read with `read_message_at()` at the place each flame names. Its own Consumer is the only cursor this topology keeps, at `<topology>.flames.p{partition}`, apart from the flame builder's `<topology>.requests.p{partition}`. The stats builder sees a flame only after `flames:partition` has written it, so a request's rows never land before its flame.
 
-### `topologies/job-router.tsl`
+### `topologies/job-router.tsl.php`
 
 The job-routing half, reading jobs out of the firehose. Tails `firehose.pN` and, via the included substrate `job-intake` topology, `jobintake.pN`; `Job_Router` normalizes both sources and writes `jobs.pN`. Dispatch of those lines is a separate leg — the substrate's stock `job-worker` topology, which `job-hub` adds.
 
@@ -441,19 +441,19 @@ Both Consumers feed `job-router`. It selects a nested array under `m` when prese
 
 **That age is measured from ENQUEUE, never from the read.** [`Durable_Reader::forward_line()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/trait-durable-reader.php) rebuilds each record with `Message::unpacked()`, which restores the TIMESTAMP the producer stamped when the line was written. So when the fleet stops draining the firehose, `jobfeed` and `jobintake` — a standing `wp nodes stop` hold, a long deploy, a crashed worker, a restored partition — every job enqueued more than fifteen minutes before the router catches up is discarded as it is read: the Consumer's cursor advances, nothing is dead-lettered, and no retry is scheduled. A job carrying a `delay` or a `not_before` is the exception, because `Job_Delay::sweep()` re-writes it through `Job_Intake::write_job()` at delivery and it arrives with a fresh envelope. Where the site's jobs are not disposable, raise `max_age` on the `make_node` line or drain the backlog before lifting the hold.
 
-### `topologies/job-feed.tsl`
+### `topologies/job-feed.tsl.php`
 
 `job-router` with one substitution: it tails `jobfeed.pN` instead of the firehose. Everything else — the included `job-intake` leg, the `Age_Sieve`, the re-route — is identical.
 
 Reading `jobfeed` costs a fraction of reading the firehose, because the feed carries jobs alone where the firehose carries every log entry of every request. A site whose producers call `Job_Intake::feed()` should run this one; a site whose jobs ride the firehose as `k:"job"` needs `job-router`, since `jobfeed` is never written for it. The two are alternatives rather than a pair: both write `jobs.pN` under `void_warranty`, so the conflict gate refuses to activate them together.
 
-### `topologies/job-hub.tsl` and `topologies/job-spoke.tsl`
+### `topologies/job-hub.tsl.php` and `topologies/job-spoke.tsl.php`
 
 Routing plus dispatch in one process:
 
 ```tsl
 var stale_timeout = 600
-include job-router     # job-spoke.tsl includes job-feed instead
+include job-router     # job-spoke.tsl.php includes job-feed instead
 include job-worker
 secure
 ```
@@ -462,7 +462,7 @@ secure
 
 The `var stale_timeout = 600` restates `job-worker`'s own frontmatter, which the include skips. It has to: a handler only heartbeats where it reaches `should_continue()`, so one doing CPU-bound work, a long query or a `proc_open` render does not beat at all, and at the default a peer would steal its lock mid-job and replay the job to die again.
 
-### `topologies/performance.tsl`
+### `topologies/performance.tsl.php`
 
 `request-builder` + `flame-builder` + `stats-builder`, nothing else:
 
@@ -475,7 +475,7 @@ secure
 
 All three included files include `topic-probe`, so the composition mounts one probe and three Consumers. Use it where job dispatch lives in a separate fleet and you want request assembly, flames and stats in one worker group.
 
-### `topologies/complete.tsl`
+### `topologies/complete.tsl.php`
 
 The everything-in-one worker: request assembly, flames, stats, job routing and job dispatch in one process.
 
@@ -494,7 +494,7 @@ Order matters. `job-hub` is included last and, through `job-router`, wires `fire
 
 `complete` restates no frontmatter, so the `var stale_timeout = 600` that `job-hub` restates is skipped here, and `complete`'s `Job_Worker` runs at the substrate's 60-second [`Lock_Node::STALE_TIMEOUT`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-lock-node.php) — the mid-job lock steal that restatement exists to prevent.
 
-### `topologies/aggregator.tsl`
+### `topologies/aggregator.tsl.php`
 
 Hub-side ingest. A `spokes` `Vault_Group` over Vault group `spoke` builds one `HTTP_Source` broker per spoke and follows the Vault on reload. Each broker fetches two of its spoke's logs over one command channel, each read by its own `Remote_Consumer`: the firehose, which the ELN `Remote_Job_Rewrite` node flips from `k:"job"` to `k:"remote_job"` before the multi-partition `Topic` KEY-routes it by request-id hash, so each downstream firehose-consuming partition sees its own slice; and `sources:php`, the spoke's PHP error log, which lands in `php-errors.p0` beside the hub's own, followed by `php-errors:tail`. A line from the hub's own log opens its FROM with that Tail; a spoke's line keeps the FROM the spoke sent, which names no spoke, so the log does not tell one spoke's lines from another's.
 
@@ -531,7 +531,7 @@ The topology mounts once per worker partition. A source naming `{partition}` rea
 
 What a broker owns — its hidden siblings, its readers and their offsetlogs, reconnect and backoff, its status snapshot, the Vault lookup and the TLS posture — belongs to the substrate, documented in [Hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md). The `k:"job"` → `k:"remote_job"` rewrite is the `Remote_Job_Rewrite_Node` graph node (see [Remote_Job_Rewrite_Node](#remote_job_rewrite_node)) — not a filter, not a TSL setter; non-`job` entries pass through. Hub-mode is derived rather than configured — there is no `enable_aggregator` config key, and [Hub vs Spoke Topology](#hub-vs-spoke-topology) carries the two signals that settle it. Operators stand a hub up by selecting the `aggregator` and `hub-control` topologies.
 
-### `topologies/hub-control.tsl`
+### `topologies/hub-control.tsl.php`
 
 Single-instance hub control plane. It is an ELN overlay over the substrate's stock [`settings-sync`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl) topology, and it pins `var num_partitions = 1` so the fleet runs ONCE regardless of the data `num_partitions` — the pin must live in this file, since frontmatter is read from the top-level file only.
 
@@ -558,7 +558,7 @@ The included `settings-sync` is the substrate's control plane — the settings l
 
 The one `add_setting` line adds the ruleset, the only option `Performance_CI_Node`'s `set` takes: a hub push naming any other comes back as "unknown option". Every rule's diagnostic switches ride inside it. This file also adds `Discovery_Collector`, which fans `discovery.get` to every spoke on its own 300s tick and union-merges the replies into the hub's `discovered_hooks` staging option.
 
-**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets, a group expanded to its members, and mint one signed command per spoke. The topology ships that egress itself: a `settings` `Vault_Group` builds one `HTTP_Out` per Vault entry in group `spoke`, both minters target the group, each spoke's `allow_replies_to` is declared once on the group and replayed to every member, and the group's own target is the shared `Null` — a spoke's reply lands through `allow_replies_to`, never through this leg. As with `firehose` in `aggregator.tsl`, an install with no Vault entries in group `spoke` has an empty group and pushes nothing.
+**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets, a group expanded to its members, and mint one signed command per spoke. The topology ships that egress itself: a `settings` `Vault_Group` builds one `HTTP_Out` per Vault entry in group `spoke`, both minters target the group, each spoke's `allow_replies_to` is declared once on the group and replayed to every member, and the group's own target is the shared `Null` — a spoke's reply lands through `allow_replies_to`, never through this leg. As with `firehose` in `aggregator.tsl.php`, an install with no Vault entries in group `spoke` has an empty group and pushes nothing.
 
 `Settings_Sync` and `Settings_Event_Writer` live in the substrate ([`\Newspack_Nodes\Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php), [`\Newspack_Nodes\Settings_Event_Writer`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-event-writer.php)); `Discovery_Collector_Node` is this plugin's (see [Discovery_Collector_Node](#discovery_collector_node)).
 
@@ -744,7 +744,7 @@ Two gates this node deliberately does not hold. Size belongs to the producers an
 
 ### Remote_Job_Rewrite_Node
 
-Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\HTTP_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-http-source-node.php) — a broker per spoke in each hub worker, built by `aggregator`'s own `spokes` `Vault_Group` over Vault group `spoke`, following the Vault on reload. Each one patrons its own `HTTP_Out`, owns a reader per log with its own offsetlog, owns retry and backoff, fetches `firehose.pN`, plus `sources:php` on worker p0, in blocks over one command channel, each fetch asking from its reader's cursor, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl`](#topologiesaggregatortsl)).
+Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\HTTP_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-http-source-node.php) — a broker per spoke in each hub worker, built by `aggregator`'s own `spokes` `Vault_Group` over Vault group `spoke`, following the Vault on reload. Each one patrons its own `HTTP_Out`, owns a reader per log with its own offsetlog, owns retry and backoff, fetches `firehose.pN`, plus `sources:php` on worker p0, in blocks over one command channel, each fetch asking from its reader's cursor, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl.php`](#topologiesaggregatortsl)).
 
 The one application-specific piece is [`Remote_Job_Rewrite_Node`](../includes/class-remote-job-rewrite-node.php) — a pass-through transform the `aggregator` topology wires between the substrate broker's readers and the firehose `Topic`. It flips aggregated `k:"job"` entries to `k:"remote_job"` so they dispatch centrally on the hub via `newspack_nodes/remote_job_handlers` rather than locally; non-`job` entries and non-array VALUEs pass through untouched.
 
@@ -772,7 +772,7 @@ Hub-side periodic discovery fan-out. [`Discovery_Collector_Node`](../includes/cl
 
 ### Overview_Prefetch_Tick_Node
 
-[`Overview_Prefetch_Tick_Node`](../includes/class-overview-prefetch-tick-node.php) is a [`Timer_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-timer-node.php) `stats-builder.tsl` mounts (`make_node Overview_Prefetch_Tick overview-prefetch:tick`, its `INTERVAL_S` of 300 s), refusing an interval below 1 s or above 900 s, that rides the Router's tick, which throttles it to its interval; it paces from wall-clock interval boundaries, at construction and after each fire, so a respawned process queues at the next boundary, as its predecessor would have, and never twice inside one interval; a respawn whose gap straddles a boundary loses that interval's run, which the snapshot's four intervals span while each run publishes within two intervals of being queued. Each interval it queues the `eln_overview_prefetch` job carrying `{ queued_at, interval }`, and only the copy `Core::owns()` gives the fleet queues: partition 0, or a worker with no partition bound. The job travels both ways a small job does ([decision 7](architecture-decisions.md#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb)): a firehose `job` entry, which a hub's `job-router` reads, and `Job_Intake::feed()` onto `jobfeed.p0`, which a spoke's `job-feed` reads. A spoke runs it from `jobfeed.p0`. A hub's firehose entry lands on the `firehose.p{N}` its request id hashes to, the worker's spawn request's where that record has started, one partition for the worker's life, and otherwise a borrowed job context's, fresh each interval; that partition's JobWorker runs it: only the tick is held to the fleet's one copy of its line. A spoke's firehose copy reaches its hub as a `remote_job` that is not claimed by any remote handler. The tick reports a leg that did not go (a feed `Job_Intake` refused, or a firehose that is not governed by any log rule) once a window. A worker serves no request, so the tick borrows a job context for the firehose write before any `Log_Manager` has started, which logs one worker request an interval; a site with no job topology runs no job and its verbs answer live ([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-four-intervals)).
+[`Overview_Prefetch_Tick_Node`](../includes/class-overview-prefetch-tick-node.php) is a [`Timer_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-timer-node.php) `stats-builder.tsl.php` mounts (`make_node Overview_Prefetch_Tick overview-prefetch:tick`, its `INTERVAL_S` of 300 s), refusing an interval below 1 s or above 900 s, that rides the Router's tick, which throttles it to its interval; it paces from wall-clock interval boundaries, at construction and after each fire, so a respawned process queues at the next boundary, as its predecessor would have, and never twice inside one interval; a respawn whose gap straddles a boundary loses that interval's run, which the snapshot's four intervals span while each run publishes within two intervals of being queued. Each interval it queues the `eln_overview_prefetch` job carrying `{ queued_at, interval }`, and only the copy `Core::owns()` gives the fleet queues: partition 0, or a worker with no partition bound. The job travels both ways a small job does ([decision 7](architecture-decisions.md#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb)): a firehose `job` entry, which a hub's `job-router` reads, and `Job_Intake::feed()` onto `jobfeed.p0`, which a spoke's `job-feed` reads. A spoke runs it from `jobfeed.p0`. A hub's firehose entry lands on the `firehose.p{N}` its request id hashes to, the worker's spawn request's where that record has started, one partition for the worker's life, and otherwise a borrowed job context's, fresh each interval; that partition's JobWorker runs it: only the tick is held to the fleet's one copy of its line. A spoke's firehose copy reaches its hub as a `remote_job` that is not claimed by any remote handler. The tick reports a leg that did not go (a feed `Job_Intake` refused, or a firehose that is not governed by any log rule) once a window. A worker serves no request, so the tick borrows a job context for the firehose write before any `Log_Manager` has started, which logs one worker request an interval; a site with no job topology runs no job and its verbs answer live ([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-four-intervals)).
 
 ### Stats production (owned by Stats_Builder_Node)
 
@@ -812,7 +812,7 @@ Not every application class is a Node. These carry the algorithms and the read-s
 
 ## Stats Rows
 
-The stats builder writes the stats as rows of the `flame-facts` Row_Table ([decision 34](architecture-decisions.md#decision-34-stats-live-in-sqlite-tables-and-a-loss-is-never-repaired)), and every performance reader asks them through [`App\Stats_Query`](../includes/app/class-stats-query.php) ([decision 36](architecture-decisions.md#decision-36-the-query-vocabulary-is-fixed-no-sql-from-outside-a-picker-chooses-the-rollup)). `stats-builder.tsl` declares it, `make_node Row_Table flame-facts Flame_Facts`, and [`Flame_Facts_Row_Schema`](../includes/class-flame-facts-row-schema.php) declares its tables: one SQLite file per partition, `{base}/tables/flame-facts.p{N}.sqlite`, whose `user_version` carries the schema's version, 11. `category_window` holds each server's sums per category and entry over the last `Bucket::window()` buckets, `urls_window` each URL's request sums and extremes per worker flag over the same buckets, and `window_expiry` one row per bucket expired; its newest bucket is the watermark of both windows.
+The stats builder writes the stats as rows of the `flame-facts` Row_Table ([decision 34](architecture-decisions.md#decision-34-stats-live-in-sqlite-tables-and-a-loss-is-never-repaired)), and every performance reader asks them through [`App\Stats_Query`](../includes/app/class-stats-query.php) ([decision 36](architecture-decisions.md#decision-36-the-query-vocabulary-is-fixed-no-sql-from-outside-a-picker-chooses-the-rollup)). `stats-builder.tsl.php` declares it, `make_node Row_Table flame-facts Flame_Facts`, and [`Flame_Facts_Row_Schema`](../includes/class-flame-facts-row-schema.php) declares its tables: one SQLite file per partition, `{base}/tables/flame-facts.p{N}.sqlite`, whose `user_version` carries the schema's version, 11. `category_window` holds each server's sums per category and entry over the last `Bucket::window()` buckets, `urls_window` each URL's request sums and extremes per worker flag over the same buckets, and `window_expiry` one row per bucket expired; its newest bucket is the watermark of both windows.
 
 The span, `Bucket::window()`, is the substrate's `min_lifetime` in five-minute buckets, a part bucket counted whole, so the default of 86,400 seconds is a day; it is read through `\Newspack_Nodes\Config::value()`, and a value below 300 seconds throws, naming the key. Each table dated by bucket keeps the span plus `Bucket::RETAIN_SLACK`, 12 buckets, and `requests_hourly` the hours covering those. `Flame_Facts_Row_Schema::tables()` builds every `retain` from the key on each call, so a worker restarted after a change keeps the new span, and retention is not DDL, so a change to it never moves the version. A worker reads the key at boot, and changing `min_lifetime` restarts every topology holding a Partition, the stats builder's among them; web readers read it per request, so between a save and that restart a reader can ask for a span the builder does not yet keep.
 
@@ -914,7 +914,7 @@ Ungated is not unauthorized. `Auto_Tuner_Node::authorized()` still requires a wo
 
 ## Job ingress and routing
 
-`Job_Intake` lives in the newspack-nodes substrate as [`\Newspack_Nodes\Job_Intake`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-intake.php). Substrate-only installs drain it via the stock `job-intake` topology, which ELN's [`job-router.tsl`](../topologies/job-router.tsl) and [`job-feed.tsl`](../topologies/job-feed.tsl) both `include` and re-route. Activating the stock topology beside either is refused by the conflict gate, since all three write `jobs.pN` under `void_warranty`.
+`Job_Intake` lives in the newspack-nodes substrate as [`\Newspack_Nodes\Job_Intake`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-intake.php). Substrate-only installs drain it via the stock `job-intake` topology, which ELN's [`job-router.tsl.php`](../topologies/job-router.tsl.php) and [`job-feed.tsl.php`](../topologies/job-feed.tsl.php) both `include` and re-route. Activating the stock topology beside either is refused by the conflict gate, since all three write `jobs.pN` under `void_warranty`.
 
 ![Job ingress: three producers inside a request, Log_Manager's k:"job" line, Job_Intake::feed() and Job_Intake::queue(), writing firehose.pN, jobfeed.pN and jobintake.pN, with a future not_before parking in jobdelay.p0 until Job_Delay::sweep() re-writes it; Job_Router_Node normalizing every body onto { k, handler, parameters, ts } plus id and the dispatch fields; the Age_Sieve dropping an envelope older than 900 seconds counted from enqueue; and the substrate's Job_Worker dispatching jobs.pN by kind. Four cards give the three partition-selection modes, the write_job() options, the per-partition lock, and which rejections warn.](img/ag-job-ingress.png)
 

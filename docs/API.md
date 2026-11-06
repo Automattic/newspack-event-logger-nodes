@@ -228,7 +228,7 @@ query requests bucket status_class --measure=count --top=5 --top_by=count --buck
 
 **`set`** is the spoke side of a hub's ruleset push (`set <option> <value>`): it takes
 `newspack_event_logger_nodes_rules` alone, the one option
-[`hub-control.tsl`](../topologies/hub-control.tsl)'s `add_setting` line syncs here, and refuses
+[`hub-control.tsl.php`](../topologies/hub-control.tsl.php)'s `add_setting` line syncs here, and refuses
 any other as `unknown option`. The value is JSON, and the decoded array is sanitized before
 it is stored: string keys and string values pass through `sanitize_text_field`, an object is
 dropped, and the whole push is refused as `invalid value for option` — a different refusal

@@ -1,8 +1,8 @@
 <?php
 /**
- * hub.tsl parse + mount wiring.
+ * hub.tsl.php parse + mount wiring.
  *
- * hub.tsl composes aggregator (firehose) and hub-control (settings/discovery)
+ * hub.tsl.php composes aggregator (firehose) and hub-control (settings/discovery)
  * into one worker via `include aggregator` + `include hub-control`. Because
  * frontmatter is read from the top-level file only, the composite pins its own
  * `num_partitions = 1` rather than relying on hub-control's, which `include`
@@ -186,8 +186,8 @@ class HubTopologyTest extends TestCase {
 	public function test_secure_is_honoured_only_at_the_top_level( string $hub ): void {
 		$this->load_hub( $hub );
 
-		// aggregator.tsl and hub-control.tsl each end in `secure`, but both are
-		// `include`d — only hub.tsl's own trailing `secure` line runs, climbing
+		// aggregator.tsl.php and hub-control.tsl.php each end in `secure`, but both are
+		// `include`d — only hub.tsl.php's own trailing `secure` line runs, climbing
 		// the ratchet from unset to exactly 1 rather than to 2.
 		$this->assertSame( 1, Core::$secure_level );
 	}

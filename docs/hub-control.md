@@ -8,7 +8,7 @@ Every site writes its own firehose. One site, the hub, copies every other site's
 
 ## Settings out
 
-The [`hub-control`](../topologies/hub-control.tsl) topology is single-instance, whatever the data partition count, and it includes the substrate's [`settings-sync`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl) topology before adding the logger's pieces:
+The [`hub-control`](../topologies/hub-control.tsl.php) topology is single-instance, whatever the data partition count, and it includes the substrate's [`settings-sync`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl) topology before adding the logger's pieces:
 
 ```tsl
 var num_partitions = 1;
@@ -39,7 +39,7 @@ Every site's job worker runs the job entries in its own firehose, and the hub mu
 
 ## The live hub
 
-The stock [`aggregator`](../topologies/aggregator.tsl) topology ships a `spokes` `Vault_Group` over Vault group `spoke`, building one [HTTP_Source](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-http-source-node.php) broker per spoke and following the Vault on reload. Each broker fetches two of the spoke's logs over one command channel, `firehose.p{partition}` into the rewrite node and `sources:php`, the spoke's PHP error log, into `php-errors.p0`, where the hub's own error log joins them through `php-errors:tail`. Every `sources:<name>` the topology names must resolve where it is read, or that leg fails loud: the hub's tail fails the load when the hub lacks `php`, and a spoke lacking it refuses that reader's fetches, which the broker's status reports, while its firehose still arrives. The built-in `php` needs PHP's `error_log` set to an absolute file path; `wp nodes doctor`'s `log-sources` row checks the sources each site reads itself. The live hub runs those same groups, reached through ELN's own [`hub`](../topologies/hub.tsl) composition, as below.
+The stock [`aggregator`](../topologies/aggregator.tsl.php) topology ships a `spokes` `Vault_Group` over Vault group `spoke`, building one [HTTP_Source](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-http-source-node.php) broker per spoke and following the Vault on reload. Each broker fetches two of the spoke's logs over one command channel, `firehose.p{partition}` into the rewrite node and `sources:php`, the spoke's PHP error log, into `php-errors.p0`, where the hub's own error log joins them through `php-errors:tail`. Every `sources:<name>` the topology names must resolve where it is read, or that leg fails loud: the hub's tail fails the load when the hub lacks `php`, and a spoke lacking it refuses that reader's fetches, which the broker's status reports, while its firehose still arrives. The built-in `php` needs PHP's `error_log` set to an absolute file path; `wp nodes doctor`'s `log-sources` row checks the sources each site reads itself. The live hub runs those same groups, reached through ELN's own [`hub`](../topologies/hub.tsl.php) composition, as below.
 
 ![Annotated listing of the live hub's topology: the five-line top-level file naming one include, aggregator's spokes Vault_Group leg with its two sources and the hub's own error-log Tail, hub-control's settings Vault_Group leg, and the nineteen names one spoke costs the hub, seventeen for its HTTP_Source and two for its settings link](img/d07b.png)
 
@@ -54,6 +54,6 @@ One HTTP_Source child costs the hub seventeen names: the broker and its config i
 ## Read more
 
 - [architecture-guide.md](architecture-guide.md), the sections [Hub vs Spoke Topology](architecture-guide.md#hub-vs-spoke-topology), [Hub-Side Settings Sync, Discovery, and Vault](architecture-guide.md#hub-side-settings-sync-discovery-and-vault) and [Job ingress and routing](architecture-guide.md#job-ingress-and-routing)
-- [topologies/aggregator.tsl](../topologies/aggregator.tsl) and [topologies/hub-control.tsl](../topologies/hub-control.tsl)
-- [newspack-nodes/topologies/settings-sync.tsl](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl)
+- [topologies/aggregator.tsl.php](../topologies/aggregator.tsl.php) and [topologies/hub-control.tsl.php](../topologies/hub-control.tsl.php)
+- [newspack-nodes/topologies/settings-sync.tsl.php](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl)
 - [security-model.md](security-model.md), the review of the hub and spoke trust boundary

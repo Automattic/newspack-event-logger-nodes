@@ -31,7 +31,7 @@
  * where it lands, so a limit here would be a fourth number to keep in step. A
  * stripped body arrives as the entry itself and carries no handler, so an
  * oversize firehose job reads here as an invalid-handler warning. Staleness
- * belongs to the Age_Sieve, which `job-router.tsl` wires between this node and
+ * belongs to the Age_Sieve, which `job-router.tsl.php` wires between this node and
  * `jobs:partition`, so the router holds no age threshold and takes no arguments.
  *
  * @package Newspack_Event_Logger_Nodes

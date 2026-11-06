@@ -1,6 +1,6 @@
 <?php
 /**
- * hub-control.tsl parse + mount wiring.
+ * hub-control.tsl.php parse + mount wiring.
  *
  * ELN's hub-control is an overlay: it `include`s the substrate `settings-sync`
  * topology (Consumer tailing settings.p0, the substrate Settings_Sync_Node with

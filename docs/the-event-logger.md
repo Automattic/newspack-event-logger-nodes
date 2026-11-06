@@ -18,7 +18,7 @@ Linux appends atomically only up to 4,096 bytes, and many PHP processes append t
 
 ## Assembling a request
 
-The firehose interleaves every request's lines. Five topologies pull them apart: [request-builder](../topologies/request-builder.tsl), [job-router](../topologies/job-router.tsl), [flame-builder](../topologies/flame-builder.tsl) and [stats-builder](../topologies/stats-builder.tsl) in the plugin, [job-worker](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) in the runtime. One consumer tails one partition.
+The firehose interleaves every request's lines. Five topologies pull them apart: [request-builder](../topologies/request-builder.tsl.php), [job-router](../topologies/job-router.tsl.php), [flame-builder](../topologies/flame-builder.tsl.php) and [stats-builder](../topologies/stats-builder.tsl.php) in the plugin, [job-worker](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) in the runtime. One consumer tails one partition.
 
 ![A map of the firehose and the partitions downstream of it: two topologies split the firehose through a Tee, a third builds flames from the records, a fourth builds statistics from the flames and the records they name, and each partition is joined by arrow to the dashboard or worker that reads it](img/d06b.png)
 
@@ -38,7 +38,7 @@ The rows sit in SQLite files under the runtime's base directory, so memcache fai
 
 ## Jobs ride the firehose too
 
-Jobs ride the firehose because the append is already paid for, and because only firehose entries cross from a spoke to its hub ([hub control](hub-control.md#jobs-from-a-spoke)). A job is an entry in the `job` category, so the same append that logs a request can enqueue work. [Job_Router_Node](../includes/class-job-router-node.php) writes every job entry to the jobs partition, a sieve drops any job older than 900 seconds, and the runtime's job-worker topology runs the handlers. The [`complete`](../topologies/complete.tsl) topology runs assembly, flames, stats, routing and dispatch in one worker, with a Tee splitting one firehose consumer between the builder and the router.
+Jobs ride the firehose because the append is already paid for, and because only firehose entries cross from a spoke to its hub ([hub control](hub-control.md#jobs-from-a-spoke)). A job is an entry in the `job` category, so the same append that logs a request can enqueue work. [Job_Router_Node](../includes/class-job-router-node.php) writes every job entry to the jobs partition, a sieve drops any job older than 900 seconds, and the runtime's job-worker topology runs the handlers. The [`complete`](../topologies/complete.tsl.php) topology runs assembly, flames, stats, routing and dispatch in one worker, with a Tee splitting one firehose consumer between the builder and the router.
 
 ## Read more
 

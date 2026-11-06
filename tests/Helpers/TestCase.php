@@ -81,7 +81,7 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * A builder `fb` armed as `flame-builder.tsl` arms one, its auto-tune
+	 * A builder `fb` armed as `flame-builder.tsl.php` arms one, its auto-tune
 	 * flush on the Router tick, sending every message it sends to `$sink`.
 	 *
 	 * @param \Newspack_Nodes\Node $sink Where its flames, auto-tune emits and replies land.
@@ -99,7 +99,7 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * A stats builder `sb` armed as `stats-builder.tsl` arms one, its
+	 * A stats builder `sb` armed as `stats-builder.tsl.php` arms one, its
 	 * partition bound to `$partition`, reading the requests logs
 	 * `record_request()` writes and writing that partition of a real
 	 * `flame-facts` Row_Table through the request graph.
@@ -116,7 +116,7 @@ abstract class TestCase extends RuntimeTestCase {
 		$sb = new Stats_Builder_Node();
 		$sb->name( 'sb' );
 		$sb->arguments( [] );
-		// As a worker loading stats-builder.tsl names it, with no current user.
+		// As a worker loading stats-builder.tsl.php names it, with no current user.
 		$user = $GLOBALS['_current_user_id'] ?? null;
 		unset( $GLOBALS['_current_user_id'] );
 		try {

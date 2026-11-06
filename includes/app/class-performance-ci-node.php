@@ -13,7 +13,7 @@
  *     (`src/overview/components/AskPanel.js`).
  *   - list_hooks — the Settings page's hook-catalog tree.
  *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
- *     hub→spoke fanout. `hub-control.tsl` maps the ruleset option to this
+ *     hub→spoke fanout. `hub-control.tsl.php` maps the ruleset option to this
  *     `performance` node, and `set` refuses any other.
  *
  * SSE-style stream surfaces (request-log, gyroscope, errors) consume the

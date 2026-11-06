@@ -1,6 +1,6 @@
 <?php
 /**
- * aggregator.tsl parse + mount wiring (the pull graph).
+ * aggregator.tsl.php parse + mount wiring (the pull graph).
  *
  * The hub topology ships a `spokes` Vault_Group
  * over group `spoke` (one HTTP_Source broker per spoke, following the Vault

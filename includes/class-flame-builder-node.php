@@ -22,7 +22,7 @@
  * a decision waits for the next flush or a clean stop.
  *
  * Worker context: this node runs inside the `flame-builder` (or `complete`)
- * topology. See `topologies/flame-builder.tsl` for the wiring.
+ * topology. See `topologies/flame-builder.tsl.php` for the wiring.
  *
  * Quiet and the auto-tune lock's wait are durations on the MONOTONIC clock.
  *
