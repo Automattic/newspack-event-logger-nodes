@@ -32,7 +32,10 @@
  * `Config::get_logs_directory()`.
  *
  * Output flows through `$stdout` — a `Stdout_Node` that fwrites straight to
- * STDOUT, bypassing PHP's output buffers. Tests swap in a capturing node.
+ * STDOUT, bypassing PHP's output buffers. Tests swap in a capturing node. A
+ * failed write ends every read path: `| head` closing its pipe exits 0, as a
+ * reader that has read enough is not an error, and any other failed write fails
+ * the command.
  *
  * @package Newspack_Event_Logger_Nodes
  * @phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- CLI output, not web
@@ -291,13 +294,18 @@ class Reqgrep_Command {
 		} else {
 			$this->cat_mode();
 		}
+
+		if ( $this->stdout instanceof Stdout_Node && '' !== $this->stdout->write_error ) {
+			\WP_CLI::error( 'stdout: ' . $this->stdout->write_error );
+		}
 	}
 
 	/**
 	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
 	 * seeds the Consumer at the second-to-last segment; the default reads from the
 	 * start. Flush incomplete requests once every partition is exhausted, then
-	 * warn with the count of torn lines the read skipped.
+	 * warn with the count of torn lines the read skipped. A closed stdout ends
+	 * the read at the next block boundary and leaves later partitions unread.
 	 */
 	private function cat_mode(): void {
 		$consumers = [];
@@ -306,8 +314,11 @@ class Reqgrep_Command {
 			if ( 'recent' === $this->cat_offset ) {
 				$consumer->next_offset( 'recent' );
 			}
-			$consumer->drain();
+			$consumer->drain( $this->output_closed( ... ) );
 			$consumers[] = $consumer;
+			if ( $this->output_closed() ) {
+				break;
+			}
 		}
 		$this->output_remaining();
 		self::warn_unparseable( Consumer_Node::take_unparseable_lines_of( $consumers ) );
@@ -320,9 +331,9 @@ class Reqgrep_Command {
 	 * process_message.
 	 *
 	 * Signal handlers are installed first, so Ctrl+C ends the drain loop instead
-	 * of killing the process mid-write. Each loop iteration warns with the count
-	 * of torn lines skipped since the last, so a long follow reports one when it
-	 * happens rather than at exit.
+	 * of killing the process mid-write, and a closed stdout ends it too. Each loop
+	 * iteration warns with the count of torn lines skipped since the last, so a
+	 * long follow reports one when it happens rather than at exit.
 	 *
 	 * @param int $max_iterations Drain-loop iteration budget. PHP_INT_MAX in
 	 *                            production (tail until SIGINT); tests pass a
@@ -343,9 +354,9 @@ class Reqgrep_Command {
 		$framework->install_signal_handlers();
 		$iterations = 0;
 		$framework->drain(
-			static function () use ( &$iterations, $max_iterations, $consumers ): bool {
+			function () use ( &$iterations, $max_iterations, $consumers ): bool {
 				self::warn_unparseable( Consumer_Node::take_unparseable_lines_of( $consumers ) );
-				return $iterations++ < $max_iterations;
+				return ! $this->output_closed() && $iterations++ < $max_iterations;
 			}
 		);
 	}
@@ -395,7 +406,7 @@ class Reqgrep_Command {
 			}
 			$this->process_message( $unpacked );
 		} ) );
-		while ( ! $src->exit ) {
+		while ( ! $src->exit && ! $this->output_closed() ) {
 			$src->fire();
 		}
 		$this->output_remaining();
@@ -422,6 +433,9 @@ class Reqgrep_Command {
 	 */
 	private function output_remaining(): void {
 		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
+			if ( $this->output_closed() ) {
+				return;
+			}
 			if ( ! $state instanceof \stdClass ) {
 				continue;
 			}
@@ -429,6 +443,14 @@ class Reqgrep_Command {
 			$this->emit( '[incomplete]' );
 			$this->emit( '' );
 		}
+	}
+
+	/**
+	 * True once a write to stdout has failed, when nothing further can be read
+	 * by anyone. A swapped-in output node never closes.
+	 */
+	private function output_closed(): bool {
+		return $this->stdout instanceof Stdout_Node && $this->stdout->exit;
 	}
 
 	/**

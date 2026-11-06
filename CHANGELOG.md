@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stock topologies ship as `<name>.tsl.php`, so a web server runs their guard rather than serving them as text. Requires the substrate that resolves them.
 - **`wp nodes reqgrep` reads stdin only under the new `--stdin` flag.** It used to read stdin whenever stdin was a pipe or a file, so `ssh host 'wp nodes reqgrep --recent'`, cron and agents, which all hold a pipe, ignored `--recent`, printed nothing and hung for as long as the pipe stayed open. It now reads the firehose whatever stdin is. `cat archived.log | wp nodes reqgrep pattern` must add `--stdin`, which refuses `--follow`, `--recent` and `--firehose`.
 
+### Fixed
+
+- **`wp nodes reqgrep … | head` stops when `head` exits.** Every read path ends at the failed write: a scan stops at the next block and leaves later partitions unread, `--stdin` stops reading, and `--follow` leaves its loop. The run exits 0, adds no line to `debug.log`, and on the firehose this was found on took 0.6 to 1.2 seconds rather than past three minutes and 415,581 notices. Any other failed write, such as a full disk, exits 1 naming it. Requires the substrate that carries `Stdout_Node::$exit`.
+
 ## [0.160.10] - 2026-11-05
 
 ### Changed

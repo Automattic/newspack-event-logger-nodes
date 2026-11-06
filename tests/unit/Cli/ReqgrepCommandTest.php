@@ -29,6 +29,7 @@ use Newspack_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Stdout_Node;
 
 require_once \dirname( __DIR__, 3 ) . '/includes/cli/class-reqgrep-command.php';
 require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.php';
@@ -1471,6 +1472,146 @@ class ReqgrepCommandTest extends TestCase {
 			Config::reset();
 			\Newspack_Nodes\Config::reset();
 		}
+	}
+
+	// -------------------------------------------------------------------------
+	// A closed stdout ends every read path.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * A FIFO whose one reader has closed, so the next write fails with EPIPE.
+	 *
+	 * @return resource The write end.
+	 */
+	private function closed_pipe() {
+		$path = "{$this->tmp}/closed-pipe-" . \uniqid();
+		\posix_mkfifo( $path, 0600 );
+		$reader = \fopen( $path, 'r+' );
+		$writer = \fopen( $path, 'w' );
+		\fclose( $reader );
+		\unlink( $path );
+		return $writer;
+	}
+
+	/**
+	 * Entries for `$count` finished requests.
+	 *
+	 * @return list<array<string,mixed>>
+	 */
+	private static function finished_requests( int $count ): array {
+		$entries = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$entries[] = [ 'n' => 1, 'rid' => "rid-{$i}", 'k' => 'process (start)',    'm' => '/calendar', 'ts' => 1700000000.0 ];
+			$entries[] = [ 'n' => 2, 'rid' => "rid-{$i}", 'k' => 'process (complete)', 'm' => '/calendar', 'ts' => 1700000000.5 ];
+		}
+		return $entries;
+	}
+
+	/** How many messages reached the writer. */
+	private static function fills_of( Stdout_Node $stdout ): int {
+		return ( new \ReflectionProperty( $stdout, 'counter' ) )->getValue( $stdout );
+	}
+
+	/** Seed a two-partition firehose: p0 outruns one read block, p1 holds one open request. */
+	private function seed_two_partitions(): void {
+		\update_option( 'newspack_nodes_num_partitions', 2 );
+		\Newspack_Nodes\Config::reset();
+		$logs = \Newspack_Nodes\Config::get_base_directory() . '/logs';
+		$this->seed_partition( "{$logs}/firehose", 0, self::finished_requests( 1000 ) );
+		$this->seed_partition( "{$logs}/firehose", 1, [
+			[ 'n' => 1, 'rid' => 'second-partition', 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000000.0 ],
+		] );
+	}
+
+	public function test_a_closed_pipe_ends_the_scan_at_the_failed_write_and_exits_clean(): void {
+		$this->seed_two_partitions();
+		$cmd         = new Reqgrep_Command();
+		$stdout      = new Stdout_Node( $this->closed_pipe() );
+		$cmd->stdout = $stdout;
+
+		// A throwing WP_CLI::error is the stub's exit 1; returning here is exit 0.
+		$cmd->__invoke( [], [] );
+
+		$this->assertTrue( $stdout->exit );
+		$this->assertSame( [], $GLOBALS['_test_wp_cli_errors'] );
+		$blocks = ( new \ReflectionProperty( $cmd, 'inflight' ) )->getValue( $cmd );
+		$this->assertNull( $blocks->get( 'second-partition' ), 'the next partition stays unread' );
+		// One block of p0 held fewer than 400 of the 1000 requests.
+		$this->assertLessThan( 4000, self::fills_of( $stdout ), 'the scan stops at a block boundary' );
+	}
+
+	public function test_a_closed_pipe_prints_no_incomplete_requests(): void {
+		\update_option( 'newspack_nodes_num_partitions', 1 );
+		\Newspack_Nodes\Config::reset();
+		$logs    = \Newspack_Nodes\Config::get_base_directory() . '/logs';
+		$entries = self::finished_requests( 1 );
+		for ( $i = 0; $i < 50; $i++ ) {
+			$entries[] = [ 'n' => 1, 'rid' => "open-{$i}", 'k' => 'process (start)', 'm' => '/calendar', 'ts' => 1700000001.0 ];
+		}
+		$this->seed_partition( "{$logs}/firehose", 0, $entries );
+
+		$cmd         = new Reqgrep_Command();
+		$stdout      = new Stdout_Node( $this->closed_pipe() );
+		$cmd->stdout = $stdout;
+		$cmd->__invoke( [], [] );
+
+		$this->assertTrue( $stdout->exit );
+		$this->assertLessThan( 20, self::fills_of( $stdout ), 'fifty open requests render to nobody' );
+	}
+
+	public function test_a_closed_pipe_ends_the_stdin_read(): void {
+		$stream = \fopen( 'php://memory', 'r+' );
+		foreach ( self::finished_requests( 100 ) as $entry ) {
+			\fwrite( $stream, Message::packed( $this->packed_struct( $entry ) ) . "\n" );
+		}
+		$size = \ftell( $stream );
+		\rewind( $stream );
+		$cmd         = $this->make_cmd();
+		$stdout      = new Stdout_Node( $this->closed_pipe() );
+		$cmd->stdout = $stdout;
+
+		( new \ReflectionMethod( $cmd, 'process_stdin' ) )->invoke( $cmd, $stream );
+
+		$this->assertTrue( $stdout->exit );
+		$this->assertLessThan( $size, \ftell( $stream ), 'lines behind the failed write stay unread' );
+	}
+
+	public function test_a_closed_pipe_ends_the_follow_loop(): void {
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-follow-closed-' . \uniqid();
+		\mkdir( "{$tmp}.p0", 0755, true );
+		try {
+			$cmd = $this->make_cmd();
+			( new \ReflectionProperty( $cmd, 'base_dir' ) )->setValue( $cmd, $tmp );
+			( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->setValue( $cmd, [ "{$tmp}.p0" ] );
+			$stdout      = new Stdout_Node( $this->closed_pipe() );
+			$cmd->stdout = $stdout;
+			$stdout->write_raw( "the write that fails\n" );
+
+			// No iteration budget: only the closed reader ends this loop.
+			( new \ReflectionMethod( $cmd, 'follow_mode' ) )->invoke( $cmd );
+
+			$this->assertTrue( $stdout->exit );
+		} finally {
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_an_output_node_that_cannot_close_reads_every_partition(): void {
+		$this->seed_two_partitions();
+		$cmd      = new Reqgrep_Command();
+		$captured = $this->capture_output( $cmd );
+		$cmd->__invoke( [ 'second-partition' ], [] );
+		$this->assertStringContainsString( 'second-partition', self::joined( $captured ) );
+	}
+
+	public function test_a_full_disk_fails_the_command(): void {
+		$this->seed_two_partitions();
+		$cmd         = new Reqgrep_Command();
+		$cmd->stdout = new Stdout_Node( \fopen( '/dev/full', 'w' ) );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessageMatches( '/^WP_CLI::error called: stdout/' );
+		$cmd->__invoke( [], [] );
 	}
 
 	// -------------------------------------------------------------------------
