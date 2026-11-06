@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.160.10] - 2026-11-05
+
+### Changed
+
+- Every test suite fails a risky test and gives each test a 10-second budget, with no flags. No runtime change.
+
 ## [0.160.9] - 2026-11-03
 
 ### Changed
