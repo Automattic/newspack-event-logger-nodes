@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.160.10
+ * Version: 0.161.0
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -38,7 +38,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.160.10' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.161.0' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -82,13 +82,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant below the 2.145.0 floor. check-substrate-floor.sh holds
+	// @longform Dormant below the 2.148.0 floor. check-substrate-floor.sh holds
 	// it to the substrate PHP this plugin calls; a floor that a topology, a
 	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
 	// why each raise was made. A floor set too low wires the plugin up against
 	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.145.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.148.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

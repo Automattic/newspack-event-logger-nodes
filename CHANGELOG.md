@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.161.0] - 2026-11-06
+
 ### Changed
 
+- The substrate floor rises to 2.148.0, because `reqgrep` reads `Stdout_Node::$exit`.
 - `tests/run-coverage.sh` runs under PCOV, through `scripts/lib/coverage-php.sh`. No runtime change.
 - Stock topologies ship as `<name>.tsl.php`, so a web server runs their guard rather than serving them as text. Requires the substrate that resolves them.
 - **`wp nodes reqgrep` reads stdin only under the new `--stdin` flag.** It used to read stdin whenever stdin was a pipe or a file, so `ssh host 'wp nodes reqgrep --recent'`, cron and agents, which all hold a pipe, ignored `--recent`, printed nothing and hung for as long as the pipe stayed open. It now reads the firehose whatever stdin is. `cat archived.log | wp nodes reqgrep pattern` must add `--stdin`, which refuses `--follow`, `--recent` and `--firehose`.
