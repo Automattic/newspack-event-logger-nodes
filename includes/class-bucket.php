@@ -34,7 +34,7 @@ final class Bucket {
 	 * The span and the buckets the stats rows keep, as a description spells
 	 * them: their counts, or the formulas naming `min_lifetime` where it is
 	 * short of one bucket, since a node's descriptions are read whenever it
-	 * is built and a refusal there would take its every verb down with it.
+	 * is built and a refusal there would take its every command down with it.
 	 *
 	 * @return array{window:string,kept:string}
 	 * @throws \RuntimeException When the config will not load.

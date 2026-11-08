@@ -10,12 +10,12 @@
  *               `dump`, then → rules:fetch, settling the ask
  *
  * Nothing here pairs a reply with its request, because the addressing already
- * is the correlation. Each MUTATING verb owns its own nodes — one
+ * is the correlation. Each MUTATING command owns its own nodes — one
  * `useCommandOnce` each, scoped `rules:save`, `rules:upsert`, `rules:delete`
  * and `rules:reset` — and every scope mints FROM its own receiver Tee, so the
  * server's TO=FROM reply lands on exactly the Tee that asked. There is no id in
  * `message[ID]`, no `replies` map and nothing keyed by one; sending several
- * verbs in one tick means more nodes, never one node telling replies apart.
+ * commands in one tick means more nodes, never one node telling replies apart.
  *
  * `dump` is the odd one out, deliberately: it is a publish, not an await. The
  * `rules:fetch` Fetcher asks for it FROM the `rules:in` Tee, targeting the
@@ -56,7 +56,7 @@ import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 import { GROUPS } from '../overview/constants';
 
-/** The server-side CI mount every verb here is addressed to. */
+/** The server-side CI mount every command here is addressed to. */
 const RULES_CI = 'rules';
 
 /** The Tee `dump` is asked FROM and, by TO=FROM, receives its reply. */
@@ -80,7 +80,7 @@ function fireDump() {
 }
 
 /**
- * Mount the ruleset editor's graph and return the table with its CRUD verbs.
+ * Mount the ruleset editor's graph and return the table with its CRUD commands.
  *
  * Each mutation's answer lands on the node that asked, and a successful one
  * re-dumps — so the TABLE repaints one round trip after the mutation settles.
@@ -145,7 +145,7 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// One one-shot per verb; a success re-dumps, a refusal only reports.
+	// One one-shot per command; a success re-dumps, a refusal only reports.
 	const onMutationRef = useRef( onMutation );
 	onMutationRef.current = onMutation;
 	const settle = useCallback(
@@ -189,7 +189,7 @@ export function useRulesGraph( opts = {} ) {
 
 	const dump = useCallback( () => fireDump(), [] );
 
-	// save/upsert: the JSON is ONE token, the verb's `rules` or `rule` arg.
+	// save/upsert: the JSON is ONE token, the command's `rules` or `rule` arg.
 	const saveAll = useCallback(
 		( rules ) => saveOnce.run( [ JSON.stringify( rules ) ] ),
 		[ saveOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps

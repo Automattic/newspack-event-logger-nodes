@@ -1,7 +1,7 @@
 <?php
 /**
  * Overview_Prefetch: the URL snapshot and the Overview's other default
- * answers, built once an interval by a JobWorker job and served by the verbs
+ * answers, built once an interval by a JobWorker job and served by the commands
  * until the snapshot expires.
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
@@ -72,7 +72,7 @@ final class Overview_Prefetch {
 	 * intervals from the end of its build, and answer every question live
 	 * inside it, a template once for each server its totals sum and the
 	 * overview naming them. An answer the stats could not open for is never
-	 * stored, so the verb asks again live. A job `overtaken()` names
+	 * stored, so the command asks again live. A job `overtaken()` names
 	 * runs nothing, since a later listener can overwrite `admit()`'s
 	 * decline; a job `queued()` refuses fails here, where the JobWorker
 	 * records the error and its Consumer dead-letters the entry. On a
@@ -126,12 +126,12 @@ final class Overview_Prefetch {
 	 * @throws \InvalidArgumentException As `Performance_CI_Node::answer_live()`.
 	 */
 	private static function answers( array $questions, int $now, Url_Snapshot $built ): array {
-		$answers = [];
-		$servers = $built->servers();
-		$verbs   = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+		$answers  = [];
+		$servers  = $built->servers();
+		$commands = Command_Interpreter_Node::declared_commands( Performance_CI_Node::class );
 		foreach ( $questions as [ 'name' => $name, 'verb' => $verb, 'args' => $args, 'tokens' => $tokens ] ) {
 			foreach ( self::is_template( $tokens ) ? $servers : [ null ] as $server ) {
-				$bound  = null === $server ? $args : Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) );
+				$bound  = null === $server ? $args : Command_Args::bind( Core::arr( $commands[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) );
 				$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $bound, $now, $built ), start: [ 'l' => $name ] );
 				if ( true === ( $answer['available'] ?? null ) ) {
 					$answers[ self::key( $verb, $bound ) ] = $answer;
@@ -143,7 +143,7 @@ final class Overview_Prefetch {
 
 	/**
 	 * The questions the job answers, each its name in `stored-answers.json`,
-	 * its verb and tokens, and its arguments bound as the verb binds them, by
+	 * its verb and tokens, and its arguments bound as the command binds them, by
 	 * the key a question naming no `SERVER` stores its answer under. A
 	 * template's key binds `SERVER` itself, the key `templated()` args match;
 	 * its answers are stored under each server's own.
@@ -158,10 +158,10 @@ final class Overview_Prefetch {
 	 *                         find it, whose answers no poll would read.
 	 */
 	public static function stored(): array {
-		$verbs  = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
-		$stored = [];
+		$commands = Command_Interpreter_Node::declared_commands( Performance_CI_Node::class );
+		$stored   = [];
 		foreach ( self::questions() as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$declared = Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) );
+			$declared = Core::arr( $commands[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) );
 			$args     = Command_Args::bind( $declared, $tokens );
 			$key      = self::key( $verb, $args );
 			if ( isset( $stored[ $key ] ) ) {
@@ -203,7 +203,7 @@ final class Overview_Prefetch {
 	}
 
 	/**
-	 * The key a verb's answer to bound arguments is stored under.
+	 * The key a command's answer to bound arguments is stored under.
 	 *
 	 * @param string                 $verb The verb.
 	 * @param array<array-key,mixed> $args Its bound arguments.

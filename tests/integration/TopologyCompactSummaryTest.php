@@ -5,13 +5,13 @@
  * Verifies that the production topology files wire up the new
  * `completed:tee → completed:partition / gyroscope:partition` fan-out
  * that drives the request-log + gyroscope dashboards, plus the
- * matching :config verbs on request-builder that point its
+ * matching :config commands on request-builder that point its
  * completed-summary and inflight-snapshot outputs at those targets.
  *
  * Loads each affected TSL file in-process via Topology_Loader against a
  * real CommandInterpreter sink (the same path the reconcile pass + worker take
  * at spawn time), then asserts on Core's node registry and on the
- * patron state the :config verbs mutated. A load on a worker other than p0
+ * patron state the :config commands mutated. A load on a worker other than p0
  * also pins which logs each worker reads and writes as its own.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -87,7 +87,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * lines in the TSL emit TM_COMMAND messages addressed to
 	 * `request-builder:config` — without the Router wiring, those land
 	 * back in `_command_interpreter` (which doesn't know about sibling
-	 * CIs) and the verb never executes.
+	 * CIs) and the command never executes.
 	 */
 	private function load_topology( string $name, int $partition = 0 ): Command_Interpreter_Node {
 		$router = new Router_Node();

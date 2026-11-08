@@ -1,11 +1,11 @@
 <?php
 /**
  * Reqgrep_Core: the rid-grouping / pattern-matching engine shared by the
- * `wp nodes reqgrep` CLI and the `grep_requests` performance-CI verb.
+ * `wp nodes reqgrep` CLI and the `grep_requests` performance-CI command.
  *
  * It owns the part both consumers must agree on byte-for-byte: WHICH firehose
  * lines belong to WHICH request, and WHEN a request has ENDED. The output
- * side differs (the CLI formats an indented tree to stdout; the verb builds a
+ * side differs (the CLI formats an indented tree to stdout; the command builds a
  * bounded JSON summary), so that stays in each consumer and rides in as the
  * `on_complete` closure.
  *

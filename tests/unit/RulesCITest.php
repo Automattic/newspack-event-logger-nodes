@@ -15,7 +15,7 @@ use Newspack_Event_Logger_Nodes\App\Rules_CI_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
@@ -51,7 +51,7 @@ class RulesCITest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		$GLOBALS['_current_user_can'] = false;
 		$GLOBALS['_wp_options']       = [];
 		Core::$memd = null;
@@ -75,7 +75,7 @@ class RulesCITest extends TestCase {
 	}
 
 	private function fire( string $verb, string $args = '' ): mixed {
-		return VerbHarness::fire( new Rules_CI_Node(), 'rules', $verb, '' === $args ? [] : [ $args ] );
+		return CommandHarness::fire( new Rules_CI_Node(), 'rules', $verb, '' === $args ? [] : [ $args ] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -288,7 +288,7 @@ class RulesCITest extends TestCase {
 			$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( $sib_id ) ],
 			'an unrelated upsert must not wipe a sibling pointer rule\'s durable hooks option'
 		);
-		VerbHarness::reset(); // fresh request-scope graph: fire() registers '_router' once per call.
+		CommandHarness::reset(); // fresh request-scope graph: fire() registers '_router' once per call.
 		$list = $this->fire( 'dump' );
 		$sib  = \array_values( \array_filter( $list['rules'], static fn ( array $r ): bool => $sib_id === $r['id'] ) )[0];
 		$this->assertSame( $big, $sib['hooks'], 'list must still resolve the sibling pointer rule to its full hook list' );
@@ -388,7 +388,7 @@ class RulesCITest extends TestCase {
 		);
 	}
 
-	public function test_node_schema_declares_the_crud_verbs(): void {
+	public function test_node_schema_declares_the_crud_commands(): void {
 		$schema = Rules_CI_Node::node_schema();
 
 		$this->assertSame( 'Service', $schema['category'] );
@@ -403,7 +403,7 @@ class RulesCITest extends TestCase {
 	/**
 	 * Config is memoized per process WITH the stored option folded in by the
 	 * presence overlay, and `App\Core` warms it at `plugins_loaded:-11001` — so by
-	 * the time a verb runs, `Config::value('rules')` already answers with the
+	 * the time a command runs, `Config::value('rules')` already answers with the
 	 * ruleset we are about to discard. Every reset test reproduces that.
 	 */
 	private function warm_stale_config(): void {
@@ -443,7 +443,7 @@ class RulesCITest extends TestCase {
 		$this->warm_stale_config();
 
 		$this->fire( 'reset' );
-		VerbHarness::reset();
+		CommandHarness::reset();
 		$listed = $this->fire( 'dump' );
 
 		$this->assertIsArray( $listed );

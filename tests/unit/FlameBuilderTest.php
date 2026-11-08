@@ -68,7 +68,7 @@ class FlameBuilderTest extends TestCase {
 
 	/**
 	 * Read the node's introspection payload through the production GET_STATS
-	 * request verb — the same path the dashboard and the REPL read.
+	 * request — the same path the dashboard and the REPL read.
 	 *
 	 * @return array<string, mixed>
 	 */
@@ -972,9 +972,9 @@ class FlameBuilderTest extends TestCase {
 
 	/** The catalog's `reply_shape` names every key `GET_STATS` answers with. */
 	public function test_get_stats_reply_shape_names_every_key_it_carries(): void {
-		$fb   = new Flame_Builder_Node();
-		$verb = \array_column( Flame_Builder_Node::node_schema()['requests'], null, 'name' )['GET_STATS'];
-		\preg_match_all( '/\w+/', $verb['reply_shape'], $named );
+		$fb      = new Flame_Builder_Node();
+		$request = \array_column( Flame_Builder_Node::node_schema()['requests'], null, 'name' )['GET_STATS'];
+		\preg_match_all( '/\w+/', $request['reply_shape'], $named );
 
 		$this->assertSame( \array_keys( $this->get_stats( $fb ) ), $named[0] );
 	}
@@ -1216,7 +1216,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A verb's frame and the plugin's own spans are logged whatever the rule
+	 * A command's frame and the plugin's own spans are logged whatever the rule
 	 * says, so auto-tune neither promotes nor disables them; a transport span,
 	 * which `significant_events` gives meaning, still tunes beside them.
 	 */
@@ -1400,8 +1400,8 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'auto_tune_pending_count' => 2, 'significant_events_count' => 1 ], $this->get_stats( $fb ) );
 	}
 
-	/** The builder names no Row_Table: it declares no `:config` verb at all. */
-	public function test_the_schema_declares_no_config_verb(): void {
+	/** The builder names no Row_Table: it declares no `:config` command at all. */
+	public function test_the_schema_declares_no_config_command(): void {
 		$schema = Flame_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
 		$this->assertSame( [], $schema['commands'] ?? [] );

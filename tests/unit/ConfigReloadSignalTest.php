@@ -10,7 +10,7 @@
  * each active topology, which `Fleet_Node` consumes on its next scan.
  *
  * Two writers are covered here — `Rule_Set::save()` (every ruleset write) and
- * the `performance` CI's `set` verb (the hub->spoke settings-sync receive path).
+ * the `performance` CI's `set` command (the hub->spoke settings-sync receive path).
  * The settings-form writer is covered by AdminTest.
  *
  * @package Newspack_Event_Logger_Nodes\Tests\Unit
@@ -26,7 +26,7 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\TopologyLockHarness;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Core;
@@ -71,7 +71,7 @@ final class ConfigReloadSignalTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		Config::reset();
 		$this->reset_topology_fixtures();
 		$this->rmdir_recursive( $this->base_dir );
@@ -182,7 +182,7 @@ final class ConfigReloadSignalTest extends TestCase {
 
 	// ---- performance CI `set` --------------------------------------------
 
-	public function test_settings_set_verb_asks_every_live_worker_to_re_read_a_synced_ruleset(): void {
+	public function test_settings_set_command_asks_every_live_worker_to_re_read_a_synced_ruleset(): void {
 		// The ruleset branch re-tiers through Rule_Set::save() rather than a raw
 		// update_option, so it inherits that writer's signal.
 		$rule = ( new Rule( 'ignored', '/tarot/', Rule::ACTION_LOG, hooks: [ 'init' ] ) )->to_array();
@@ -192,19 +192,19 @@ final class ConfigReloadSignalTest extends TestCase {
 		);
 
 		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
+		CommandHarness::fire( $interpreter, 'performance', 'set', $args );
 
 		$this->assertFleetAskedToReload();
 	}
 
-	public function test_settings_set_verb_to_the_value_already_stored_signals_nothing(): void {
+	public function test_settings_set_command_to_the_value_already_stored_signals_nothing(): void {
 		// The hub re-pushes every synced option on its sweep whether or not it
 		// changed, and a reload is not free: it fires Config::RESET_ACTION on
 		// every worker, which re-globs and re-parses every .tsl to reach the
 		// identical answer. Once per sweep, per worker, forever.
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ ( new Rule( Rule_Set::id_for( '/tarot/' ), '/tarot/', Rule::ACTION_LOG, hooks: [ 'init' ], log_cache: true ) )->to_array() ];
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
+		$result = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 
 		$this->assertSame( [ 'option' => Rule_Set::OPTION_RULES, 'updated' => false ], $result );
 		$this->assertFleetNotAskedToReload();
@@ -222,33 +222,33 @@ final class ConfigReloadSignalTest extends TestCase {
 
 	/**
 	 * The option lands before the signal, and a signal with nowhere to land
-	 * is the verb's failure: it propagates as the reply's error rather than
+	 * is the command's failure: it propagates as the reply's error rather than
 	 * reading as a clean write whose workers never heard of it.
 	 */
-	public function test_settings_set_verb_writes_the_option_and_refuses_with_an_unresolvable_locks_directory(): void {
+	public function test_settings_set_command_writes_the_option_and_refuses_with_an_unresolvable_locks_directory(): void {
 		$this->break_locks_directory();
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
+		$result = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 
-		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
+		$this->assertIsString( $result, 'the command answers with its error, not a result' );
 		$this->assertSame( '/tarot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null );
 	}
 
 	/**
 	 * A `{base}/locks` planted as a symlink would carry the synced write's
-	 * reload flags wherever it points, so the verb refuses and flags nothing.
+	 * reload flags wherever it points, so the command refuses and flags nothing.
 	 */
-	public function test_settings_set_verb_refuses_a_symlinked_locks_directory(): void {
+	public function test_settings_set_command_refuses_a_symlinked_locks_directory(): void {
 		\rename( "{$this->base_dir}/locks", "{$this->base_dir}/elsewhere-5521" );
 		\symlink( "{$this->base_dir}/elsewhere-5521", "{$this->base_dir}/locks" );
 
 		try {
-			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
+			$result = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 		} finally {
 			\unlink( "{$this->base_dir}/locks" );
 		}
 
-		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
+		$this->assertIsString( $result, 'the command answers with its error, not a result' );
 		$this->assertStringContainsString( 'symlink or path traversal detected', $result );
 		$this->assertFileDoesNotExist( "{$this->base_dir}/elsewhere-5521/sundial.p0.lock.d/" . \Newspack_Nodes\Lock_Node::RELOAD_FLAG );
 	}

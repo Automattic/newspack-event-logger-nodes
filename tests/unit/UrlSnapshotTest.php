@@ -542,7 +542,7 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/** The sorts a listing takes are `urls`' sorts, a page's name standing for a URL's. */
-	public function test_the_parity_sorts_are_the_urls_verbs_sorts(): void {
+	public function test_the_parity_sorts_are_the_urls_commands_sorts(): void {
 		$this->assertSame(
 			[ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ],
 			\array_values( Performance_CI_Node::URL_SORTS )

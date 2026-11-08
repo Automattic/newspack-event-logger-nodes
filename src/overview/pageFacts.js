@@ -77,7 +77,7 @@ export function pageFacts( {
 	selectedRequest,
 	requestDetail,
 } = {} ) {
-	// What the numbers are OF: the verb's echo, absent until it answers.
+	// What the numbers are OF: the command's echo, absent until it answers.
 	const filters = urlFilters ?? null;
 
 	if ( selectedRequest && requestDetail ) {

@@ -247,7 +247,7 @@ class Auto_Tuner_Node extends Node {
 	/**
 	 * Topology-console manifest. `Hidden` keeps this node out of the palette:
 	 * FlameBuilder constructs it, so a topology never names it in TSL. It takes
-	 * no constructor arguments and exposes no verbs.
+	 * no constructor arguments and exposes no commands.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
 	 * @return array<string,mixed>

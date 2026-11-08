@@ -2,7 +2,7 @@
 /**
  * Diagnostics Bridge
  *
- * Carries three substrate seams into the event-logger: the verb span through
+ * Carries three substrate seams into the event-logger: the command span through
  * `Command_Interpreter_Node::$around_dispatch` (see the architecture guide),
  * the span `Core::span()` opens through `Core::$around_span`, such as a
  * Table's purge or WAL checkpoint, and the `newspack_nodes/stderr` seam.
@@ -29,7 +29,7 @@ use Newspack_Nodes\Core;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * The verb and span wrappers and the `newspack_nodes/stderr` listener. The
+ * The command and span wrappers and the `newspack_nodes/stderr` listener. The
  * deferred bootstrap in `newspack-event-logger-nodes.php` calls `install()`
  * and registers the listener beside it. Stateless.
  */
@@ -65,7 +65,7 @@ class Diagnostics_Bridge {
 	}
 
 	/**
-	 * A wrapper that runs each verb — through `$inner` when one was there —
+	 * A wrapper that runs each command — through `$inner` when one was there —
 	 * inside its own span on the active request, and bare before any logger has
 	 * started, before anything names the span. The architecture guide states
 	 * the span.

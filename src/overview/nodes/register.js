@@ -32,7 +32,7 @@ import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node
  * A slice whose payload IS its data, plus the status fields the graph drives.
  *
  * A reply carrying no payload at all keeps the slice already on screen, so a
- * verb that answers nothing never blanks an open modal. Every other value
+ * command that answers nothing never blanks an open modal. Every other value
  * publishes, which leaves a `null` the server actually sent rendering as empty
  * rather than as stale.
  *
@@ -58,7 +58,7 @@ export const views = registerSliceViews( {
 	 * `urls:view` — the always-on URL leaderboard — and each expanded page's
 	 * `shapes:<page key>:view`.
 	 *
-	 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
+	 * The `urls` command answers an envelope, `{ data, rows, totals, slowest,
 	 * filters, limit, offset }`, so the payload is not the slice. `rows`
 	 * counts the rows the filters left, the pages `<UrlTable>` paginates on,
 	 * or under `--page` that page's URLs, and `totals` is the same set's
@@ -66,7 +66,7 @@ export const views = registerSliceViews( {
 	 * block. `offset` is where the rows start, which places an expanded
 	 * page's window of shapes beneath it; `limit` is dropped, the fetcher's
 	 * own args having produced it. `filters` says what the totals are OF,
-	 * echoed by the verb rather than read back off the client, so it
+	 * echoed by the command rather than read back off the client, so it
 	 * describes the data in hand and not what was typed since.
 	 *
 	 * A malformed envelope publishes an empty table rather than throwing,

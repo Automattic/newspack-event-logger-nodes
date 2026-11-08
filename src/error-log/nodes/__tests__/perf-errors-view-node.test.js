@@ -3,7 +3,7 @@
  *
  * The shared base owns the ring (`lines`/`lineAt`/`linesCount`), the monotonic
  * `id` + `isEven` stamps, the paused belt + step budget, the decaying `lps`,
- * seek tracking, and the shared control verbs; those have their
+ * seek tracking, and the shared controls; those have their
  * own suite in the substrate. Here we pin the subclass surface: `shapeRow`'s
  * envelope validation + enrichment (KEY=rid, VALUE={ts, k, m, n, method, url},
  * plus the shared debug trio), the `select` seek arming, and the published

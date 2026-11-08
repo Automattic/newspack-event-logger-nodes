@@ -256,7 +256,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Handle one message: the Row_Table's reply, a TM_REQUEST introspection
-	 * verb, or a TM_STRUCT flame tailed off `flames.p{N}`.
+	 * request, or a TM_STRUCT flame tailed off `flames.p{N}`.
 	 *
 	 * A Table's reply goes to the client first, never to the fold: it is the
 	 * answer to an ask a write made, not a record.
@@ -1235,7 +1235,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * The Row_Table `set_facts_target` named, which every write needs.
 	 *
-	 * @throws \LogicException When the verb named none.
+	 * @throws \LogicException When the command named none.
 	 */
 	private function facts_table(): string {
 		return '' === $this->facts_target ? throw new \LogicException( 'Stats_Builder: no Row_Table named by set_facts_target' ) : $this->facts_target;
@@ -1277,7 +1277,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The `set_facts_target` verb's entry point, which the declared setter
+	 * The `set_facts_target` command's entry point, which the declared setter
 	 * calls by name.
 	 *
 	 * @param string $table The Row_Table the rows are written to.
@@ -1287,7 +1287,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The `set_requests_partition` verb's entry point, which the declared
+	 * The `set_requests_partition` command's entry point, which the declared
 	 * setter calls by name. The path keeps its `{partition}`, which the
 	 * reader resolves at the bound partition when it is built; a reader over
 	 * the last path is released.
@@ -1301,7 +1301,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The Row_Table the verb named, which the flush writes past its primary
+	 * The Row_Table the command named, which the flush writes past its primary
 	 * target, so the console draws an edge to it.
 	 *
 	 * @api Unioned into display_targets() by the substrate's Node.
@@ -1323,7 +1323,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * Emit the base config plus this node's command config, from STATE — one
 	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI).
 	 *
@@ -1335,7 +1335,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Declarative schema: the `:config` verbs, the TM_REQUEST verb, and the
+	 * Declarative schema: the `:config` commands, the TM_REQUEST request, and the
 	 * palette metadata. `Schema_Reflection::auto_wire_interpreter()` builds the
 	 * `{name}:config` interpreter from the `commands` entries, and each
 	 * `setter` dumps itself through `dump_setters()`.

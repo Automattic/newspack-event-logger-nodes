@@ -163,7 +163,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `min_lifetime` defaults to 86,400 seconds from newspack-nodes 2.122.0,
   this plugin's floor, so a site on the default keeps a day; a site that
   sets the key gets a chart of that length. A `min_lifetime` below 300
-  seconds fails the `stats-builder` topology at load and every stats verb
+  seconds fails the `stats-builder` topology at load and every stats command
   with an error naming the key. A script that counted on 288 slots reads
   the count from `slots`.
 - **`requests` and `requests_hourly` keep the span plus an hour, not a
@@ -267,7 +267,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   do. `Log_Manager::url_hash()` is unchanged, so rule ids keep their hashes.
 
 - **An `overview:` brief lists pages as `pages`, not URLs as `urls`.** The
-  `ask` verb and the MCP `performance_ask` tool answer `pages`, each with
+  `ask` command and the MCP `performance_ask` tool answer `pages`, each with
   `page_hash`, `page`, `server`, `shapes`, `busiest_hash`, `count`,
   `avg_ms`, `max_ms` and `errors`, and its `stats` gain `pages`. It carries
   `as_of`, the snapshot's build where the snapshot answered it. An entry
@@ -278,7 +278,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 ## 0.136.0
 
 - **This release needs newspack-nodes 2.112.0.** The overview-prefetch job
-  publishes its URL snapshot through `Row_Table_Node::build()` and the verbs
+  publishes its URL snapshot through `Row_Table_Node::build()` and the commands
   read it through `open_snapshot()`; below 2.112.0 the plugin goes dormant
   behind its admin notice. Install the substrate first.
 
@@ -378,7 +378,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 - **A request is named by its rid alone.** `dump_request` refuses
   `--partition` (`unknown option --partition`), and its MCP tool drops the
-  argument. The `ask` verb's request descriptor is `request:<rid>`: the old
+  argument. The `ask` command's request descriptor is `request:<rid>`: the old
   `request:<rid>:<partition>` answers `unknown descriptor`, as the target and
   as a context. `dump_url`'s request rows and a `url:` brief's
   `worst_requests` carry no `partition`. The current-request overlay's
@@ -548,7 +548,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 - **This release needs newspack-nodes 2.94.0.** A bucket selection reads
   every URL its sets name through the substrate's
-  `Table_Client::all_members()` and its `SSCAN` verb, which read a set of
+  `Table_Client::all_members()` and its `SSCAN` command, which read a set of
   any size page by page, and a selection is never refused for naming too
   many URLs. Below the floor the plugin stays dormant behind its admin notice.
   Update the substrate first, then this plugin, then restart the workers.
@@ -717,11 +717,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   builder had read less its start, where it was the wall less its start, and
   it files among the replayed stamps rather than in the wall's bucket.
 
-- **With newspack-nodes 2.79.1 a `:config` verb on `Request_Builder` or
+- **With newspack-nodes 2.79.1 a `:config` command on `Request_Builder` or
   `Flame_Builder` demands MANAGE.** A script or hub that sends one to a worker
   under a READ or TUNE session is refused `permission denied: manage capability
   required`; send it under a manage session or the site's own signature. A
-  service CI verb refused by role no longer appears as a dispatch span.
+  service CI command refused by role no longer appears as a dispatch span.
 
 ## 0.111.1
 
@@ -755,10 +755,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 - **Release newspack-nodes 2.77.0, this plugin's 0.111.0 and
   newspack-intelligence 0.12.0 together, and deploy them together.** The
-  substrate now binds every verb's arguments against the `args` its schema
+  substrate now binds every command's arguments against the `args` its schema
   declares and hands the handler them by name, and every handler here reads
   them by name, so every order of updating one plugin at a time fails:
-  - nodes alone — 0.110.0's `performance` verbs (`overview`, `urls`,
+  - nodes alone — 0.110.0's `performance` commands (`overview`, `urls`,
     `dump_url`, `url_breakdown`, `search_requests`, `grep_requests`,
     `dump_request`, `ask`, `set`) and `rules delete` answer
     `Call to undefined method Newspack_Nodes\Command_Args::parse()` or
@@ -767,13 +767,13 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
     gyroscope's in-flight snapshots stop.
   - this plugin alone — its 2.77.0 substrate floor fails
     against nodes 2.76.0, and it stays dormant behind its admin notice, its
-    verbs and workers down.
+    commands and workers down.
 
   Put all three zips on the host, then restart the workers once.
 
-- **Every verb argument binds by position or by name, and the binder
-  refuses what the verb does not declare.** A client may name any arg,
-  `--hash=<h>` as well as `<h>`. An option a verb does not declare, a token
+- **Every command argument binds by position or by name, and the binder
+  refuses what the command does not declare.** A client may name any arg,
+  `--hash=<h>` as well as `<h>`. An option a command does not declare, a token
   past the last arg, a missing or blank required arg and a `bool` outside
   `1/true/yes/on/0/false/no/off` are refused where they were ignored or
   coerced, as `unknown option --<name>; this verb takes --<a>, --<b>`,
@@ -783,7 +783,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   '<token>'`. `rid required`, `pattern required` for a missing pattern,
   `descriptor required`, `option required`, `id required` and `usage:
   configure_stats` are gone; match the binder's wording. An MCP tool call
-  naming an argument its verb does not declare answers a tool error.
+  naming an argument its command does not declare answers a tool error.
 
 - **`ask` declares `context` second.** Its args are `descriptor`, `context`
   (every descriptor after the first, or `--context=` repeated), `server`,
@@ -891,7 +891,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   set_aggregate_target, set_url_target, set_url_fine_target`.
   Add, ahead of it, `set_aggregate_target flame-stats:aggregate`,
   `set_url_target flame-stats:url` and `set_url_fine_target
-  flame-stats:url-fine`, as `flame-builder.tsl` does. Each verb refuses any
+  flame-stats:url-fine`, as `flame-builder.tsl` does. Each command refuses any
   other name.
 
 ## 0.109.0
@@ -900,7 +900,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   needs `pdo_sqlite`.** The stats live in three SQLite Tables
   `flame-builder.tsl` declares; without the extension `flame-builder`,
   `performance` and `complete` refuse to load, naming the Table that cannot
-  open, and the `performance` verbs answer no stats.
+  open, and the `performance` commands answer no stats.
 
 - **Stats start empty and need no flush.** The Tables are new
   files, so memcache's stats are not carried over, and they fill as traffic
@@ -950,7 +950,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `<site-data>` … `</site-data>`, because a tool returns recorded site traffic
   and part of it is written by the site's visitors. A client that
   `json_decode`s the `text` block strips the fence first — the first and last
-  lines — and a client that read a verb's string reply as plain text reads a
+  lines — and a client that read a command's string reply as plain text reads a
   JSON string. Every `<` and `>` in the payload arrives as `\u003C` / `\u003E`,
   which is what stops a payload closing the fence. An `isError` result is the
   site's own message and is not fenced. `initialize`'s `instructions` field
@@ -978,7 +978,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 ## 0.96.0
 
 - **The substrate floor RISES with this release.** The dashboards send the
-  substrate's renamed verbs (`raw-logs dump_log`, `workers dump_cleanup`,
+  substrate's renamed commands (`raw-logs dump_log`, `workers dump_cleanup`,
   `aggregator list_servers`, `topologies dump`), and the current-request tab
   registers on the substrate's `newspack_nodes/station_tab_bundles` filter and
   reads `Admin::overlay_pages()`, so this plugin needs the substrate release
@@ -998,10 +998,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `'dump'`; [`useRulesGraph`](../src/rules/useRulesGraph.js) returns the re-read callback as `dump()` rather
   than `list()`; an MCP client calls `dump_rules`.
 
-- **Five `performance` verbs are RENAMED verb first: `request_search` is
+- **Five `performance` commands are RENAMED verb first: `request_search` is
   `search_requests`, `request_grep` is `grep_requests`, `request_detail` is
   `dump_request`, `url_detail` is `dump_url`, and `hooks_registered` is
-  `list_hooks`.** The substrate's builtins set the grammar (`list_nodes`,
+  `list_hooks`.** The substrate's own commands set the grammar (`list_nodes`,
   `dump_node`, `make_node`, `set_sink`), and a query with no verb is a plain
   noun (`overview`, `urls`, `summary`); a name with the noun first, or two
   nouns and no verb, reads as neither. Each old name is refused as

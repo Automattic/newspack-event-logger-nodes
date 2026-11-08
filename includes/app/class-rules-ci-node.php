@@ -5,10 +5,10 @@
  * `newspack-event-logger-nodes.php` mounts this as the `rules` node on the
  * substrate's `newspack_nodes/request_graph_ready` action, beside the
  * `discovery` and `performance` service CIs. The `src/rules` editor, mounted
- * into the settings page's Logging Rules section, drives all five verbs —
+ * into the settings page's Logging Rules section, drives all five commands —
  * dump, save, upsert, delete, reset.
  *
- * Every verb goes through `Rule_Set`, so the inline/pointer tiering and the
+ * Every command goes through `Rule_Set`, so the inline/pointer tiering and the
  * orphan reconcile in `Rule_Set::save()` hold for an editor write exactly as
  * they do for the config seed. A raw `update_option()` here would store the
  * list without writing a heavy rule's hooks option or sweeping the options a
@@ -37,9 +37,9 @@ use Newspack_Nodes\Service_CI_Node;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * The `rules` service CI: five verbs over one `Rule_Set`.
+ * The `rules` service CI: five commands over one `Rule_Set`.
  *
- * Verbs are declared once in `node_schema()`, and the inherited
+ * Commands are declared once in `node_schema()`, and the inherited
  * `Service_CI_Node` constructor builds the dispatch table from that
  * declaration, so this class needs no constructor of its own.
  */
@@ -106,7 +106,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Declare the `rules` CI: its category, description, and the five verbs
+	 * Declare the `rules` CI: its category, description, and the five commands
 	 * with their capability roles, argument lists and handlers.
 	 *
 	 * The `capability` key is the whole gate: `dispatch()` refuses a caller

@@ -45,7 +45,7 @@ import { SUBJECT_PARAMS } from '../detailSubject';
 /**
  * The picker's state, held once for the whole dashboard.
  *
- * A pick sends its descriptor chain to the `performance` CI's `ask` verb, which
+ * A pick sends its descriptor chain to the `performance` CI's `ask` command, which
  * assembles the brief. Nothing is shaped here; <AskPanel> renders what arrives.
  *
  * Every ask carries the dashboard's server filter, and the assembler applies it

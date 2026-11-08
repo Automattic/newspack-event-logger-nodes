@@ -362,7 +362,7 @@ test( 'every filter the reply echoes reaches the facts, include_workers first', 
 } );
 
 test( 'before the first reply the filters read as absent, not as defaults', () => {
-	// ADR-15: the `urls` verb owns every URL-set fact, and the filters are
+	// ADR-15: the `urls` command owns every URL-set fact, and the filters are
 	// one — it echoes the set it applied. A client-side default table is a
 	// second copy of that contract, and publishing it before the first reply
 	// states an unconfirmed filter state: the plausible-default twin

@@ -216,7 +216,7 @@ final class OverviewPrefetchTickTest extends TestCase {
 		$this->assertSame( [ (string) $interval ], $this->prefetch_tick( '0', $interval, self::BUILT_AT )->arguments() );
 	}
 
-	/** The shipped line names no interval, so the one it runs is the default the verbs describe. */
+	/** The shipped line names no interval, so the one it runs is the default the commands describe. */
 	public function test_the_shipped_line_runs_the_default_interval(): void {
 		$tsl = (string) \file_get_contents( \dirname( __DIR__, 2 ) . '/topologies/stats-builder.tsl.php' );
 

@@ -1,7 +1,7 @@
 <?php
 /**
  * Url_Snapshot: the URL table of the window's buckets, built whole by the
- * overview-prefetch job and read by the verbs until it expires.
+ * overview-prefetch job and read by the commands until it expires.
  *
  * One SQLite file, `{base}/tables/flame-facts.job.sqlite`, holds a `servers`
  * table naming each server by an id assigned in name order; a `urls` table
@@ -12,7 +12,7 @@
  * of both worker and visitor shapes, each URL measure folded over its URLs,
  * `views` naming the view that reads it, `shapes` counting the URLs, and
  * `hash` and `path` naming the one where there is one, its rowids in hash
- * order and indexed for each sort the `urls` verb takes once site-wide and
+ * order and indexed for each sort the `urls` command takes once site-wide and
  * once led by the server, a nullable sort's null-last ranking taking a
  * second pair;
  * `urls_page` seeking a page's URLs; a `totals` table of one row per view
@@ -20,7 +20,7 @@
  * built and expires. The substrate publishes it whole under `NAME` and
  * opens it `immutable` (ADR-35), so a reader never sees a half-built file.
  *
- * The verbs name a server by its name, a page and a URL by their hashes,
+ * The commands name a server by its name, a page and a URL by their hashes,
  * and a listing answers each; the ids stay inside the file.
  *
  * A worker URL is a property of the URL, so the default view keeps the rows

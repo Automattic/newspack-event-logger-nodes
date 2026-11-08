@@ -12,7 +12,7 @@
  *
  * overview, urls and the two charts are POLLED (on the Timer, live args via
  * the getters); the URL modal's three slices and dump_request are ON-DEMAND
- * (modal-open → fetch). The verbs a
+ * (modal-open → fetch). The commands a
  * click drives are NOT here — they live beside the state their replies set, and
  * are covered where they live.
  */
@@ -81,7 +81,7 @@ function installWire( payloadByVerb = {}, opts = {} ) {
 // An ask made outside a Router tick leaves on the next task, on either clock.
 const nextTask = () => act( oneTask );
 
-// Every verb here rides the router tick, so a dispatch takes a second rather
+// Every command here rides the router tick, so a dispatch takes a second rather
 // than a microtask; jest's 5s default is not enough for a test that awaits
 // more than a couple of them.
 jest.setTimeout( 20000 );
@@ -100,7 +100,7 @@ beforeEach( () => {
 // test's registry.
 afterEach( () => cleanupMounts() );
 
-function findVerb( batches, verb ) {
+function findCommand( batches, verb ) {
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
 			if ( m[ VALUE ]?.name === verb ) {
@@ -111,7 +111,7 @@ function findVerb( batches, verb ) {
 	return null;
 }
 
-function countVerbs( batches, verb ) {
+function countCommands( batches, verb ) {
 	let count = 0;
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
@@ -275,7 +275,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 	} );
 
-	// The on-demand verbs live beside the state their replies set, so this
+	// The on-demand commands live beside the state their replies set, so this
 	// hook hands back the one callback that is genuinely its own.
 	test( 'returns handleUrlParamsChange and nothing else', () => {
 		installWire();
@@ -291,10 +291,10 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		const wire = installWire();
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
-		const overview = findVerb( wire.batches, 'overview' );
+		const overview = findCommand( wire.batches, 'overview' );
 		expect( overview ).toBeTruthy();
 		expect( overview[ TO ] ).toBe( 'performance' );
-		const urls = findVerb( wire.batches, 'urls' );
+		const urls = findCommand( wire.batches, 'urls' );
 		expect( urls ).toBeTruthy();
 	} );
 
@@ -404,11 +404,11 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			initialProps: {},
 		} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'overview' );
+		const before = countCommands( wire.batches, 'overview' );
 		await act( async () => {
 			rerender( { serverFilter: 'web2' } );
 		} );
-		expect( countVerbs( wire.batches, 'overview' ) ).toBeGreaterThan(
+		expect( countCommands( wire.batches, 'overview' ) ).toBeGreaterThan(
 			before
 		);
 	} );
@@ -446,7 +446,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			createElement( Page, { serverFilter: '', offset: 200 } )
 		);
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'urls' );
+		const before = countCommands( wire.batches, 'urls' );
 
 		await act( async () => {
 			rerender(
@@ -486,7 +486,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		} );
 		await nextTask();
 
-		expect( countVerbs( wire.batches, 'overview' ) ).toBe( 0 );
+		expect( countCommands( wire.batches, 'overview' ) ).toBe( 0 );
 	} );
 } );
 
@@ -530,7 +530,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		await act( async () => {
 			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
-		const detail = findVerb( wire.batches, 'dump_url' );
+		const detail = findCommand( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
 		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( '--url=abc' );
 		const view = Core.node( 'url-detail:view' );
@@ -554,7 +554,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 			rerender( { selectedRequest: 'r1' } );
 		} );
 
-		const req = findVerb( wire.batches, 'dump_request' );
+		const req = findCommand( wire.batches, 'dump_request' );
 		expect( req[ FROM ] ).toBe( 'request-detail:in' );
 		expect( req[ FROM ] ).not.toBe( 'request-detail:view' );
 
@@ -626,7 +626,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 			Core.node( ROUTER ).fireCb();
 		} );
 
-		expect( countVerbs( wire.batches, 'dump_request' ) ).toBe( 1 );
+		expect( countCommands( wire.batches, 'dump_request' ) ).toBe( 1 );
 		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
 			rid: 'kea4471',
 		} );
@@ -710,7 +710,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		await act( async () => {
 			rerender( { selectedRequest: 'rid-ruru-6630' } );
 		} );
-		const req = findVerb( wire.batches, 'dump_request' );
+		const req = findCommand( wire.batches, 'dump_request' );
 		expect( req ).toBeTruthy();
 		expect( req[ VALUE ].arguments ).toEqual( [ 'rid-ruru-6630' ] );
 	} );
@@ -803,7 +803,7 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'urls' );
+		const before = countCommands( wire.batches, 'urls' );
 		api.handleUrlParamsChange( {
 			search: 'x',
 			sort: 'count',
@@ -813,10 +813,10 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		jest.advanceTimersByTime( 299 );
 		// Past the task an undebounced ask would have left in.
 		await nextTask();
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
+		expect( countCommands( wire.batches, 'urls' ) ).toBe( before );
 		jest.advanceTimersByTime( 1 );
 		await nextTask();
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		expect( countCommands( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -867,7 +867,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		);
 		await act( async () => {} );
 
-		const urls = findVerb( wire.batches, 'urls' );
+		const urls = findCommand( wire.batches, 'urls' );
 		expect( options( urls[ VALUE ].arguments, 'filter' ) ).toEqual( [
 			'status_class=5',
 			'country=Kiribati',
@@ -887,7 +887,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 
 		expect(
 			options(
-				findVerb( wire.batches, 'urls' )[ VALUE ].arguments,
+				findCommand( wire.batches, 'urls' )[ VALUE ].arguments,
 				'filter'
 			)
 		).toEqual( [] );
@@ -971,7 +971,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 			} );
 		} );
 
-		const opened = findVerb( wire.batches, 'dump_url' );
+		const opened = findCommand( wire.batches, 'dump_url' );
 		expect( positional( opened[ VALUE ].arguments ) ).toEqual( [] );
 		expect( option( opened[ VALUE ].arguments, 'url' ) ).toBe( 'beef5512' );
 		expect( options( opened[ VALUE ].arguments, 'filter' ) ).toEqual( [
@@ -985,7 +985,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		} );
 		expect(
 			options(
-				findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments,
+				findCommand( wire.batches, 'dump_url' )[ VALUE ].arguments,
 				'filter'
 			)
 		).toEqual( [ 'status_class=5', 'country=Kiribati' ] );
@@ -1021,7 +1021,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				);
 		expect( from( 'url-chart:in' ) ).toHaveLength( 1 );
 		expect( from( 'url-categories:in' ) ).toHaveLength( 1 );
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( 1 );
 	} );
 
 	test( 'a bucket change asks the list alone, and a dimension change the chart alone', async () => {
@@ -1048,7 +1048,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 			} );
 		} );
 		await nextTask();
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( 1 );
 		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
 
 		wire.batches.length = 0;
@@ -1061,7 +1061,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 			} );
 		} );
 		await nextTask();
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 0 );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( 0 );
 		expect(
 			positional(
 				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments
@@ -1108,7 +1108,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 
 		expect(
 			options(
-				findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments,
+				findCommand( wire.batches, 'dump_url' )[ VALUE ].arguments,
 				'filter'
 			)
 		).toEqual( [ 'status_class=Unknown' ] );
@@ -1238,7 +1238,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 			} );
 		} );
 		await nextTask();
-		const opened = findVerb( wire.batches, 'dump_url' );
+		const opened = findCommand( wire.batches, 'dump_url' );
 		expect( option( opened[ VALUE ].arguments, 'bucket' ) ).toBe(
 			'2026-10-04-13-35'
 		);
@@ -1254,14 +1254,14 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 			} );
 		} );
 		await nextTask();
-		const moved = findVerb( wire.batches, 'dump_url' );
+		const moved = findCommand( wire.batches, 'dump_url' );
 		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
 
 		wire.batches.length = 0;
 		await act( async () => {
 			refreshTick();
 		} );
-		const refreshed = findVerb( wire.batches, 'dump_url' );
+		const refreshed = findCommand( wire.batches, 'dump_url' );
 		expect( option( refreshed[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
 	} );
 } );
@@ -1313,7 +1313,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			refreshTick();
 		} );
-		const detail = findVerb( wire.batches, 'dump_url' );
+		const detail = findCommand( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
 		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( '--url=abc' );
 	} );
@@ -1334,7 +1334,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			} );
 		} );
 
-		const opened = findVerb( wire.batches, 'dump_url' );
+		const opened = findCommand( wire.batches, 'dump_url' );
 		expect( opened[ FROM ] ).toBe( 'url-detail:in' );
 		// Answered, so nothing stands and the next tick mints the refresh.
 		expect( Core.node( 'url-detail:fetch' ).outbox ).toEqual( [] );
@@ -1425,7 +1425,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
 		// A held poll leaves the visible page stale, so release refreshes it.
-		expect( findVerb( wire.batches, 'overview' ) ).toBeTruthy();
+		expect( findCommand( wire.batches, 'overview' ) ).toBeTruthy();
 	} );
 
 	test( 'closing the last detail modal immediately re-fetches overview + urls (performance:timer was paused)', async () => {
@@ -1446,8 +1446,8 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( { selectedSubject: null } );
 		} );
-		expect( findVerb( wire.batches, 'overview' ) ).toBeTruthy();
-		expect( findVerb( wire.batches, 'urls' ) ).toBeTruthy();
+		expect( findCommand( wire.batches, 'overview' ) ).toBeTruthy();
+		expect( findCommand( wire.batches, 'urls' ) ).toBeTruthy();
 	} );
 
 	test( 'a hidden tab stops the url-detail:timer; returning to visible re-arms it', async () => {
@@ -1491,9 +1491,9 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		await act( async () => setVisibility( 'visible' ) );
 
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( 1 );
 		expect(
-			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments[ 0 ]
+			findCommand( wire.batches, 'dump_url' )[ VALUE ].arguments[ 0 ]
 		).toBe( '--url=abc' );
 	} );
 
@@ -1521,7 +1521,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		expect( Core.node( 'url-detail:timer' ).interval_ms ).toBe( 60000 );
 		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBeLessThanOrEqual(
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBeLessThanOrEqual(
 			1
 		);
 	} );
@@ -1548,7 +1548,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 		expect( Core.node( 'url-detail:timer' ).interval_ms ).toBe( 120000 );
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 0 );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( 0 );
 	} );
 
 	test( 'closing the URL modal stops the url-detail:timer', async () => {
@@ -1613,7 +1613,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			} )
 		);
 		await act( async () => {} );
-		const overview = findVerb( wire.batches, 'overview' );
+		const overview = findCommand( wire.batches, 'overview' );
 		expect( overview[ VALUE ].arguments ).toEqual( [
 			'--server=ruru.example',
 		] );
@@ -1633,7 +1633,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			} )
 		);
 		await act( async () => {} );
-		const detail = findVerb( wire.batches, 'dump_url' );
+		const detail = findCommand( wire.batches, 'dump_url' );
 		expect( option( detail[ VALUE ].arguments, 'server' ) ).toBe(
 			'alpha.example'
 		);
@@ -1642,13 +1642,13 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 	test( 'the selected server is emitted in the urls args', async () => {
 		// The URL table is what the Overview header counts, so the two have
 		// to be asking the same question: a server the header is scoped to must
-		// reach the `urls` verb as well as `overview`.
+		// reach the `urls` command as well as `overview`.
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		renderHook( () =>
 			usePerformanceGraph( { serverFilter: 'alpha.example' } )
 		);
 		await act( async () => {} );
-		const urls = findVerb( wire.batches, 'urls' );
+		const urls = findCommand( wire.batches, 'urls' );
 		expect( option( urls[ VALUE ].arguments, 'server' ) ).toBe(
 			'alpha.example'
 		);
@@ -1658,7 +1658,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'urls' );
+		const before = countCommands( wire.batches, 'urls' );
 		await act( async () => {
 			getApi().handleUrlParamsChange( {
 				search: '',
@@ -1669,7 +1669,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		} );
 		await nextTask();
 		// A non-search change fetches immediately (no debounce).
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		expect( countCommands( wire.batches, 'urls' ) ).toBe( before + 1 );
 		const urls = wire.batches
 			.flat()
 			.reverse()
@@ -1681,7 +1681,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'urls' );
+		const before = countCommands( wire.batches, 'urls' );
 		await act( async () => {
 			getApi().handleUrlParamsChange( {
 				search: '',
@@ -1693,7 +1693,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			} );
 		} );
 		await nextTask();
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
+		expect( countCommands( wire.batches, 'urls' ) ).toBe( before );
 	} );
 
 	test( 'a second search change clears the first pending debounce timer', async () => {
@@ -1701,7 +1701,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'urls' );
+		const before = countCommands( wire.batches, 'urls' );
 		getApi().handleUrlParamsChange( {
 			search: 'a',
 			sort: 'count',
@@ -1718,7 +1718,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		jest.advanceTimersByTime( 300 );
 		await nextTask();
 		// Exactly one fetch despite two changes — the first was cancelled.
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		expect( countCommands( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -1731,14 +1731,14 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			initialProps: {},
 		} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'dump_url' );
+		const before = countCommands( wire.batches, 'dump_url' );
 		await act( async () => {
 			rerender( {
 				selectedSubject: { field: 'url', hash: 'NOT-HEX!' },
 			} );
 		} );
 		await nextTask();
-		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( before );
+		expect( countCommands( wire.batches, 'dump_url' ) ).toBe( before );
 		expect( Core.node( 'url-detail:view' ).view.error ).toBe(
 			'Invalid URL hash format'
 		);
@@ -1756,7 +1756,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			} );
 		} );
 		await nextTask();
-		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
+		expect( findCommand( wire.batches, 'dump_request' ) ).toBeNull();
 		expect( Core.node( 'request-detail:view' ).view.error ).toBe(
 			'Invalid request ID format'
 		);
@@ -1876,7 +1876,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			refreshTick();
 		} );
-		const refreshed = findVerb( wire.batches, 'dump_url' );
+		const refreshed = findCommand( wire.batches, 'dump_url' );
 		expect( refreshed[ VALUE ].arguments ).toEqual( [ '--url=f00d9921' ] );
 	} );
 
@@ -2012,7 +2012,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments
 			)
 		).toEqual( [ 'requests', 'bucket', 'ja4' ] );
-		expect( findVerb( wire.batches, 'overview' ) ).toBeNull();
+		expect( findCommand( wire.batches, 'overview' ) ).toBeNull();
 		expect( queryFrom( wire.batches, 'categories:in' ) ).toBeNull();
 
 		wire.batches.length = 0;
@@ -2054,7 +2054,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		} );
 
 		expect(
-			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments
+			findCommand( wire.batches, 'dump_url' )[ VALUE ].arguments
 		).toEqual( [
 			'--page=feed5a1e9902',
 			'--server=hoiho-9902.example',
@@ -2106,7 +2106,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await nextTask();
 
 		expect(
-			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments
+			findCommand( wire.batches, 'dump_url' )[ VALUE ].arguments
 		).toEqual( [ '--page=feed5a1e9903' ] );
 	} );
 
@@ -2154,7 +2154,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			refreshTick();
 		} );
-		expect( findVerb( wire.batches, 'dump_url' ) ).toBeTruthy();
+		expect( findCommand( wire.batches, 'dump_url' ) ).toBeTruthy();
 		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeTruthy();
 		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeTruthy();
 	} );
@@ -2195,7 +2195,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments
 			)
 		).toEqual( [ 'requests', 'bucket', 'ja4' ] );
-		expect( findVerb( wire.batches, 'dump_url' ) ).toBeNull();
+		expect( findCommand( wire.batches, 'dump_url' ) ).toBeNull();
 		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
 	} );
 
@@ -2217,7 +2217,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		} );
 		await nextTask();
 
-		expect( findVerb( wire.batches, 'dump_url' ) ).toBeTruthy();
+		expect( findCommand( wire.batches, 'dump_url' ) ).toBeTruthy();
 		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
 		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
 	} );
@@ -2260,7 +2260,7 @@ describe( 'usePerformanceGraph — the stored answers', () => {
 							verb === m[ VALUE ]?.name &&
 							source === m[ VALUE ].arguments[ 0 ]
 					)
-			: findVerb( wire.batches, verb );
+			: findCommand( wire.batches, verb );
 		return { verb, tokens: sent?.[ VALUE ].arguments };
 	};
 
@@ -2707,7 +2707,7 @@ describe( 'usePerformanceGraph — a url-detail tick with no session', () => {
 		} );
 		await nextTask();
 
-		const asked = findVerb( wire.batches, 'dump_url' );
+		const asked = findCommand( wire.batches, 'dump_url' );
 		expect( asked ).toBeTruthy();
 		expect( asked[ VALUE ].arguments[ 0 ] ).toBe( '--url=b7e3c9a104d2' );
 	} );

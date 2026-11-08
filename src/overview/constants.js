@@ -191,7 +191,7 @@ export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
  * The fields a filter chip may name: every one but `server`, each saying
  * whether the box suggests it. The Server
  * select is the one place a server is chosen, and the `urls`, `dump_url` and
- * `ask` verbs refuse a `server=` filter as `--server`'s, so a chip on it
+ * `ask` commands refuse a `server=` filter as `--server`'s, so a chip on it
  * would refuse the table the chart's chips ride.
  */
 export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
@@ -335,6 +335,6 @@ export const shapesSubject = ( page ) => `shapes:${ pageKey( page ) }`;
 
 /**
  * The shapes one ask for an expanded page lists: `Stats_Query::MAX_LIMIT`,
- * the most the `urls` verb answers at once.
+ * the most the `urls` command answers at once.
  */
 export const SHAPES_PER_ASK = 1000;

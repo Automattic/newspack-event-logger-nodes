@@ -1,6 +1,6 @@
 <?php
 /**
- * DiscoveryCITest: unit tests for Discovery_CI_Node, whose `get` verb reports
+ * DiscoveryCITest: unit tests for Discovery_CI_Node, whose `get` command reports
  * the hooks this spoke's `$wp_filter` holds callbacks on — never the ruleset,
  * which on a spoke is the one the hub pushed. Config is seeded via the
  * per-test config file pattern from `TestCase::use_base_dir()` so the
@@ -15,7 +15,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\App\Discovery_CI_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 #[CoversClass( Discovery_CI_Node::class )]
@@ -27,8 +27,8 @@ class DiscoveryCITest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		// Service CI verbs are gate-by-default (manage_options) in the substrate;
-		// these happy-path verbs run as an authorized admin (deny-path is its own test).
+		// Service CI commands are gate-by-default (manage_options) in the substrate;
+		// these happy-path commands run as an authorized admin (deny-path is its own test).
 		$GLOBALS['_current_user_can'] = true;
 		$GLOBALS['_wp_options']       = [];
 		// /tmp directly to dodge symlink-resolved sys_get_temp_dir on macOS,
@@ -40,7 +40,7 @@ class DiscoveryCITest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		$GLOBALS['wp_filter']   = $this->saved_wp_filter;
 		$GLOBALS['_wp_options'] = [];
 		$this->rmdir_recursive( $this->tmp );
@@ -65,7 +65,7 @@ class DiscoveryCITest extends TestCase {
 		] );
 		$wp_filter = [ 'zeta_publisher_plugin_hook' => self::hook_with_callback() ];
 
-		$result = VerbHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
+		$result = CommandHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
 
 		$this->assertSame( [ 'registered_hooks' => [ 'zeta_publisher_plugin_hook' ] ], $result );
 	}
@@ -77,7 +77,7 @@ class DiscoveryCITest extends TestCase {
 			'zeta_live_hook'    => self::hook_with_callback(),
 		];
 
-		$result = VerbHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
+		$result = CommandHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
 
 		$this->assertSame( [ 'zeta_live_hook' ], $result['registered_hooks'] );
 	}
@@ -90,7 +90,7 @@ class DiscoveryCITest extends TestCase {
 			'zeta_publisher_plugin_hook'              => self::hook_with_callback(),
 		];
 
-		$result = VerbHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
+		$result = CommandHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
 
 		$this->assertSame( [ 'zeta_publisher_plugin_hook' ], $result['registered_hooks'] );
 	}
@@ -99,7 +99,7 @@ class DiscoveryCITest extends TestCase {
 		global $wp_filter;
 		$wp_filter = [ '4417' => self::hook_with_callback() ];
 
-		$result = VerbHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
+		$result = CommandHarness::fire( new Discovery_CI_Node(), 'discovery', 'get' );
 
 		$this->assertSame( [ '4417' ], $result['registered_hooks'] );
 	}
@@ -113,7 +113,7 @@ class DiscoveryCITest extends TestCase {
 		);
 	}
 
-	public function test_node_schema_declares_get_verb_with_category(): void {
+	public function test_node_schema_declares_get_command_with_category(): void {
 		$schema = Discovery_CI_Node::node_schema();
 
 		$this->assertIsArray( $schema );

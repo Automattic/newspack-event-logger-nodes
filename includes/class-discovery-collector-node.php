@@ -80,7 +80,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	/**
 	 * Reply handler: fold one spoke's discovery payload into the hub's options.
 	 *
-	 * Gates on an array VALUE carrying the verb result under VALUE['payload'] —
+	 * Gates on an array VALUE carrying the command result under VALUE['payload'] —
 	 * the reply envelope Command_Interpreter_Node mints — and ignores anything
 	 * else, TYPE included. The merge is monotonic and idempotent, so
 	 * out-of-order or partial replies converge to the same union.
@@ -209,7 +209,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * Topology console manifest: the palette entry and the constructor panel,
 	 * where the interval is positional through arguments().
 	 *
-	 * The verb list is empty because the cadence is the only thing to set; a
+	 * The command list is empty because the cadence is the only thing to set; a
 	 * sweep is for the timer to schedule, not for an operator to force.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.

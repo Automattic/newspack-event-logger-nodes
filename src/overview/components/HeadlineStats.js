@@ -99,7 +99,7 @@ export function headlineStats( totals, keys ) {
 }
 
 /**
- * The headline numbers for a URL set, as the `urls` verb totals it. They
+ * The headline numbers for a URL set, as the `urls` command totals it. They
  * describe the set the filters selected, the same set the table below lists,
  * so they come from one payload rather than from whichever source happens
  * to hold each figure. Every count is exact, the unique URLs among them.

@@ -564,7 +564,7 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.ph
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/NodeLogPrefixTestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTicks.php';
-require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/VerbHarness.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CommandHarness.php';
 // The substrate's in-memory `\Memcached` subclass — shared so ELN tests can
 // seed `Core::$memd` deterministically without a real memcache server.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMemcached.php';
@@ -625,6 +625,6 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/FactsSeeder.php';
 require_once __DIR__ . '/Helpers/StatsAskRecorderNode.php';
-require_once __DIR__ . '/Helpers/VerbHarness.php';
+require_once __DIR__ . '/Helpers/CommandHarness.php';
 require_once __DIR__ . '/Helpers/TopologyLockHarness.php';
 require_once __DIR__ . '/Helpers/RedirectException.php';

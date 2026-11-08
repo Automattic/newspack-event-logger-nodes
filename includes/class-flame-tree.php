@@ -46,7 +46,7 @@ final class Flame_Tree {
 	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
 	public const HOOK_SUFFIX = ' hook';
 
-	/** What `Diagnostics_Bridge` appends to `<class> <verb>` to name a verb's span. */
+	/** What `Diagnostics_Bridge` appends to `<class> <verb>` to name a command's span. */
 	public const COMMAND_SUFFIX = ' command';
 
 	/**
@@ -112,7 +112,7 @@ final class Flame_Tree {
 	 * builder's sweep runs a flush and so holds every other flush span, and
 	 * takes Event Logger Shutdown; the snapshot build holds its steps, and
 	 * takes Event Logger Snapshot. The performance readers' reads nest inside
-	 * a verb's command span or a prefetch answer, and take Event Logger
+	 * a command's span or a prefetch answer, and take Event Logger
 	 * Reads. All four are this plugin's own categories, described and
 	 * pattern-free like `Other`, so a third-party hook category's colour
 	 * never moves a platform span.
@@ -616,7 +616,7 @@ final class Flame_Tree {
 	/**
 	 * Whether a rule names a span — a hook, a transport or a custom event —
 	 * so its `l` label names what a repeat is judged by. A plugin load, a
-	 * command verb, a Query Monitor timer and the plugin's own work are
+	 * command, a Query Monitor timer and the plugin's own work are
 	 * logged whatever the rule says, and a listener only because its hook is
 	 * significant.
 	 *
@@ -633,7 +633,7 @@ final class Flame_Tree {
 	 * and prose crediting it with any sends the reader hunting a callback
 	 * that does not exist. A query or HTTP span is the logger's own
 	 * measurement, a plugin span is one plugin file's load, a command span is
-	 * the frame of one verb, and an upkeep span is the plugin's own work;
+	 * the frame of one command, and an upkeep span is the plugin's own work;
 	 * the last three are logged whatever the rule says, and calling any of
 	 * these a custom event proposes a rule edit that changes nothing. A `qm`
 	 * span is a Query Monitor timer, written on every logged request whatever

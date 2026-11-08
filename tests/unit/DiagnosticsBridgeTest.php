@@ -1,7 +1,7 @@
 <?php
 /**
- * Tests for Diagnostics_Bridge — the verb wrapper that opens each dispatched
- * verb's span, and the listener that carries substrate
+ * Tests for Diagnostics_Bridge — the command wrapper that opens each dispatched
+ * command's span, and the listener that carries substrate
  * `newspack_nodes/stderr` lines into the firehose / Error Log.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -88,7 +88,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/errors.p0' );
 	}
 
-	// ── verb spans ────────────────────────────────────────────────────────────
+	// ── command spans ─────────────────────────────────────────────────────────
 
 	/** A bare interpreter, named as a topology names one. */
 	private static function interpreter( string $name, ?\Newspack_Nodes\Node $patron = null ): Command_Interpreter_Node {
@@ -100,13 +100,13 @@ class DiagnosticsBridgeTest extends TestCase {
 		return $ci;
 	}
 
-	/** One verb run through the wrapper with no wrapper before it. */
+	/** One command run through the wrapper with no wrapper before it. */
 	private static function wrapped( Command_Interpreter_Node $ci, string $verb, \Closure $run, ?string $command = null ): mixed {
 		return Diagnostics_Bridge::around_dispatch( null )( $ci, $verb, $run, static fn (): string => $command ?? "/{$ci->name()}> {$verb}" );
 	}
 
 	/**
-	 * The one `(start)` line a verb span wrote.
+	 * The one `(start)` line a command span wrote.
 	 *
 	 * @return array<string,mixed>
 	 */
@@ -116,12 +116,12 @@ class DiagnosticsBridgeTest extends TestCase {
 		return $start[0];
 	}
 
-	public function test_a_verb_is_one_span_named_for_its_class_with_the_node_in_start(): void {
+	public function test_a_command_is_one_span_named_for_its_class_with_the_node_in_start(): void {
 		$lm     = $this->started_log_manager();
 		$result = self::wrapped( self::interpreter( 'wombat-ci' ), 'probe7731', static fn (): array => [ 'rows' => 7731 ], '/wombat-ci> probe7731 --kea=7731' );
 		$lm->finish();
 
-		$this->assertSame( [ 'rows' => 7731 ], $result, 'the verb\'s result passes through' );
+		$this->assertSame( [ 'rows' => 7731 ], $result, 'the command\'s result passes through' );
 		$entries = self::firehose_entries( self::test_dir() );
 		$start   = self::entries_of( $entries, 'Command_Interpreter probe7731 command (start)' );
 		$done    = self::entries_of( $entries, 'Command_Interpreter probe7731 command (complete)' );
@@ -175,10 +175,10 @@ class DiagnosticsBridgeTest extends TestCase {
 	}
 
 	/**
-	 * Logging never changes whether a verb runs: a dispatch whose arguments
+	 * Logging never changes whether a command runs: a dispatch whose arguments
 	 * are not a token list — a nested array, a keyed map — runs and is logged.
 	 */
-	public function test_a_logged_verb_runs_whatever_arguments_it_was_dispatched_with(): void {
+	public function test_a_logged_command_runs_whatever_arguments_it_was_dispatched_with(): void {
 		$lm    = $this->started_log_manager();
 		$saved = Command_Interpreter_Node::$around_dispatch;
 		try {
@@ -204,7 +204,7 @@ class DiagnosticsBridgeTest extends TestCase {
 	 * A process that logs nothing never renders the command line: every
 	 * unlogged REST call and worker-boot statement dispatches through here.
 	 */
-	public function test_a_verb_with_no_started_logger_never_renders_the_command_line(): void {
+	public function test_a_command_with_no_started_logger_never_renders_the_command_line(): void {
 		Log_Manager::reset();
 		$rendered = 0;
 		$command  = static function () use ( &$rendered ): string {
@@ -254,7 +254,7 @@ class DiagnosticsBridgeTest extends TestCase {
 	}
 
 	/**
-	 * Describe what one throwable does to the verb's span.
+	 * Describe what one throwable does to the command's span.
 	 *
 	 * @return array{0:\Throwable,1:list<array<string,mixed>>} What propagated, and the entries written.
 	 */
@@ -271,7 +271,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		return [ $caught, self::entries_of( self::firehose_entries( self::test_dir() ), 'Command_Interpreter boom7732 command (complete)' ) ];
 	}
 
-	public function test_a_throwing_verb_closes_its_span_with_what_was_thrown_and_rethrows(): void {
+	public function test_a_throwing_command_closes_its_span_with_what_was_thrown_and_rethrows(): void {
 		$thrown               = new \DomainException( 'refused 7732' );
 		[ $caught, $complete ] = $this->thrown_through( $thrown );
 
@@ -297,7 +297,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertSame( 'stop', $complete[0]['m'] );
 	}
 
-	public function test_a_verb_with_no_started_logger_writes_nothing(): void {
+	public function test_a_command_with_no_started_logger_writes_nothing(): void {
 		Log_Manager::reset();
 
 		$result = self::wrapped( self::interpreter( 'wombat-ci' ), 'probe7733', static fn (): string => 'kea-7733' );
@@ -312,7 +312,7 @@ class DiagnosticsBridgeTest extends TestCase {
 	 * logger it must not even name the span: an interpreter that throws when
 	 * asked for its patron or its name proves nothing asked.
 	 */
-	public function test_a_verb_with_no_started_logger_builds_no_label(): void {
+	public function test_a_command_with_no_started_logger_builds_no_label(): void {
 		Log_Manager::reset();
 		$ci = new class() extends Command_Interpreter_Node {
 			public function patron( ?\Newspack_Nodes\Node $node = null ): ?\Newspack_Nodes\Node {
@@ -331,7 +331,7 @@ class DiagnosticsBridgeTest extends TestCase {
 
 	/**
 	 * A wrapper assigned before this one runs INSIDE the span, and what it
-	 * returns is what the verb returns.
+	 * returns is what the command returns.
 	 */
 	public function test_a_previous_wrapper_runs_inside_the_span_and_its_result_threads_through(): void {
 		$lm       = $this->started_log_manager();
@@ -351,8 +351,8 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertLessThan( \array_search( 'Command_Interpreter probe7738 command (complete)', $categories, true ), $inner );
 	}
 
-	/** Through the substrate's own dispatch: install() wraps a real verb, and keeps the wrapper before it. */
-	public function test_install_wraps_a_dispatched_verb_around_the_wrapper_before_it(): void {
+	/** Through the substrate's own dispatch: install() wraps a real command, and keeps the wrapper before it. */
+	public function test_install_wraps_a_dispatched_command_around_the_wrapper_before_it(): void {
 		$lm    = $this->started_log_manager();
 		$saved = Command_Interpreter_Node::$around_dispatch;
 		$seen  = [];
@@ -380,7 +380,7 @@ class DiagnosticsBridgeTest extends TestCase {
 	}
 
 	/**
-	 * The substrate binds a verb's args before any wrapper runs, so a command
+	 * The substrate binds a command's args before any wrapper runs, so a command
 	 * its binding refuses leaves no span: only the fitting call is logged.
 	 */
 	public function test_a_command_its_binding_refuses_leaves_no_span(): void {
@@ -448,12 +448,12 @@ class DiagnosticsBridgeTest extends TestCase {
 	}
 
 	/**
-	 * The deferred bootstrap is the one place the verb seam is installed, so
-	 * run it: past its floor, a verb dispatched through the substrate opens
+	 * The deferred bootstrap is the one place the command seam is installed, so
+	 * run it: past its floor, a command dispatched through the substrate opens
 	 * its span, and a wrapper assigned before the bootstrap runs inside it.
 	 * Every static the body registers into is put back afterwards.
 	 */
-	public function test_the_deferred_bootstrap_spans_a_dispatched_verb_around_the_wrapper_before_it(): void {
+	public function test_the_deferred_bootstrap_spans_a_dispatched_command_around_the_wrapper_before_it(): void {
 		$lm     = $this->started_log_manager();
 		$around = Command_Interpreter_Node::$around_dispatch;
 		$uptime = '';
@@ -477,7 +477,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$start      = \array_search( 'Command_Interpreter uptime command (start)', $categories, true );
 		$sentinel   = \array_search( 'moa-7747', $categories, true );
 		$complete   = \array_search( 'Command_Interpreter uptime command (complete)', $categories, true );
-		$this->assertIsInt( $start, 'the verb opened its span' );
+		$this->assertIsInt( $start, 'the command opened its span' );
 		$this->assertIsInt( $complete, 'and closed it' );
 		$this->assertIsInt( $sentinel, 'the wrapper before the bootstrap still ran' );
 		$this->assertGreaterThan( $start, $sentinel, 'inside the span' );

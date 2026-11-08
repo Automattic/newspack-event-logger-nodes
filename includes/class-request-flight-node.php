@@ -171,7 +171,7 @@ class Request_Flight_Node extends Timer_Node {
 
 	/**
 	 * Delta mode, read live off the patron the same way the rows are — the
-	 * `set_inflight_delta` verb writes the patron's field, and this node keeps
+	 * `set_inflight_delta` command writes the patron's field, and this node keeps
 	 * no copy to fall out of step with it. Off (full per-tick re-emit) with no
 	 * `Request_Builder_Node` patron attached, which is the no-rows case anyway.
 	 *

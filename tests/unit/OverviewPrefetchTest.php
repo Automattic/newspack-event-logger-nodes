@@ -1,6 +1,6 @@
 <?php
 /**
- * OverviewPrefetchTest: the overview-prefetch job and the verbs it serves.
+ * OverviewPrefetchTest: the overview-prefetch job and the commands it serves.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -17,7 +17,7 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -63,32 +63,32 @@ final class OverviewPrefetchTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		Core::$clock = null;
 		unset( $GLOBALS['_current_user_can'] );
 		parent::tearDown();
 	}
 
 	/**
-	 * The `urls` verb's reply to `$tokens`, through the request graph.
+	 * The `urls` command's reply to `$tokens`, through the request graph.
 	 *
-	 * @param list<string> $tokens The verb's tokens.
+	 * @param list<string> $tokens The command's tokens.
 	 * @return array<string,mixed>
 	 */
 	private function urls( array $tokens ): array {
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $tokens );
+		$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $tokens );
 		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'urls returned no structure' );
 		return $reply;
 	}
 
 	/**
-	 * `overview`'s args bound from `$tokens`, as the verb binds them.
+	 * `overview`'s args bound from `$tokens`, as the command binds them.
 	 *
-	 * @param list<string> $tokens The verb's tokens.
+	 * @param list<string> $tokens The command's tokens.
 	 * @return array<array-key,mixed>
 	 */
 	private static function overview_args( array $tokens ): array {
-		return Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], $tokens );
+		return Command_Args::bind( Command_Interpreter_Node::declared_commands( Performance_CI_Node::class )['overview']['args'], $tokens );
 	}
 
 	/**
@@ -242,7 +242,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 
 		foreach ( $want as $server => $totals ) {
-			$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '' === $server ? [] : [ "--server={$server}" ] );
+			$stored = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '' === $server ? [] : [ "--server={$server}" ] );
 			$this->assertSame( $totals, \is_array( $stored ) ? $stored['totals'] : $stored, "scope '{$server}'" );
 		}
 		$this->assertSame( 2, $want['kea-7013.example']['requests'] ?? null, 'the worker request left out' );
@@ -282,7 +282,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		self::clock( self::NOW + 9 );
 
-		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$stored = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
 		$this->assertSame( [ 'ruru-7011.example', 'tui-7011.example', 'kea-7011.example' ], $live, 'busiest first, a tie by name descending' );
 		$this->assertSame( $live, \is_array( $stored ) ? $stored['servers'] : $stored );
@@ -427,7 +427,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5531/', 'ms' => 7.25, 'peak_mb' => 20.75 ], partition: 2 );
 		$this->run_job();
 		$tokens = [ '--sort=url', '--order=desc', '--limit=7', '--offset=0' ];
-		$args   = Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['urls']['args'], $tokens );
+		$args   = Command_Args::bind( Command_Interpreter_Node::declared_commands( Performance_CI_Node::class )['urls']['args'], $tokens );
 		$live   = Performance_CI_Node::answer_live( 'urls', $args, self::NOW, null );
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5531/', 'ms' => 8.5 ] );
 
@@ -585,7 +585,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 
 		$served   = $this->urls( [ '--limit=100' ] );
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
 		$this->assertSame( [ 'seed.example/moa-5537/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
@@ -602,7 +602,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::snapshot_of( [ $key => '{"kea-5541": is not json' ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
@@ -623,11 +623,11 @@ final class OverviewPrefetchTest extends TestCase {
 		\mkdir( $this->snapshot_file() );
 		$said = static fn (): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) );
 
-		$query = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=status_class=5', '--measure=count' ] );
+		$query = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=status_class=5', '--measure=count' ] );
 
 		$this->assertSame( self::NOW, \is_array( $query ) ? $query['as_of'] : $query );
 		$this->assertSame( [], $said(), 'the unstored question never opened the file' );
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 		$this->assertNotSame( [], $said(), 'the stored question opens it, so the silence above is real' );
 	}
 
@@ -642,7 +642,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6201.example', 'url' => 'https://kaka-6201.example/c/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6201.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6201.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
@@ -661,11 +661,11 @@ final class OverviewPrefetchTest extends TestCase {
 
 		foreach ( [ 'kea-7020.example', 'kaka-7020.example' ] as $server ) {
 			foreach ( [ 'server_overview', 'server_chart_by_status_class', 'server_categories' ] as $name ) {
-				$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, $server ) );
+				$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, $server ) );
 				$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, "{$name} for {$server}" );
 			}
 		}
-		$kea = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7020.example' ] );
+		$kea = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7020.example' ] );
 		$this->assertIsArray( $kea, \is_string( $kea ) ? $kea : 'overview returned no structure' );
 		$this->assertSame( 1, $kea['totals']['requests'], 'the stored totals, c unread' );
 		$this->assertSame( [ 'kea-7020.example', 'kaka-7020.example' ], $kea['servers'] );
@@ -679,7 +679,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 
 		foreach ( [ 'server_overview', 'server_chart_by_status_class', 'server_categories' ] as $name ) {
-			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, 'KEA-7022.Example' ) );
+			$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, 'KEA-7022.Example' ) );
 			$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, $name );
 		}
 	}
@@ -690,7 +690,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		$this->seed_request( [ 'server' => 'ruru-7021.example', 'url' => 'https://ruru-7021.example/b/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', self::asked_for( 'server_chart_by_status_class', 'ruru-7021.example' ) );
+		$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', self::asked_for( 'server_chart_by_status_class', 'ruru-7021.example' ) );
 
 		$this->assertSame( self::NOW + 9, \is_array( $reply ) ? $reply['as_of'] : $reply );
 	}
@@ -718,7 +718,7 @@ final class OverviewPrefetchTest extends TestCase {
 		\mkdir( $this->snapshot_file() );
 		$tokens = [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=worker=0', ...$filters, '--measure=count', '--measure=sum_ms', '--measure=sum_peak_mb', '--measure=timed' ];
 
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
+		CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
 
 		$this->assertSame( [], \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) ) );
 	}
@@ -730,7 +730,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [ '--server=kea-7023.example' ] ) ) => '{"kea-7023": is not json' ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7023.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7023.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
@@ -744,8 +744,8 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
-		$scoped   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7024.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$scoped   = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7024.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertIsArray( $scoped, \is_string( $scoped ) ? $scoped : 'overview returned no structure' );
@@ -761,7 +761,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'ruru-6206.example', 'url' => 'https://ruru-6206.example/c/', 'ms' => 4.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6206.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6206.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'ruru-6206.example', 'kea-6206.example' ], $overview['servers'], 'the scope stays on a server the job never saw' );
@@ -774,7 +774,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'ruru-6210.example', 'url' => 'https://ruru-6210.example/wp-cron.php', 'ms' => 12.5, 'worker' => 1 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6210.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6210.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( 0, $overview['totals']['requests'], 'no non-worker request' );
@@ -788,7 +788,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6208.example', 'url' => 'https://kaka-6208.example/b/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-6208.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-6208.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( 0, $overview['totals']['requests'] );
@@ -798,15 +798,15 @@ final class OverviewPrefetchTest extends TestCase {
 	/** A stored overview naming no servers keeps its own line beside a read failure. */
 	public function test_a_stored_overview_naming_no_servers_is_said_beside_a_read_failure(): void {
 		$this->seed_request( [ 'server' => 'kea-6209.example', 'url' => 'https://kea-6209.example/a/', 'ms' => 8.5 ] );
-		$verbs    = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
-		$overview = Overview_Prefetch::key( 'overview', Command_Args::bind( $verbs['overview']['args'], [] ) );
-		$chart    = Overview_Prefetch::key( 'query', Command_Args::bind( $verbs['query']['args'], Overview_Prefetch::questions()['categories']['tokens'] ) );
+		$commands = Command_Interpreter_Node::declared_commands( Performance_CI_Node::class );
+		$overview = Overview_Prefetch::key( 'overview', Command_Args::bind( $commands['overview']['args'], [] ) );
+		$chart    = Overview_Prefetch::key( 'query', Command_Args::bind( $commands['query']['args'], Overview_Prefetch::questions()['categories']['tokens'] ) );
 		self::snapshot_of( [ $overview => '{"as_of":1790007215,"available":true}', $chart => '{"kea-6209": is not json' ] );
 		self::clock( self::NOW + 9 );
 		$said = static fn ( string $text ): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, $text ) );
 
-		$query = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', Overview_Prefetch::questions()['categories']['tokens'] );
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$query = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', Overview_Prefetch::questions()['categories']['tokens'] );
+		$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
 		$this->assertSame( self::NOW + 9, \is_array( $query ) ? $query['as_of'] : $query, 'the query answered live' );
 		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'overview returned no structure' );
@@ -823,7 +823,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6207.example', 'url' => 'https://kaka-6207.example/b/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW, $overview['as_of'], 'served, dated by the job' );
@@ -836,7 +836,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6202.example', 'url' => 'https://kaka-6202.example/b/', 'ms' => 12.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6202.example', 'url' => 'https://kaka-6202.example/c/', 'ms' => 4.5 ] );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6202.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6202.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6202.example', 'kea-6202.example' ], $overview['servers'], 'busiest first, read live' );
@@ -849,7 +849,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/c/', 'ms' => 4.5 ] );
 		self::clock( self::NOW + self::TTL + 1 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6203.example', 'kea-6203.example' ], $overview['servers'] );
@@ -863,7 +863,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::snapshot_of( [ $key => '{"kea-6204": is not json' ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( [ 'kaka-6204.example', 'kea-6204.example' ], $overview['servers'] );
@@ -896,7 +896,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::snapshot_of( [ $key => '{"as_of":1790007215,"available":true}' ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $tokens );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $tokens );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview returned no structure' );
 		$this->assertSame( self::NOW + 9, $overview['as_of'], 'answered live' );
@@ -914,8 +914,8 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'moa-5536.example', 'url' => 'https://moa-5536.example/a/', 'ms' => 4.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-5536.example' ] );
-		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-5536.example' ] );
+		$query    = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
 
 		$this->assertIsArray( $overview );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
@@ -932,13 +932,13 @@ final class OverviewPrefetchTest extends TestCase {
 		$questions = Overview_Prefetch::questions();
 		$this->assertSame( [ 'overview', 'chart_by_server', 'chart_by_status_class', 'categories', 'server_overview', 'server_chart_by_status_class', 'server_categories' ], \array_keys( $questions ) );
 		foreach ( $questions as $name => [ 'verb' => $verb ] ) {
-			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, self::asked_for( $name, 'seed.example' ) );
+			$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', $verb, self::asked_for( $name, 'seed.example' ) );
 			$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, $name );
 		}
-		$this->assertSame( 1, VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] )['totals']['urls'], 'the stored overview counts takahe alone' );
+		$this->assertSame( 1, CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] )['totals']['urls'], 'the stored overview counts takahe alone' );
 	}
 
-	/** A stored question is keyed as asked, so its filters are spelled as a verb canonicalizes them. */
+	/** A stored question is keyed as asked, so its filters are spelled as a command canonicalizes them. */
 	public function test_every_stored_filter_names_its_field_lowercase_and_once(): void {
 		foreach ( Overview_Prefetch::questions() as $name => [ 'tokens' => $tokens ] ) {
 			$filters = \array_values( \array_filter( $tokens, static fn ( string $token ): bool => \str_starts_with( $token, '--filter=' ) ) );
@@ -954,7 +954,7 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 		$tokens = Overview_Prefetch::questions()['chart_by_server']['tokens'];
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ ...\str_replace( '--filter=worker=0', '--filter=Worker=0', $tokens ), '--filter=worker=0' ] );
+		$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ ...\str_replace( '--filter=worker=0', '--filter=Worker=0', $tokens ), '--filter=worker=0' ] );
 
 		$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply );
 	}
@@ -1071,8 +1071,8 @@ final class OverviewPrefetchTest extends TestCase {
 	}
 
 	public function test_overview_and_query_answer_as_of_live(): void {
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
-		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
+		$overview = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$query    = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
 
 		$this->assertSame( self::NOW, \is_array( $overview ) ? $overview['as_of'] : $overview );
 		$this->assertSame( self::NOW, \is_array( $query ) ? $query['as_of'] : $query );
@@ -1093,7 +1093,7 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 	}
 
-	public function test_a_verb_with_no_stored_answer_is_refused(): void {
+	public function test_a_command_with_no_stored_answer_is_refused(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		Performance_CI_Node::answer_live( 'dump_url', [], self::NOW, null );
 	}

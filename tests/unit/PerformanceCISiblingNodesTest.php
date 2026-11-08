@@ -6,7 +6,7 @@
  * internal plumbing must be NAMED, have its `patron()` set (so dump_metadata
  * hides it from the canvas), and (Rule 4) be SUNK into the
  * `_command_interpreter` when one is in scope. The scratch Partitions the
- * performance verbs build over `requests.log` / `flames.log` are such siblings —
+ * performance commands build over `requests.log` / `flames.log` are such siblings —
  * these tests pin that contract.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -16,7 +16,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -36,7 +36,7 @@ class PerformanceCISiblingNodesTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		$GLOBALS['_current_user_can'] = false;
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
@@ -115,13 +115,13 @@ class PerformanceCISiblingNodesTest extends TestCase {
 	}
 
 	/**
-	 * The verbs remove every scratch Partition they create — these are transient
-	 * read probes, so nothing is left registered in Core after the verb returns.
+	 * The commands remove every scratch Partition they create — these are transient
+	 * read probes, so nothing is left registered in Core after the command returns.
 	 */
-	public function test_verb_removes_scratch_partitions(): void {
+	public function test_command_removes_scratch_partitions(): void {
 		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire( $interpreter, 'performance', 'search_requests', 'rid-anything' );
+		CommandHarness::fire( $interpreter, 'performance', 'search_requests', 'rid-anything' );
 
-		$this->assertNull( $this->find_scratch_partition( 'requests.' ), 'scratch Partitions must be removed after the verb' );
+		$this->assertNull( $this->find_scratch_partition( 'requests.' ), 'scratch Partitions must be removed after the command' );
 	}
 }

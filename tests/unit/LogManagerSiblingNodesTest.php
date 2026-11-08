@@ -121,7 +121,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 
 	/**
 	 * A logged request builds the firehose Topic and the partitions it writes
-	 * with no `:config`: nothing on a page view takes a verb.
+	 * with no `:config`: nothing on a page view takes a command.
 	 */
 	public function test_a_logged_request_builds_no_config_for_the_firehose(): void {
 		$this->require_config_or_skip();

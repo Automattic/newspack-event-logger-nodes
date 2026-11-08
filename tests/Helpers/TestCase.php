@@ -4,7 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests;
 use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 
 abstract class TestCase extends RuntimeTestCase {
 
@@ -128,7 +128,7 @@ abstract class TestCase extends RuntimeTestCase {
 				$GLOBALS['_current_user_id'] = $user;
 			}
 		}
-		$sb->sink( VerbHarness::request_graph() );
+		$sb->sink( CommandHarness::request_graph() );
 		return $sb;
 	}
 
@@ -227,7 +227,7 @@ abstract class TestCase extends RuntimeTestCase {
 			$table->arguments( [ 'Flame_Facts' ] );
 			// Mounting the graph logs a user in; the caller's stands instead.
 			$user = $GLOBALS['_current_user_id'] ?? null;
-			$table->sink( VerbHarness::request_graph() );
+			$table->sink( CommandHarness::request_graph() );
 			unset( $GLOBALS['_current_user_id'] );
 			if ( null !== $user ) {
 				$GLOBALS['_current_user_id'] = $user;

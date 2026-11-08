@@ -435,7 +435,7 @@ class RequestFlightTest extends TestCase {
 	public function test_setting_target_enables_snapshot_hitchhike(): void {
 		// Setting the inflight target IS what enables snapshots: it registers Flight
 		// on the Router's TIMER (no-arg set_timer hitchhike). A Router tick then
-		// drives fire() -> snapshot emit. There is no separate interval verb.
+		// drives fire() -> snapshot emit. There is no separate interval command.
 		$router = Core::node( Node_Names::ROUTER );
 
 		$rb = new Request_Builder_Node();

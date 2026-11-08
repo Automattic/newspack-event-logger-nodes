@@ -43,7 +43,7 @@
     </div>
     <div class="value">
       <div class="card"><h3><span class="mono">arguments</span>: one flat token array</h3>
-        <p>Bound by <span class="mono">Command_Args::bind()</span> against the args the verb declares, before its handler runs. Each arg rides by position, in declared order, or as <span class="mono">--key=value</span>; a boolean is a bare <span class="mono">--key</span> (<span class="mono">--key=false</span> turns one off); a variadic arg takes the positional tail or a repeated <span class="mono">--key=</span>. An option the verb never declared is refused.</p>
+        <p>Bound by <span class="mono">Command_Args::bind()</span> against the args the command declares, before its handler runs. Each arg rides by position, in declared order, or as <span class="mono">--key=value</span>; a boolean is a bare <span class="mono">--key</span> (<span class="mono">--key=false</span> turns one off); a variadic arg takes the positional tail or a repeated <span class="mono">--key=</span>. An option the command never declared is refused.</p>
         <p class="mono" style="color:#101517">["--limit=25", "--server=example.com"]</p></div>
       <div class="card"><h3><span class="mono">auth</span>: the envelope <span class="mono">Command_Auth::sign()</span> stamps</h3>
         <p>A <span class="mono">nonce</span> and a <span class="mono">sig</span> over <span class="mono">[ts, name, arguments, nonce]</span>, plus a <span class="mono">handle</span> when the key is a session key.</p>
@@ -59,12 +59,12 @@
     <p class="h">The gates, in order</p>
     <p class="own first">HTTP_In_Node::check_permission()</p>
     <div class="gate"><span class="code">403</span><span><span class="mono">Bootstrap::fleet_gate()</span>: the fleet is network-global, so a multisite subsite is refused.</span></div>
-    <div class="gate"><span class="code">401 / 403</span><span>Not <span class="mono">Capabilities::READ</span>, the substrate's lowest role: <span class="mono">rest_forbidden</span>, 401 for a visitor and 403 for a signed-in user. The door demands the least any verb behind it needs.</span></div>
+    <div class="gate"><span class="code">401 / 403</span><span>Not <span class="mono">Capabilities::READ</span>, the substrate's lowest role: <span class="mono">rest_forbidden</span>, 401 for a visitor and 403 for a signed-in user. The door demands the least any command behind it needs.</span></div>
     <div class="gate"><span class="code">429</span><span>Over <span class="mono">RATE_LIMIT_BURST</span> (30) POSTs per user per <span class="mono">RATE_LIMIT_WINDOW_S</span> (1). <span class="mono">Rate_Limit::claim()</span> takes one of 30 slots with an atomic cache <span class="mono">add()</span>, each slot living one window; on memcached a 1 s window is close to one bucket per cache tick, so the gain is the atomic claim. The <span class="mono">newspack_nodes/command_rate_limit</span> filter tunes it, clamped to 1 through 256. With no shared cache to answer, the door admits unmetered and warns. Claimed after the capability, so an unauthenticated flood spends no slots.</span></div>
     <p class="own">HTTP_In_Node::dispatch()</p>
     <div class="gate"><span class="code">500</span><span>The request-scope graph is missing <span class="mono">_router</span> or <span class="mono">_output</span>: answered before any command runs.</span></div>
-    <p class="own">Command_Interpreter_Node::dispatch(), per verb</p>
-    <div class="gate"><span class="code go">per verb</span><span><span class="mono">dispatch()</span> refuses a caller below the role its schema declares (ADR-26); a verb declaring none takes MANAGE. No handler in this plugin re-checks.</span></div>
+    <p class="own">Command_Interpreter_Node::dispatch(), per command</p>
+    <div class="gate"><span class="code go">per command</span><span><span class="mono">dispatch()</span> refuses a caller below the role its schema declares (ADR-26); a command declaring none takes MANAGE. No handler in this plugin re-checks.</span></div>
   </div>
 
   <div style="flex:1">
@@ -82,8 +82,8 @@
       </div>
     </div>
     <div class="card" style="margin-top:12px"><h3>The reply Message</h3>
-      <p><span class="mono">TM_COMMAND|TM_RESPONSE</span>, sent TO=FROM, whose VALUE is <span class="mono">{ name, arguments, payload }</span>: the verb it answers, the tokens it was given, and the verb's return under <span class="mono">payload</span>.</p>
-      <p>A verb that throws answers <span class="mono">TM_COMMAND|TM_ERROR</span> instead, whose <span class="mono">payload</span> is the throw's message. No promise registry, no rejected Promise: the refusal lands a tick later on the node that asked.</p></div>
+      <p><span class="mono">TM_COMMAND|TM_RESPONSE</span>, sent TO=FROM, whose VALUE is <span class="mono">{ name, arguments, payload }</span>: the verb it answers, the tokens it was given, and the command's return under <span class="mono">payload</span>.</p>
+      <p>A command that throws answers <span class="mono">TM_COMMAND|TM_ERROR</span> instead, whose <span class="mono">payload</span> is the throw's message. No promise registry, no rejected Promise: the refusal lands a tick later on the node that asked.</p></div>
   </div>
 </div>
 </div>

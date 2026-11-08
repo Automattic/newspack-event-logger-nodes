@@ -189,7 +189,7 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Wiring verbs whose first arg names another node must reference a declared node (token/number args excluded). */
+	/** Wiring commands whose first arg names another node must reference a declared node (token/number args excluded). */
 	public function test_wiring_target_args_reference_declared_nodes(): void {
 		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_facts_target', 'add_snapshot_node' ];
 		foreach ( $this->topology_files() as $path ) {

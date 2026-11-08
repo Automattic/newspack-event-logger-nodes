@@ -2,7 +2,7 @@
  * Current-Request overlay tab — summarizes THIS page's request (the one the
  * overlay is riding), renders its flame graph + profile breakdown, and
  * deep-links to the full performance trace. Data comes from the `performance`
- * CI's `dump_request` verb, addressed by the rid the page
+ * CI's `dump_request` command, addressed by the rid the page
  * localizes into `window.NewspackEventLoggerNodes.currentRequest`.
  */
 
@@ -169,7 +169,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( text ).toContain( 'Time' ); // the timestamp card label
 	const link = view.container.querySelector( 'a[href*="request=abc123"]' );
 	expect( link ).not.toBeNull();
-	// Flame graph + profiles wired from the verb's flame_data / profiles.
+	// Flame graph + profiles wired from the command's flame_data / profiles.
 	expect(
 		view.container.querySelector( '[data-testid="flame"]' )
 	).not.toBeNull();

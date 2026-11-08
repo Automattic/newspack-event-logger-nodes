@@ -29,7 +29,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 import { slotsEndingAt } from '../../test-helpers/chartWire';
 
 /**
- * A one-shape page row on `kea.example`, as the `urls` verb lists it.
+ * A one-shape page row on `kea.example`, as the `urls` command lists it.
  *
  * @param {Object} row      Its hash, its path and its measures.
  * @param {string} row.hash The one URL's hash.
@@ -776,7 +776,7 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'says the page failed, not that it is empty, when the verb refused', () => {
+	it( 'says the page failed, not that it is empty, when the command refused', () => {
 		const { container, unmount } = mount( {
 			urls: [],
 			totalRows: 0,
@@ -1271,8 +1271,8 @@ describe( 'the address bar', () => {
 		}
 	);
 
-	it( 'stops the pager at the last offset the urls verb serves', () => {
-		// The verb clamps --offset to 10000, so a later page repeats page 101.
+	it( 'stops the pager at the last offset the urls command serves', () => {
+		// The command clamps --offset to 10000, so a later page repeats page 101.
 		linkTo( 'paged=300' );
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {

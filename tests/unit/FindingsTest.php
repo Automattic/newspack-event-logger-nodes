@@ -2832,7 +2832,7 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A verb's span is a FRAME: the verb's time, with the spans it ran inside.
+	 * A command's span is a FRAME: the command's time, with the spans it ran inside.
 	 * It is logged whatever the rule, so the finding sends the reader to its
 	 * children and proposes no rule edit.
 	 */
@@ -2856,7 +2856,8 @@ class FindingsTest extends TestCase {
 		$this->assertSame( '', $found['proposal']['undo'] );
 		$this->assertStringContainsString( 'Performance_CI urls command', $found['proposal']['why'] );
 		$this->assertStringContainsString( 'children', $found['proposal']['why'] );
-		$this->assertStringContainsString( 'verb', $found['detail'] );
+		$this->assertStringContainsString( "one command's handler", $found['detail'] );
+		$this->assertStringNotContainsString( 'verb', $found['detail'] . $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'Performance_CI_Node', $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
 	}
@@ -3718,7 +3719,7 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'plugins_loaded', $found['proposal']['why'] );
 	}
 
-	/** A window ending at a command span belongs to the verb, not to the lifecycle. */
+	/** A window ending at a command span belongs to the command, not to the lifecycle. */
 	public function test_a_window_ending_at_a_command_is_not_a_boot_window(): void {
 		$record                    = $this->boot_record( 0.520, 0.530 );
 		$record['entries'][5]['k'] = 'Performance_CI_Node urls command (start)';

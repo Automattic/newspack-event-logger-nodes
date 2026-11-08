@@ -48,7 +48,7 @@ const EMPTY = {
 };
 
 /**
- * Poll the `performance` CI's `list_hooks` verb while the picker is open,
+ * Poll the `performance` CI's `list_hooks` command while the picker is open,
  * and hand back the taxonomy it publishes.
  *
  * @param {Object}  [opts]        Options.

@@ -133,7 +133,7 @@ function newspack_event_logger_nodes_boot(): void {
 	// A spawn request learns which worker it became after it began logging.
 	\add_action( 'newspack_nodes/worker_identified', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'identify_worker' ], 10, 2 );
 
-	// Every verb and substrate span opens its own span in the record.
+	// Every command and substrate span opens its own span in the record.
 	\Newspack_Event_Logger_Nodes\Diagnostics_Bridge::install();
 
 	// Each substrate stderr line, filed under the keyword the seam names.
@@ -187,7 +187,7 @@ function newspack_event_logger_nodes_boot(): void {
 }
 
 /**
- * Register this plugin's `wp nodes` verbs under the substrate's `nodes` root.
+ * Register this plugin's `wp nodes` commands under the substrate's `nodes` root.
  *
  * @api Called by the deferred bootstrap; tests drive it against a recorder.
  */
@@ -295,7 +295,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
  * here. Each shell name resolves to
  * `\Newspack_Event_Logger_Nodes\App\{name}_Node` through the `App\` namespace
  * the deferred bootstrap registered; the second argument is the node name the
- * dashboards address verbs to.
+ * dashboards address commands to.
  *
  * @param \Newspack_Nodes\Command_Interpreter_Node $base_interpreter Request-scope CI.
  */
@@ -462,7 +462,7 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
  * One list a picker page publishes on the window, as `$read` reads it. A key
  * holding no list of strings publishes `[]` instead and leaves an admin
  * notice naming the key and the reason, so the settings and Overview pages
- * still load. The `list_hooks` verb reads the same keys and throws, which
+ * still load. The `list_hooks` command reads the same keys and throws, which
  * reaches the dashboard as a `TM_ERROR`.
  *
  * @param string                   $key  The config key `$read` reads.

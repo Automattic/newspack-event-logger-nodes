@@ -9,7 +9,7 @@
  * at the plugin root; a site adds to or overrides any of it through the
  * `newspack_event_logger_nodes_hook_customizations` option. Three consumers
  * read it. The settings page's hook picker takes the categories, colors and
- * descriptions through the `performance` CI's `list_hooks` verb.
+ * descriptions through the `performance` CI's `list_hooks` command.
  * `Config::span_palette_js()` publishes the merged colors beside the BASE
  * patterns as `window.eventLoggerHookCategories`, where the shared browser
  * `formatUtils` and the Gyroscope legend take their colors (an operator's own
@@ -43,7 +43,7 @@ use Newspack_Nodes\Core;
  * `categorize()` treats every one as untrusted: it caps their length, rejects
  * nested quantifiers, and lowers `pcre.backtrack_limit` while they run.
  *
- * Consumers: the `list_hooks` verb of `App\Performance_CI_Node`, which
+ * Consumers: the `list_hooks` command of `App\Performance_CI_Node`, which
  * feeds the settings page's `HookSelectorModal`, and
  * `App\Core::bind_current_scope()`, which calls `is_internal()`.
  */

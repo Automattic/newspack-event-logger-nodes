@@ -1705,7 +1705,7 @@ final class Stats_Query {
 
 	/**
 	 * A list of names or tokens as strings: a spec's groups and measures, or
-	 * a variadic verb arg, null when absent.
+	 * a variadic command arg, null when absent.
 	 *
 	 * @param mixed $value The list.
 	 * @return list<string>

@@ -7,7 +7,7 @@
  * The page localizes `{ rid, perfUrl }` into
  * `window.NewspackEventLoggerNodes.currentRequest`; the summary, flame graph,
  * and profile breakdown are fetched from the `performance` CI's `dump_request`
- * verb (by rid). The request, flame and stats builders process the firehose
+ * command (by rid). The request, flame and stats builders process the firehose
  * asynchronously, so a just-loaded page has no request row for a beat — that's
  * the "still processing" state. There is no Refresh: the tab asks each tick
  * until the record and its flame land, so a button would only repeat an ask

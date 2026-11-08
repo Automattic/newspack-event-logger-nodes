@@ -8,7 +8,7 @@
  * the Discovery_Collector_Node plus the three ELN app-key pushes. Loads the TSL
  * in-process via Topology_Loader against a real CommandInterpreter+Router pair
  * (the same path the worker takes at spawn time), then asserts on Core's node
- * registry and the registry the `add_setting` :config verbs mutated.
+ * registry and the registry the `add_setting` :config commands mutated.
  *
  * @package Newspack_Event_Logger_Nodes
  */

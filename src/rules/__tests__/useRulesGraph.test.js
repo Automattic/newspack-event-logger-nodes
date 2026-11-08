@@ -2,7 +2,7 @@
  * useRulesGraph tests — the per-URL logging-ruleset editor graph, clipped onto
  * the substrate's I/O boundary node (exospine + `_http`) with ONE receiver Tee
  * (`rules:in`) in front of the `rules:view` model node. Modeled on
- * useVaultGraph: each verb dispatches a TM_COMMAND through the interpreter
+ * useVaultGraph: each command dispatches a TM_COMMAND through the interpreter
  * (the table's dump FROM = `rules:in`, each mutation FROM its own Request node,
  * TO = `_http/rules`, verb in VALUE.name); the reply routes
  * TO=FROM back into the Tee, which fans it to the view. Nothing is injected:
@@ -62,7 +62,7 @@ const SAMPLE_RULES = [
 ];
 
 // A fake transport (HttpOutNode seam): postBatch echoes TO=FROM replies.
-function findVerb( batches, verb ) {
+function findCommand( batches, verb ) {
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
 			if ( m[ VALUE ]?.name === verb ) {
@@ -73,7 +73,7 @@ function findVerb( batches, verb ) {
 	return null;
 }
 
-function countVerbs( batches, verb ) {
+function countCommands( batches, verb ) {
 	let count = 0;
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
@@ -183,7 +183,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		const wire = installWire( { dump: { rules: SAMPLE_RULES } } );
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		expect( countVerbs( wire.batches, 'dump' ) ).toBe( 1 );
+		expect( countCommands( wire.batches, 'dump' ) ).toBe( 1 );
 		expect( Core.node( FETCH ).outbox ).toEqual( [] );
 	} );
 
@@ -275,7 +275,7 @@ describe( 'useRulesGraph — dump populates rules', () => {
 	} );
 } );
 
-describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
+describe( 'useRulesGraph — mutations dispatch the command then re-dump', () => {
 	test( 'upsert sends the raw-JSON rule as arguments then re-dumps', async () => {
 		const wire = installWire( {
 			dump: { rules: [] },
@@ -283,16 +283,16 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const dumpsBefore = countVerbs( wire.batches, 'dump' );
+		const dumpsBefore = countCommands( wire.batches, 'dump' );
 
 		act( () => result.current.upsert( SAMPLE_RULES[ 0 ] ) );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+			expect( countCommands( wire.batches, 'dump' ) ).toBeGreaterThan(
 				dumpsBefore
 			)
 		);
-		const up = findVerb( wire.batches, 'upsert' );
+		const up = findCommand( wire.batches, 'upsert' );
 		expect( up[ TO ] ).toBe( 'rules' );
 		// Each mutation mints from its OWN node, and names the rule it is
 		// about in the reply path — the document is the payload, never the
@@ -315,17 +315,17 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const dumpsBefore = countVerbs( wire.batches, 'dump' );
+		const dumpsBefore = countCommands( wire.batches, 'dump' );
 
 		act( () => result.current.saveAll( SAMPLE_RULES ) );
 
-		// The verb rides the router tick, and the re-dump follows its answer.
+		// The command rides the router tick, and the re-dump follows its answer.
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+			expect( countCommands( wire.batches, 'dump' ) ).toBeGreaterThan(
 				dumpsBefore
 			)
 		);
-		const save = findVerb( wire.batches, 'save' );
+		const save = findCommand( wire.batches, 'save' );
 		expect( save[ VALUE ].arguments ).toEqual( [
 			JSON.stringify( SAMPLE_RULES ),
 		] );
@@ -366,16 +366,16 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const dumpsBefore = countVerbs( wire.batches, 'dump' );
+		const dumpsBefore = countCommands( wire.batches, 'dump' );
 
 		act( () => result.current.remove( 'r1' ) );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+			expect( countCommands( wire.batches, 'dump' ) ).toBeGreaterThan(
 				dumpsBefore
 			)
 		);
-		const del = findVerb( wire.batches, 'delete' );
+		const del = findCommand( wire.batches, 'delete' );
 		expect( del[ FROM ] ).toBe( 'rules:delete:in/r1' );
 		expect( del[ ID ] ).toBe( '' );
 		expect( del[ VALUE ].arguments ).toEqual(
@@ -383,23 +383,23 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
 		);
 	}, 15000 );
 
-	test( 'reset sends the nullary verb from its own node then re-dumps', async () => {
+	test( 'reset sends the nullary command from its own node then re-dumps', async () => {
 		const wire = installWire( {
 			dump: { rules: SAMPLE_RULES },
 			reset: { reset: 3 },
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const dumpsBefore = countVerbs( wire.batches, 'dump' );
+		const dumpsBefore = countCommands( wire.batches, 'dump' );
 
 		act( () => result.current.reset() );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+			expect( countCommands( wire.batches, 'dump' ) ).toBeGreaterThan(
 				dumpsBefore
 			)
 		);
-		const reset = findVerb( wire.batches, 'reset' );
+		const reset = findCommand( wire.batches, 'reset' );
 		expect( reset[ TO ] ).toBe( 'rules' );
 		expect( reset[ FROM ] ).toBe( 'rules:reset:in' );
 		expect( reset[ VALUE ].arguments ).toEqual( [] );

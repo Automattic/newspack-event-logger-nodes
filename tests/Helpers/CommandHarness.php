@@ -1,12 +1,12 @@
 <?php
 /**
- * VerbHarness: test fixture for service-CommandInterpreter (interpreter) verbs.
+ * CommandHarness: test fixture for the commands a service CI answers.
  *
  * Every interpreter test uses this to fire a TM_COMMAND envelope through the
  * substrate's normal dispatch path (interpreter → base interpreter → Router → HTTP_In) and
- * pull the verb's return value back out as a decoded PHP value. Tests
+ * pull the command's return value back out as a decoded PHP value. Tests
  * therefore exercise the same plumbing the live REST controller does —
- * no special "for tests" shortcut — but assert on the verb's logical
+ * no special "for tests" shortcut — but assert on the command's logical
  * result rather than parsing the on-wire Message themselves.
  *
  * Lifecycle: fire() mounts the request-scope graph once per test through
@@ -26,38 +26,38 @@ use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Rest\HTTP_In_Node;
 use Newspack_Nodes\Message;
 
-class VerbHarness {
+class CommandHarness {
 
 	/** The recorder's node name. */
 	private const ASK_RECORDER = 'stats-ask-recorder';
 
 	/**
 	 * The user a REST request carries: `HTTP_In_Node` admits no caller who is
-	 * not logged in, so a verb reached through the request graph always has one
+	 * not logged in, so a command reached through the request graph always has one
 	 * current, and the substrate's `dispatch()` asks that user's capabilities.
 	 */
 	public const REQUEST_USER = 5129;
 	/**
-	 * Build a request-scope graph and fire a verb against the supplied interpreter.
-	 * Returns the verb's payload from the captured TM_RESPONSE.
+	 * Build a request-scope graph and fire a command against the supplied interpreter.
+	 * Returns the command's payload from the captured TM_RESPONSE.
 	 *
 	 * Per the command protocol, the response Message's VALUE is a live PHP
 	 * array `['name'=>'<verb>','payload'=><result>]` — it rides through
 	 * packed()/unpacked() as a nested object, so there is nothing to
-	 * json_decode. The verb's `payload` is returned directly: a structure
-	 * for verbs that return arrays/scalars, or the error-message string for
+	 * json_decode. The command's `payload` is returned directly: a structure
+	 * for commands that return arrays/scalars, or the error-message string for
 	 * a TM_COMMAND|TM_ERROR response (since `interpret()` puts the thrown
 	 * message into `payload`).
 	 *
 	 * @param Command_Interpreter_Node $interpreter interpreter under test (already constructed).
 	 * @param string             $name Name to register the interpreter under (e.g. 'workers').
-	 * @param string             $verb Verb to invoke (e.g. 'list').
+	 * @param string             $verb Name of the command to invoke (e.g. 'list').
 	 * @param array<int,string>|string $args Argument tokens (the `arguments` argv). A
 	 *                                 convenience string is whitespace-split into tokens;
 	 *                                 pass an explicit array when a token contains spaces
-	 *                                 (e.g. a JSON blob). Empty for nullary verbs.
+	 *                                 (e.g. a JSON blob). Empty for nullary commands.
 	 * @param string             $key  Optional KEY field for the inbound message.
-	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
+	 * @return mixed The command's payload (structure for success commands; error-message string for TM_ERROR).
 	 */
 	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, array|string $args = [], string $key = '' ): mixed {
 		$GLOBALS['_current_user_id'] ??= self::REQUEST_USER;
@@ -71,7 +71,7 @@ class VerbHarness {
 		$interpreter->sink( self::ask_recorder() );
 		Core::node( Node_Names::HTTP )?->remove_node();
 
-		// status_header seam is unused — tests assert on the verb's return
+		// status_header seam is unused — tests assert on the command's return
 		// value, not which HTTP status code HTTP_In emitted. The closure
 		// is a no-op so HTTP_In's fill() path runs without trying to call
 		// the real \status_header() (which isn't defined in tests).
@@ -90,11 +90,11 @@ class VerbHarness {
 			'name'      => $verb,
 			'arguments' => $arg_tokens,
 		];
-		// Exercises verb LOGIC, not authorization. Mark the command as in-process
+		// Exercises command LOGIC, not authorization. Mark the command as in-process
 		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.
 		$message[ Message::LOCAL ] = true;
 
-		return \Newspack_Nodes\Tests\Helpers\VerbHarness::payload( $interpreter, $message );
+		return \Newspack_Nodes\Tests\Helpers\CommandHarness::payload( $interpreter, $message );
 	}
 
 	/**

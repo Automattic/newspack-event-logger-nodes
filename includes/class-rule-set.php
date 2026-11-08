@@ -2,7 +2,7 @@
 /**
  * The durable per-URL logging ruleset: load, save, two-tier hook storage.
  *
- * Every ruleset write lands here — the `rules` CI editor verbs,
+ * Every ruleset write lands here — the `rules` CI editor commands,
  * `Auto_Tuner_Node`, and the hub→spoke settings sync — so the inline↔pointer
  * tiering and the orphan sweep hold whoever writes. Pattern-is-identity is the
  * one invariant `save()` leaves to its callers: a path that accepts rules from
@@ -118,7 +118,7 @@ final class Rule_Set {
 	 *
 	 * Config is memoized per process with the stored option already folded in,
 	 * so it must be invalidated before the read-back or this returns the very
-	 * ruleset it discarded (the `set` verb resets it for this reason).
+	 * ruleset it discarded (the `set` command resets it for this reason).
 	 *
 	 * Signals the live fleet for itself, because deleting the option never
 	 * reaches `save()`; see `request_reloads()`.
@@ -328,7 +328,7 @@ final class Rule_Set {
 	 * route them through save(), which RE-TIERS locally — heavy rules' inline
 	 * hooks are written back out to this site's own durable option + table mirror,
 	 * keeping OPTION_RULES small. The inverse of hydrate_array(); the
-	 * `performance` CI's `set` verb, which takes OPTION_RULES alone, calls it
+	 * `performance` CI's `set` command, which takes OPTION_RULES alone, calls it
 	 * rather than writing the option raw.
 	 *
 	 * A push that changes nothing does nothing. The hub re-sends the ruleset on
@@ -452,8 +452,8 @@ final class Rule_Set {
 	 *
 	 * The pattern IS the identity, so this is what makes "one rule per URL"
 	 * true rather than merely conventional. Every write path that accepts
-	 * outside rules runs through it: the config seed, the editor's `save` verb,
-	 * and `apply_synced()` off the wire. (The editor's `upsert` verb reaches the
+	 * outside rules runs through it: the config seed, the editor's `save` command,
+	 * and `apply_synced()` off the wire. (The editor's `upsert` command reaches the
 	 * same result by minting the id with `id_for()` and dropping the entry that
 	 * already holds that pattern.) Two entries that kept differing ids for one
 	 * pattern would both persist and race in the matcher; two that kept a SHARED

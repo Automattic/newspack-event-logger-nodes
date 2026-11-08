@@ -25,7 +25,7 @@ const DEFAULT_MAX_LINES = 1000;
  * `request-log:view` — owns the Request Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, the paused belt and step budget,
- * the decaying lps, seek tracking, and the shared control verbs — `select`
+ * the decaying lps, seek tracking, and the shared controls — `select`
  * included — all live in the shared base. This class adds the Request Log's
  * specifics: `shapeRow()`, which validates and enriches a raw
  * completed-request envelope (KEY=rid, VALUE=the summary from `_sse`) into a

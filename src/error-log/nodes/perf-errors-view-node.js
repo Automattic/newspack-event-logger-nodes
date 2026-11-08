@@ -46,7 +46,7 @@ const clip = ( value, max ) => {
  * `error-log:view` — owns the Error Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, the paused belt and step budget,
- * the decaying lps, seek tracking, and the shared control verbs — `select`
+ * the decaying lps, seek tracking, and the shared controls — `select`
  * included — all live in the shared base. This class adds the Error Log's
  * specifics: `shapeRow()`, which validates and enriches a raw errors envelope
  * (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row, and the ingest

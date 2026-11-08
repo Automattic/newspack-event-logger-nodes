@@ -1,7 +1,7 @@
 <?php
 /**
  * Tests for Reqgrep_Core — the shared rid-grouping / pattern-matching engine
- * that both `wp nodes reqgrep` and the `grep_requests` performance-CI verb
+ * that both `wp nodes reqgrep` and the `grep_requests` performance-CI command
  * consume. Pins the grouping + match semantics (exact-rid short-circuit,
  * regex-against-line, history bootstrap, complete-fires-on-complete) so the
  * CLI and dashboard agree byte-for-byte on which lines belong to which request.

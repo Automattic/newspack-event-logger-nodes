@@ -12,7 +12,7 @@
  *
  * Seeks ride the existing `positions` transport (keyed by partition DIRECTORY,
  * the same key SseIn tracks resume offsets under), so they need no new server
- * verb. The substrate's `raw-logs` CI answers both catalog questions —
+ * command. The substrate's `raw-logs` CI answers both catalog questions —
  * `list_logs` for the concrete dirs, polled as a slice, and `dump_log` for
  * one dir's segments. Each rides its OWN nodes, so every reply lands on the
  * node that asked for it, without an id to pair them up (ADR-7).

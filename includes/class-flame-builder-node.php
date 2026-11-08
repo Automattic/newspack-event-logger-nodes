@@ -147,7 +147,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Handle one message: a TM_REQUEST introspection verb, or a TM_STRUCT
+	 * Handle one message: a TM_REQUEST introspection request, or a TM_STRUCT
 	 * completed-request record tailed off `requests.p{N}`.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
@@ -241,7 +241,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * `rid` and `url_hash` are stamped into the payload because the companion
 	 * index formatter (`format_index_entry`, registered as `flame-index` and
-	 * installed by the topology's `with_index` verb) reads them off VALUE;
+	 * installed by the topology's `with_index` command) reads them off VALUE;
 	 * `request_at` because the stats builder reads the record there.
 	 *
 	 * Writing is optional: without a target or sink the flame is simply not
@@ -583,7 +583,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Declarative schema: the TM_REQUEST verb and the palette metadata.
+	 * Declarative schema: the TM_REQUEST request and the palette metadata.
 	 *
 	 * @api Used by the substrate to provide UI etc.
 	 * @return array<string,mixed>

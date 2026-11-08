@@ -1,13 +1,13 @@
 <!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
 <style>
-  .verbs { display: flex; gap: 8px; }
-  .verb { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 8px; padding: 9px 11px; font-size: 12px; line-height: 1.45; color: #50575E; }
-  .verb .nm { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; font-size: 13px; }
-  .verb .role { float: right; border-radius: 4px; padding: 1px 6px; font-size: 10.5px; font-weight: 700; }
-  .verb .role.read { background: #F0F4FB; color: #003DA5; border: 1px solid #C3D3EC; }
-  .verb .role.tune { background: #003DA5; color: #fff; }
-  .verb .in { display: block; margin: 3px 0 2px; color: #101517; }
-  .verb .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
+  .commands { display: flex; gap: 8px; }
+  .command { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 8px; padding: 9px 11px; font-size: 12px; line-height: 1.45; color: #50575E; }
+  .command .nm { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; font-size: 13px; }
+  .command .role { float: right; border-radius: 4px; padding: 1px 6px; font-size: 10.5px; font-weight: 700; }
+  .command .role.read { background: #F0F4FB; color: #003DA5; border: 1px solid #C3D3EC; }
+  .command .role.tune { background: #003DA5; color: #fff; }
+  .command .in { display: block; margin: 3px 0 2px; color: #101517; }
+  .command .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
   .flow { position: relative; margin-top: 18px; }
   .cols { display: flex; gap: 14px; align-items: flex-start; }
   .decide { flex: 0 0 300px; }
@@ -31,15 +31,15 @@
   .foot .card p { margin-bottom: 4px; }
 </style>
 <div class="sheet">
-  <h1>Five <span class="mono">rules</span> verbs, one writer, and a hook list stored in one of two tiers</h1>
-  <p class="sub">Every verb routes through <span class="mono">Rule_Set</span>, so a raw <span class="mono">update_option()</span> can never bypass the tiering or the orphan sweep. A rule's id is its pattern's hash, so the ruleset can never hold two differently-configured rules for one URL.</p>
+  <h1>Five <span class="mono">rules</span> commands, one writer, and a hook list stored in one of two tiers</h1>
+  <p class="sub">Every command routes through <span class="mono">Rule_Set</span>, so a raw <span class="mono">update_option()</span> can never bypass the tiering or the orphan sweep. A rule's id is its pattern's hash, so the ruleset can never hold two differently-configured rules for one URL.</p>
 
-  <div class="verbs">
-    <div class="verb"><span class="role read">READ</span><span class="nm">dump</span><span class="in">no arguments</span><span class="m">{ rules: [...] }</span>, every pointer rule's hooks resolved to the full list and <span class="m">hooks_in</span> normalized to <span class="m">inline</span>: the editor never sees the tier.</div>
-    <div class="verb"><span class="role tune">TUNE</span><span class="nm">save</span><span class="in">raw JSON array as the first token</span><span class="m">{ saved: int }</span>. Whole-list replace; one unrepresentable entry throws before anything is stored.</div>
-    <div class="verb"><span class="role tune">TUNE</span><span class="nm">upsert</span><span class="in">raw JSON object as the first token</span><span class="m">{ rule: {...} }</span>. Keyed by pattern; an edit carrying the old id and a new pattern rekeys and drops the old entry.</div>
-    <div class="verb"><span class="role tune">TUNE</span><span class="nm">delete</span><span class="in"><span class="m">id</span>, positional</span><span class="m">{ deleted: bool }</span>. Drop the match and re-save.</div>
-    <div class="verb"><span class="role tune">TUNE</span><span class="nm">reset</span><span class="in">no arguments</span><span class="m">{ reset: int }</span>. DELETES the option so the file config seeds again; storing <span class="m">[]</span> would pin "log nothing". Sweeps every pointer option too.</div>
+  <div class="commands">
+    <div class="command"><span class="role read">READ</span><span class="nm">dump</span><span class="in">no arguments</span><span class="m">{ rules: [...] }</span>, every pointer rule's hooks resolved to the full list and <span class="m">hooks_in</span> normalized to <span class="m">inline</span>: the editor never sees the tier.</div>
+    <div class="command"><span class="role tune">TUNE</span><span class="nm">save</span><span class="in">raw JSON array as the first token</span><span class="m">{ saved: int }</span>. Whole-list replace; one unrepresentable entry throws before anything is stored.</div>
+    <div class="command"><span class="role tune">TUNE</span><span class="nm">upsert</span><span class="in">raw JSON object as the first token</span><span class="m">{ rule: {...} }</span>. Keyed by pattern; an edit carrying the old id and a new pattern rekeys and drops the old entry.</div>
+    <div class="command"><span class="role tune">TUNE</span><span class="nm">delete</span><span class="in"><span class="m">id</span>, positional</span><span class="m">{ deleted: bool }</span>. Drop the match and re-save.</div>
+    <div class="command"><span class="role tune">TUNE</span><span class="nm">reset</span><span class="in">no arguments</span><span class="m">{ reset: int }</span>. DELETES the option so the file config seeds again; storing <span class="m">[]</span> would pin "log nothing". Sweeps every pointer option too.</div>
   </div>
 
   <div class="flow">

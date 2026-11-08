@@ -11,9 +11,9 @@ use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Service_CI_Node;
 
 /**
- * Every application verb states its role.
+ * Every application command states its role.
  *
- * `Service_CI_Node` defaults an undeclared verb to MANAGE, so this whole
+ * `Service_CI_Node` defaults an undeclared command to MANAGE, so this whole
  * surface was manage BY OMISSION — which is what forced the hub to hold an
  * administrator's application password on every spoke just to pull logs and
  * push settings. The ruleset is `tune`: the payoff loop is diagnose, then
@@ -23,7 +23,7 @@ use Newspack_Nodes\Service_CI_Node;
 #[CoversClass( Performance_CI_Node::class )]
 #[CoversClass( Rules_CI_Node::class )]
 #[CoversClass( Discovery_CI_Node::class )]
-class VerbRoleDeclarationsTest extends TestCase {
+class CommandRoleDeclarationsTest extends TestCase {
 
 	/** @return array<string,array{0:class-string<Service_CI_Node>,1:array<string,string>}> */
 	public static function role_map(): array {
@@ -63,13 +63,13 @@ class VerbRoleDeclarationsTest extends TestCase {
 	 * @param array<string,string>          $expected
 	 */
 	#[DataProvider( 'role_map' )]
-	public function test_each_verb_declares_its_role( string $class, array $expected ): void {
+	public function test_each_command_declares_its_role( string $class, array $expected ): void {
 		$seen = [];
-		foreach ( $class::node_schema()['commands'] as $verb ) {
-			$seen[ $verb['name'] ] = $verb['capability'] ?? Capabilities::MANAGE;
+		foreach ( $class::node_schema()['commands'] as $command ) {
+			$seen[ $command['name'] ] = $command['capability'] ?? Capabilities::MANAGE;
 		}
 		foreach ( $expected as $name => $role ) {
-			$this->assertArrayHasKey( $name, $seen, "{$class} lost its `{$name}` verb" );
+			$this->assertArrayHasKey( $name, $seen, "{$class} lost its `{$name}` command" );
 			$this->assertSame( $role, $seen[ $name ], "{$class}::{$name} must be `{$role}`" );
 		}
 	}
@@ -97,8 +97,8 @@ class VerbRoleDeclarationsTest extends TestCase {
 		);
 		$GLOBALS['_wp_test_current_user_can'] = [ 'edit_pages' => true, 'manage_options' => false ];
 
-		// A verb reads through the request graph a request mounts, CIs and all.
-		\Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness::request_graph();
+		// A command reads through the request graph a request mounts, CIs and all.
+		\Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness::request_graph();
 		$performance = \Newspack_Nodes\Core::node( 'performance' );
 		$this->assertInstanceOf( Performance_CI_Node::class, $performance );
 		$payload = $performance->dispatch( 'overview' );

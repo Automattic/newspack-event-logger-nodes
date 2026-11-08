@@ -12,7 +12,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Consumer_Node;
@@ -91,7 +91,7 @@ final class StatsBuilderTest extends TestCase {
 
 	/**
 	 * Read the node's introspection payload through the production GET_STATS
-	 * request verb — the same path the dashboard and the REPL read.
+	 * request — the same path the dashboard and the REPL read.
 	 *
 	 * @return array<string, mixed>
 	 */
@@ -346,9 +346,9 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( 'sb:config', $this->read_private( $sb, 'interpreter' )->name() );
 	}
 
-	public function test_the_facts_target_verb_round_trips(): void {
+	public function test_the_facts_target_command_round_trips(): void {
 		// What a dump owes is REPLAY, not a literal: the argument it emits has
-		// to come back through the same verb as the same state.
+		// to come back through the same command as the same state.
 		$sb = $this->unarmed_builder();
 		$sb->name( 'sb' );
 		$this->assertSame( "ok\n", $this->read_private( $sb, 'interpreter' )->dispatch( 'set_facts_target', [ 'facts-kea-4471' ] ) );
@@ -366,7 +366,7 @@ final class StatsBuilderTest extends TestCase {
 	 * The requests partition dumps as it was given, `{partition}` and all,
 	 * and the replayed builder reads its bound partition's records through it.
 	 */
-	public function test_the_requests_partition_verb_round_trips_through_dump_config(): void {
+	public function test_the_requests_partition_command_round_trips_through_dump_config(): void {
 		$root = $this->make_temp_dir( 'stats-requests-kokako-' );
 		$sb   = $this->unarmed_builder();
 		$sb->name( 'sb' );
@@ -462,7 +462,7 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( $before, \array_keys( Core::$nodes_by_name ) );
 	}
 
-	/** The Row_Table the verb named is drawn as an edge the builder writes along. */
+	/** The Row_Table the command named is drawn as an edge the builder writes along. */
 	public function test_the_facts_target_is_a_display_target(): void {
 		$sb = $this->unarmed_builder();
 		$sb->name( 'sb' );
@@ -471,7 +471,7 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertContains( 'facts-kea-4472', $sb->display_targets() );
 	}
 
-	public function test_stats_builder_node_schema_declares_verbs(): void {
+	public function test_stats_builder_node_schema_declares_commands(): void {
 		$schema = Stats_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
 		$this->assertSame( [ 'set_facts_target', 'set_requests_partition' ], \array_column( $schema['commands'], 'name' ) );
@@ -499,7 +499,7 @@ final class StatsBuilderTest extends TestCase {
 	/** Truly idle: nothing buffered and a current window, so a tick asks nothing. */
 	public function test_a_tick_with_nothing_owed_asks_nothing(): void {
 		$sb       = $this->armed_stats_builder();
-		$recorder = VerbHarness::ask_recorder();
+		$recorder = CommandHarness::ask_recorder();
 		$sb->sink( $recorder );
 
 		$sb->fire_cb();
@@ -775,9 +775,9 @@ final class StatsBuilderTest extends TestCase {
 
 	/** The catalog's `reply_shape` names every key `GET_STATS` answers with. */
 	public function test_get_stats_reply_shape_names_every_key_it_carries(): void {
-		$sb   = $this->unarmed_builder();
-		$verb = \array_column( Stats_Builder_Node::node_schema()['requests'], null, 'name' )['GET_STATS'];
-		\preg_match_all( '/\w+/', $verb['reply_shape'], $named );
+		$sb      = $this->unarmed_builder();
+		$request = \array_column( Stats_Builder_Node::node_schema()['requests'], null, 'name' )['GET_STATS'];
+		\preg_match_all( '/\w+/', $request['reply_shape'], $named );
 
 		$this->assertSame( \array_keys( $this->get_stats( $sb ) ), $named[0] );
 	}
@@ -1405,7 +1405,7 @@ final class StatsBuilderTest extends TestCase {
 	 */
 	public function test_a_batch_names_each_url_and_agent_once(): void {
 		$sb       = $this->armed_stats_builder();
-		$recorder = VerbHarness::ask_recorder();
+		$recorder = CommandHarness::ask_recorder();
 		$sb->sink( $recorder );
 		$weka = [ 'url' => 'https://kea.example/weka-3302', 'user_agent' => 'Weka/2.7' ];
 		$this->fill_flame( $sb, $this->completed_request( [ 'rid' => 'rid-weka-a' ] + $weka ) );

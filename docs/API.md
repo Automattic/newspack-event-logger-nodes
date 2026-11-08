@@ -1,21 +1,21 @@
 # Newspack Event Logger Nodes API
 
 The plugin registers exactly **one** REST route of its own — the MCP server. Every other
-call a client makes over HTTP is a verb on a service Command_Interpreter (CI) node,
+call a client makes over HTTP is a command on a service Command_Interpreter (CI) node,
 addressed by name through the substrate's command endpoint. Beside that wire surface the
-plugin exposes two WP-CLI verbs, the [`Log_Manager`](../includes/class-log-manager.php) PHP API sibling plugins log through,
+plugin exposes two WP-CLI commands, the [`Log_Manager`](../includes/class-log-manager.php) PHP API sibling plugins log through,
 and the WordPress hooks it fires and consumes.
 
 | Endpoint | Owner | Purpose |
 |----------|-------|---------|
-| `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin ([`App\MCP_Controller`](../includes/app/class-mcp-controller.php)) | JSON-RPC MCP server over ten verbs the dashboards already drive. |
+| `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin ([`App\MCP_Controller`](../includes/app/class-mcp-controller.php)) | JSON-RPC MCP server over ten commands the dashboards already drive. |
 | `POST /wp-json/newspack-nodes/v1/command` | substrate ([`Rest\HTTP_In_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-http-in-node.php)) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
 | `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. A log-registry source subscribes as `sources:<name>`. |
 | `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
 | `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
 | `POST /wp-json/newspack-nodes/v1/health/runtime` | substrate ([`Rest\Health_Runtime_Controller`](https://github.com/Automattic/newspack-nodes/blob/main/includes/rest/class-health-runtime-controller.php)) | Token-gated runtime probe `wp nodes doctor` calls: the web runtime's cache backend and log sources. |
 
-This plugin contributes the verbs its three CIs expose; it registers no route under the
+This plugin contributes the commands its three CIs expose; it registers no route under the
 `newspack-nodes/v1` namespace. See [`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md)
 for the substrate's own wire shapes.
 
@@ -27,10 +27,10 @@ the main site alone and a multisite subsite gets `403 Forbidden`.
 `/command` and `/messages/stream` then gate on the substrate's lowest role,
 [`Capabilities::READ`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-capabilities.php). That role resolves to `manage_options` on a stock install and to
 `newspack_nodes_read` once `wp nodes caps install` swaps in the granular capabilities;
-`newspack_nodes/capability_map` overrides either. The door demands the least any verb
-behind it needs, and authority is decided per verb:
+`newspack_nodes/capability_map` overrides either. The door demands the least any command
+behind it needs, and authority is decided per command:
 [`Command_Interpreter_Node::dispatch()`](https://github.com/Automattic/newspack-nodes/blob/v2.79.1/includes/class-command-interpreter-node.php)
-refuses a caller below the role its schema declares (ADR-26), and a verb declaring none takes
+refuses a caller below the role its schema declares (ADR-26), and a command declaring none takes
 MANAGE. **No handler in this plugin re-checks a capability** — one that did would outrank
 its own declaration without saying so.
 
@@ -68,24 +68,24 @@ Content-Type: text/plain; charset=UTF-8
 [8,1756900000,"","performance","","",{"name":"urls","arguments":["--limit=25","--server=example.com"],"auth":{"nonce":"…","sig":"…"}}]
 ```
 
-![The /command wire format and its status decision. A slot row shows the seven positional fields of one body line: TYPE 8 (TM_COMMAND), a TIMESTAMP, an empty FROM that the door prefixes with _output so the reply lands in the body, TO naming the performance, discovery or rules CI (most callers name the CI alone; a sub-path names a child), empty ID and KEY, and a VALUE of name, arguments and auth. Three cards explain the flat token grammar of arguments, the Command_Auth::sign() envelope (a nonce and a signature over ts, name, arguments and nonce, plus a handle for a session key; LOCAL commands need none), and why the body must be text/plain rather than application/json. Below, the gates in order, grouped by owner: HTTP_In_Node::check_permission() answers 403 from the fleet gate, 401 or 403 without Capabilities::READ, and 429 past 30 POSTs per user per second; dispatch() answers 500 when the request graph lacks _router or _output; and Command_Interpreter_Node::dispatch() refuses a caller below each verb's declared role. Beside them the status, decided once: 200 when a reply opens the body, 401 if a command had already been refused, and 202 or 401 when the batch writes nothing back. The reply is TM_COMMAND|TM_RESPONSE carrying name, arguments and payload, or TM_COMMAND|TM_ERROR carrying the throw's message.](img/api-command-envelope.png)
+![The /command wire format and its status decision. A slot row shows the seven positional fields of one body line: TYPE 8 (TM_COMMAND), a TIMESTAMP, an empty FROM that the door prefixes with _output so the reply lands in the body, TO naming the performance, discovery or rules CI (most callers name the CI alone; a sub-path names a child), empty ID and KEY, and a VALUE of name, arguments and auth. Three cards explain the flat token grammar of arguments, the Command_Auth::sign() envelope (a nonce and a signature over ts, name, arguments and nonce, plus a handle for a session key; LOCAL commands need none), and why the body must be text/plain rather than application/json. Below, the gates in order, grouped by owner: HTTP_In_Node::check_permission() answers 403 from the fleet gate, 401 or 403 without Capabilities::READ, and 429 past 30 POSTs per user per second; dispatch() answers 500 when the request graph lacks _router or _output; and Command_Interpreter_Node::dispatch() refuses a caller below each command's declared role. Beside them the status, decided once: 200 when a reply opens the body, 401 if a command had already been refused, and 202 or 401 when the batch writes nothing back. The reply is TM_COMMAND|TM_RESPONSE carrying name, arguments and payload, or TM_COMMAND|TM_ERROR carrying the throw's message.](img/api-command-envelope.png)
 
-The substrate binds each verb's tokens against the args it declares before its handler runs:
+The substrate binds each command's tokens against the args it declares before its handler runs:
 an arg rides by position, in the order the tables below list them, or as `--name=value`, and
 the two mix. A `bool` is a bare `--name` or one of `1/true/yes/on/0/false/no/off`; an absent
 arg takes its default. The binder refuses a missing required arg, a blank for one, an option
-the verb does not declare and a surplus token, and a refused command never reaches the
-handler or the verb span. A refusal lands
+the command does not declare and a surplus token, and a refused command never reaches the
+handler or the command span. A refusal lands
 a tick later on the node that asked, and the view surfaces it beside that caller (see
 [architecture-guide.md → "Canonical view contract"](architecture-guide.md#canonical-view-contract)).
 
 ## Service CIs
 
-Each subsection below lists the verbs the corresponding `includes/app/class-<name>-ci-node.php`
-(`<Name>_CI_Node`) exposes. All three declare their verbs in a static
+Each subsection below lists the commands the corresponding `includes/app/class-<name>-ci-node.php`
+(`<Name>_CI_Node`) exposes. All three declare their commands in a static
 `node_schema()['commands']` array — name, capability, args and handler — and the inherited
 `Service_CI_Node` constructor builds the dispatch table from that declaration, so none
-defines a per-class constructor. **TO=`<ci-name>`, `name`=`<verb>`** addresses a verb.
+defines a per-class constructor. **TO=`<ci-name>`, `name`=`<verb>`** addresses a command.
 
 The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 [`newspack-event-logger-nodes.php`](../newspack-event-logger-nodes.php) registers it with
@@ -100,17 +100,17 @@ The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 
 Two callers ask it: the hub's [`Discovery_Collector_Node`](../includes/class-discovery-collector-node.php), which union-merges every spoke's
 reply into the `discovered_hooks` staging option behind the rules
-editor's hook picker, and the substrate `vault` CI's `test` verb, which probes it to check
+editor's hook picker, and the substrate `vault` CI's `test` command, which probes it to check
 one spoke's connection. It never reads or writes the ruleset — the editor is the only
 rules writer. A spoke's stored credentials (Basic application password, or Bearer) carry a
 user holding the READ role, which is what satisfies the gate on the far end.
 
 ### `rules` — per-URL logging ruleset CRUD
 
-Backs the "Logging Rules" editor on the settings page. All five verbs route through
+Backs the "Logging Rules" editor on the settings page. All five commands route through
 [`Rule_Set`](../includes/class-rule-set.php), which owns the hook tiering, the orphan sweep and the pattern-hash identity:
 
-![The rules CI and the two storage tiers of a rule's hook list. Five verb cards: dump (READ) returns every rule with pointer hooks resolved and hooks_in normalized to inline; save, upsert, delete and reset (all TUNE) replace the whole list, add or replace one rule keyed by pattern, drop one by id, and delete the stored option so the file config seeds again. Below, Rule_Set::save() tiers each log rule's hook list: up to INLINE_HOOK_LIMIT (100) hooks ride inline in the autoloaded rules option; past it the rule stores hooks null and hooks_in mc, with the list in a non-autoloaded newspack_event_logger_nodes_rule_hooks_<id> option mirrored into the substrate Table eln-rule-hooks for 3,600 seconds, and a read with both absent returns an empty list and a rate-limited notice. Side cards give the two size gates (MAX_JSON_BYTES 65,536 and MAX_JSON_DEPTH 12), why the crossover is 100 (the ruleset-bench measurement, never below 65), what crosses to a spoke (hooks hydrated before the push, re-tiered by apply_synced()), and the identity rule: a rule's id is Log_Manager::url_hash() of its pattern, re-derived on every write.](img/api-rules-tiers.png)
+![The rules CI and the two storage tiers of a rule's hook list. Five command cards: dump (READ) returns every rule with pointer hooks resolved and hooks_in normalized to inline; save, upsert, delete and reset (all TUNE) replace the whole list, add or replace one rule keyed by pattern, drop one by id, and delete the stored option so the file config seeds again. Below, Rule_Set::save() tiers each log rule's hook list: up to INLINE_HOOK_LIMIT (100) hooks ride inline in the autoloaded rules option; past it the rule stores hooks null and hooks_in mc, with the list in a non-autoloaded newspack_event_logger_nodes_rule_hooks_<id> option mirrored into the substrate Table eln-rule-hooks for 3,600 seconds, and a read with both absent returns an empty list and a rate-limited notice. Side cards give the two size gates (MAX_JSON_BYTES 65,536 and MAX_JSON_DEPTH 12), why the crossover is 100 (the ruleset-bench measurement, never below 65), what crosses to a spoke (hooks hydrated before the push, re-tiered by apply_synced()), and the identity rule: a rule's id is Log_Manager::url_hash() of its pattern, re-derived on every write.](img/api-rules-tiers.png)
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
@@ -120,7 +120,7 @@ Backs the "Logging Rules" editor on the settings page. All five verbs route thro
 | `delete` | TUNE | `id` (required) | `{ deleted: bool }` — drop the matching rule and re-save. |
 | `reset` | TUNE | — | `{ reset: int }` — DELETE the stored ruleset option so the file config seeds again, and report the seeded rule count. Storing `[]` instead would pin an explicit "log nothing" over the config seed; only an absent row reseeds. Sweeps every pointer rule's durable hooks option on the way out. |
 
-Every write verb ends by asking the live workers to re-read. When the locks directory does not resolve, the verb answers with that error, the rule list already stored — `save`, `upsert` and `delete` write it, `reset` deletes it.
+Every write command ends by asking the live workers to re-read. When the locks directory does not resolve, the command answers with that error, the rule list already stored — `save`, `upsert` and `delete` write it, `reset` deletes it.
 
 `save` and `upsert` take their blob as one token, which the handler decodes: a JSON blob
 carries its own structure.
@@ -157,16 +157,16 @@ hub syncs to spokes:
 
 ### `performance` — the omnibus dashboard CI
 
-The largest CI; every Performance-tree dashboard verb lives here. Its stats verbs read the
+The largest CI; every Performance-tree dashboard command lives here. Its stats commands read the
 `flame-facts` rows through [`App\Stats_Query`](../includes/app/class-stats-query.php), which
 attaches every partition's file read-only and answers in one statement
 ([decision 36](architecture-decisions.md#decision-36-the-query-vocabulary-is-fixed-no-sql-from-outside-a-picker-chooses-the-rollup)); a partition whose builder has written no file yet holds no
 rows. When the files will not open — `pdo_sqlite` missing, a file SQLite cannot attach, no
 active topology declaring `flame-facts` — the substrate raises `Table_Unavailable`, the
-verb logs `performance: stats rows did not open` once a window, and every stats reader
+command logs `performance: stats rows did not open` once a window, and every stats reader
 answers an empty or zeroed shape, `query` with `available` false
-([decision 3](architecture-decisions.md#decision-3-stats-reads-fail-soft-a-stats-write-raises)); any other failure fails the verb, a reader running as root
-among them. Disk-walking verbs work regardless. Every handler throws on bad input and the
+([decision 3](architecture-decisions.md#decision-3-stats-reads-fail-soft-a-stats-write-raises)); any other failure fails the command, a reader running as root
+among them. Disk-walking commands work regardless. Every handler throws on bad input and the
 interpreter wraps the throw as a TM_ERROR reply, so a handler never returns an error shape.
 
 A `--bucket` selection is `Bucket::selection()`'s spelling: comma-separated runs of
@@ -182,7 +182,7 @@ the default of 86,400 seconds is a day. `urls`, `dump_url` and `ask` take at mos
 span; `query` takes as many as its source keeps, `Stats_Query::retention()`, which for
 either source is the span plus `Bucket::RETAIN_SLACK` (12 buckets, an hour). An older
 bucket holds no rows rather than raising. A `min_lifetime` below 300 seconds is refused:
-every stats verb throws, naming the key.
+every stats command throws, naming the key.
 
 `overview`, `urls` and `query` answer from the URL snapshot the overview-prefetch job
 publishes once an interval of its tick, 300 s by default
@@ -192,11 +192,11 @@ which serves for four intervals from the end of its build. `urls` with no `--sea
 `--include_workers`, `--limit` and `--offset`. `overview` with no `--server`, the request chart by `server`
 and by `status_class` — the dashboard's default breakdown, and what it falls back to over
 one server — and the category chart, each over the site's non-worker traffic, are stored
-in it as `includes/app/stored-answers.json` spells their tokens, and a verb asked the same
+in it as `includes/app/stored-answers.json` spells their tokens, and a command asked with the same
 bound arguments serves the stored answer; the job stores only an answer the stats could
 open for. `overview` with a non-blank `--server` answers its totals, leaderboard and owners live and its `servers`
 off the stored overview, which every scope leaves unchanged, unless the server has traffic they lack. Every other question, a snapshot past its four intervals, and a file that is not
-there yet or will not open are answered live. Each of the three verbs answers `as_of`
+there yet or will not open are answered live. Each of the three commands answers `as_of`
 beside the fields below: the epoch second its answer was computed, or the snapshot built.
 
 | Verb | Role | Args | Returns |
@@ -206,7 +206,7 @@ beside the fields below: the epoch second its answer was computed, or the snapsh
 | `query` | READ | `source` (required, `requests`, `timings` or `owners`), `--group` (repeatable), `--filter=field=value` (repeatable), `--measure` (repeatable, at least one), `--bucket`, `--search`, `--sort`, `--order` (default `asc`), `--limit`, `--offset`, `--top`, `--top_by` | `{ as_of, source, table, columns, rows, groups, available, filters }`: one question in `Stats_Query`'s vocabulary ([decision 36](architecture-decisions.md#decision-36-the-query-vocabulary-is-fixed-no-sql-from-outside-a-picker-chooses-the-rollup)). `table` is the table the picker read: for `timings`, `category_window` when the selection is one range of exactly the chart's span ending at the current bucket, it names only the window's fields and every partition's window sits within a bucket of it, else `timings_site` unless a URL or a page is grouped or filtered, or a URL searched, then `timings_page` when it names a page and no URL and searches none, and `timings` otherwise; for `requests`, `requests_hourly` when the rollup keeps every field and measure, the question names no search and the buckets cover whole hours, else `urls_window` when the selection is that same whole span, the question names no search, it names only `url`, `page`, `server` and `worker` and only the measures a `urls` row carries or the distinct `urls` and `pages`, and every partition's window sits within a bucket of it, and `requests` otherwise. A partition's window sits within a bucket when it has expired through the bucket before the selection's start or the one before that, and every row of it stays within a bucket past its end; each partition holding a bucket outside the selection has that bucket subtracted, read from `timings_site` or `requests` for that partition alone, so partitions that disagree still read the window and every answer equals the raw tables over the selection. Each row is positional in `columns` order, a `url` group adding `url_name` beside the hash, a `page` group `page_name`, and a bucket spelled as its key. Each `--filter` carries one value, commas included; several naming one field match any of them, `field!=value` keeps the rows matching none of its tokens' values (`country!=US`, `country!=Unknown` for a known country), a field matches in any case, a repeated token counts once, and a value is spelled as a group answers it (`country=Unknown`, `status_class=5`, which `5xx` also reads as, `url=<hash>`, `page=<page hash>`, `bucket=<key>`). A `requests` query also filters by `rid`, a key it never groups by. Worker requests count unless filtered `worker=0`. A `requests` question measures `p50_ms`, `p95_ms` and `p99_ms`, the nearest rank over the timed requests, and `error_rate`, `errors` (timeouts and fatals) over `count`, null when there are no requests, which folds exactly across partitions. An absent `limit` answers up to 1,000 rows; `offset` is at most 10,000. Under `top` (1–20) and `top_by`, a measure that adds across buckets, the rows are every time row of the top tuples of the non-time groups, in rank order, and `groups` counts the tuples the selection holds; without `top`, `groups` is null. `available` is false where the stats rows did not open. `filters` echoes the filters, each field to its values and a negated one keyed `<field>!` (`{ "country!": [ "US" ] }`), the canonical bucket spelling and the search. The charts a default Overview poll asks, unscoped or scoped to one server the job's last run listed, are answered from that run, dated by its `as_of`. The `owners` source groups and filters by `bucket`, `hour`, `server`, `url`, `page`, `worker` and `owner`, and measures `ms`, `calls` and `requests`; a spec naming a URL or a page reads `owner_timings`, any other `owner_timings_site`, and `worker` beside a URL is refused. The fields, the measures and every refusal are listed in the architecture guide's [Stats Rows](architecture-guide.md#stats-rows). |
 | `dump_url` | READ | `--url=<hash>`, first by position, or `--page=<page hash>` (exactly one, `[a-f0-9]{8,64}`), `--server`, `--filter=field=value` (repeatable), `--bucket` | `{ stats, requests, requests_capped, aggregate_flame, flame_cut, aggregate_profiles, aggregate_owners }` from the URL's request rows, worker traffic counted. `--page` is spelled as `urls --page` spells it and answers a page's window in the same shape: every read below keys on the `page` field instead of `url`, so the stats, the list, the flame, the profile and the owners fold every shape of the page by its traffic, `stats.hash` is the page hash and `stats.url` the name a `urls` page row of several shapes shows, `https://` and the page. Both `--url` and `--page`, or neither, is refused, and an unknown page throws `Page not found`. `stats` covers the chart's span or the `--bucket` selection, scoped by `--server` as the list and the profile are: `hash`, `url`, `count`, the exact `errors`, the request-weighted `avg_ms` and `avg_peak_mb`, `min_ms`, `max_ms`, the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` (null where the URL has no timed request), `max_peak_mb`, `last_updated`, `error_rate` (`errors` over `count`) and `requests_per_second`. A URL with no request in the selection, or none the filter keeps, answers zero when a request row the stats still keep names it on the `--server`, and throws `URL not found` otherwise. `requests` lists the newest `RECENT_REQUEST_LIMIT` (500) by `finished_at`, across every partition: each row carries `rid`, `timestamp` (the start), `duration_ms` (null where the duration is not a sample, [decision 24](architecture-decisions.md#decision-24-an-unmeasured-duration-is-not-a-timing-sample)), `finished_at`, `status_code`, `peak_mb`, `method`, and `error_status` (`-` where there is none); `dump_request` is asked with its `rid` alone. `requests_capped` is true when the list holds fewer requests than `stats.count`. `--filter` narrows the stats and the list together, as `urls` narrows its rows, and refuses a token naming `server`, which `--server` owns, `bucket`, which `--bucket` owns, `url` beside `--url`, which owns it, or `page` beside `--page`, which owns it, naming its owner. `aggregate_flame` is rebuilt every time from the stored flames of the newest `FLAME_REQUEST_LIMIT` (100) listed requests, pruned to `MAX_URL_FLAME_NODES` (1,730) nodes, and is null under a filter, a selection, or a lookup `MAX_SCAN_S` cut short, which alone answers `flame_cut` true. Each partition those requests sit in is asked once for their flames, through `Partition_Node::locate_by()` and `read_many()`, a walk that stops once it holds every folded rid, or at the first segment whose index took its last line (`Partition_Node::index_mtimes()`) before the partition's oldest folded request finished, since the builder appends a flame no earlier than the tick its row's `finished_at` is clamped to; the budget bounds the rest. `aggregate_profiles` is the URL's category profile over the `--bucket` selection, or with none over the buckets the timings keep, in the leaderboard's shape, null without a profiled request. `aggregate_owners` is the URL's time by owner over the same selection, or with none over the buckets the owner rows keep, in `overview.owners`' shape, worker traffic counted. Stats that will not open answer zero stats, an empty list and a null flame and profile. Series come from `query` filtered `url=<hash>`, or for a page `page=<page hash>`. Throws `invalid hash format`. |
 | `search_requests` | READ | `rid` (required) | `{ rid, url_hash }`, read from the rid's `requests` row, so the dashboard can open the request's URL. Throws `Request not found` where the rid has no row, as `dump_request` does, and names the outage where the rows will not open. |
-| `grep_requests` | READ | `pattern` (required), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count, unparseable_lines }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `MAX_SCAN_S`, the same 10 seconds of reading the index walks spend, after which the walk stops reading and leaves any later partition unread. `scanned_partitions` counts the partitions the walk entered, so beside `truncated: true` the last of them may have been read only in part. `unparseable_lines` counts the torn lines the walk skipped: it keeps no cursor to replay one from, so a line that will not unpack is counted and passed over rather than failing every search until its segment rotates. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so the reply never says the request was reassembled from its tail alone. |
+| `grep_requests` | READ | `pattern` (required), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count, unparseable_lines }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `MAX_SCAN_S`, the same 10 seconds of reading the index walks spend, after which the walk stops reading and leaves any later partition unread. `scanned_partitions` counts the partitions the walk entered, so beside `truncated: true` the last of them may have been read only in part. `unparseable_lines` counts the torn lines the walk skipped: it keeps no cursor to replay one from, so a line that will not unpack is counted and passed over rather than failing every search until its segment rotates. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this command wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so the reply never says the request was reassembled from its tail alone. |
 | `dump_request` | READ | `rid` (required) | The full request body and merged flame data, plus computed `findings`, the measurement `caveat` and `owners`: each owner's exclusive time as the request builder measured it on the record's span stack, `{ owner, ms, share, calls }` largest first, with `share` a fraction of the request's duration; the time outside every span is not listed under any owner, so the shares add up to the part measured, and `[]` for a request whose duration is not a sample ([decision 24](architecture-decisions.md#decision-24-an-unmeasured-duration-is-not-a-timing-sample)). The body's `url` is the per-path key its URL row aggregates under; `request_url` is the URL the request fetched, query kept; `url_hash` is the hash its request row names. The rid's `requests` row names where its record sits, which is read once; the flame is located on that row's partition by rid, no further back than the segment closed before the row's `finished_at`, within `MAX_SCAN_S`, and a lookup it cuts leaves `flame_data` out and answers `flame_cut` true, false otherwise. No row means `Request not found`: a request retention took, or one the stats builder has not written yet, which a just-finished request is until its flame is written and the stats builder's next five-second flush. So does a row whose record has aged out of the raw logs, which keep a record `min_lifetime` unless `max_segments` prunes it sooner: that request still counts in every aggregate. Throws `Request not found` for a rid that has no row, or whose place holds no record keyed by it, and `no request <rid>: the stats rows did not open` when the rows will not open. |
 | `ask` | READ | `descriptor` (required), `context` (every descriptor after the first, outermost last, or `--context=` repeated), `--server`, `--search`, `--filter=field=value` (repeatable), `--include_workers`, `--bucket` | The brief for one picker descriptor. A `page:<page hash>` answers the `url:` brief's shape for every shape of the page, as `dump_url --page` reads it, its `subject` `page` and its `dump_url` pointer naming `page`. A `url:` or `page:` brief, and a `span:` under either, takes the rule its busiest shape's newest request was stamped with: the URL itself, or the page's URL with the most requests the window counts, under its filter, server and buckets, workers counted as the window counts them; where the window lists no request, the subject's newest on that server over the buckets the rows keep. It takes the rule its name matches only where there is no such request, or its record cannot be read or carries no stamp, since a stored name drops the query a query-bearing rule matches; wherever this row says `url:` below, a `page:` answers the same of its page, an unknown one refusing `Page not found`. A `span:` or `category:` resolves in its container: under a `request:` from that request, under a `url:` a span resolves in the flame rebuilt from the URL's newest `FLAME_REQUEST_LIMIT` (100) requests over the chart's span, saying so when that rebuild ran out of time, and a category answers from the URL's profile over the buckets the timings keep, or from the leaderboard scoped as `--server` scopes it when the URL has none. Over stats that will not open, a `url:` brief briefs zero stats and no requests, and a span or category under a URL refuses naming the outage; under a URL that has no request row the stats still keep, both refuse `URL not found`. An `overview:` answers for the page as it is being read, so the four filter options narrow it exactly as they narrow `urls`, and its `filters` and `performance_urls` pointer carry each, `bucket` included in its canonical spelling. It lists the busiest pages, at most `Ask_Assembler::TOP_SPANS` (6), as `pages`, each with `page_hash`, `page`, `server`, `shapes`, `busiest_hash` (the URL hash of its one shape, or of its busiest by request count, a tie going to the higher hash because `Stats_Query::ranking()` breaks ties in the sort's own direction, descending here) and its `count`, `avg_ms`, `max_ms` and `errors`; a page of several shapes costs one more read for its busiest. The brief asks the `urls` question the table asks, so where the snapshot answers the table it answers the brief, its busiest shapes included, and otherwise both read live; a `page=` filter answers the brief live, as any filter does, and the brief lists that page's one row. Its `as_of` dates what answered it, the snapshot's build or the live read, as the `urls` reply's does. Its `stats` carry `pages` beside `urls`. `--filter` narrows an `overview:`, `url:` or `page:` brief as `urls` and `dump_url` narrow theirs, and cannot name `server`, which `--server` owns, or `bucket`, which `--bucket` owns, and under a `url:` brief cannot name `url`, or under a `page:` brief `page`, which the descriptor owns: a token naming one is refused, naming its owner; it narrows a `url:` brief as `dump_url --filter` does: `filter` echoes the tokens, `stats` and `worst_requests` are of the requests it leaves, and the `dump_url` pointer carries it. `--bucket` narrows a `url:` brief as `dump_url --bucket` does: `bucket` is the selection's canonical spelling, `stats` count the requests completing inside it, zero where the URL has none, `worst_requests` come from the requests completing inside it, and the `dump_url` pointer carries it. A `url:` brief's `stats.max_ms`, like `dump_url`'s, is null where the URL has no timed request, and so are its finding's `metric.max_ms` and the `max_ms` of an `overview:` brief's page row. An `overview:` or `url:` brief refuses a selection `urls` refuses; every other descriptor neither reads nor checks it. Either way `worst_requests` ranks by measured duration ([decision 24](architecture-decisions.md#decision-24-an-unmeasured-duration-is-not-a-timing-sample)): a timeout's duration is the builder's eviction wait and an abort's ends at the stop, so they and a duration of 0 rank after every measured request with a null `duration_ms`. Every other descriptor ignores the filter options. |
 | `list_hooks` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category, noisy }`. `noisy` names the catalog's hooks a `noisy_log_events` pattern matches, the ones a bulk selection never takes. |
@@ -242,7 +242,7 @@ answers `updated: false` for a ruleset already in place, because the hub re-push
 sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker, which
 re-parses every `.tsl` for the same answer.
 
-## Substrate verbs the dashboards use
+## Substrate commands the dashboards use
 
 The dashboards call into substrate-owned CIs over the same `/command` endpoint. Ten mount
 on `newspack_nodes/request_graph_ready`: `classes`, `layouts`, `topologies`, `raw-logs`,
@@ -301,7 +301,7 @@ its request shape and HMAC authentication.
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-An [MCP](https://modelcontextprotocol.io/) server over verbs this plugin already answers.
+An [MCP](https://modelcontextprotocol.io/) server over commands this plugin already answers.
 `MCP_Controller` declares it on the substrate's
 [`Mcp_Door`](https://github.com/Automattic/newspack-nodes/blob/v2.129.0/includes/class-mcp-door.php),
 and the deferred bootstrap calls its `wire()`. The substrate's
@@ -309,15 +309,15 @@ and the deferred bootstrap calls its `wire()`. The substrate's
 section is the contract for what every door shares: the JSON-RPC methods and their error
 codes, the bodiless 202 for a notification, the Bearer session whose scope is a ceiling on
 its minting user, the OAuth resource and the `WWW-Authenticate` header on each 401, the 401,
-403, 429 and 503 refusals, the arguments riding to the verb by name, the schema each tool
-takes from its verb's declared args, and the `<site-data>` fence every reply leaves in. This plugin declares the
+403, 429 and 503 refusals, the arguments riding to the command by name, the schema each tool
+takes from its command's declared args, and the `<site-data>` fence every reply leaves in. This plugin declares the
 rest: the namespace `newspack-event-logger-nodes/v1`, which also names the door's resource
 and its rate-limit slot; the eleven tools; the glossary; the measurement caveat; and a
 `serverInfo` naming the plugin at the version it ships. It adds no runtime surface:
 `tools/call` mounts the same request graph `/command` does, through
 `Bootstrap::mount_request_graph()`, and dispatches through the same interpreter.
 
-![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals, and 401 when Command_Auth::admits_resource() refuses a session an OAuth grant minted for another resource than MCP_Controller::resource(), every 401 carrying WWW-Authenticate: Bearer resource_metadata naming where to sign in; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 while all 20 of the handle's slots are held, each claimed by an atomic cache add() and freed one 10-second window after its call, or 503 rate_limit_unavailable when neither memcached nor APCu answers, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so a payload can never close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees nine tools, a tune session two more, and five verbs have no tool at all: performance.list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
+![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the command's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals, and 401 when Command_Auth::admits_resource() refuses a session an OAuth grant minted for another resource than MCP_Controller::resource(), every 401 carrying WWW-Authenticate: Bearer resource_metadata naming where to sign in; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 while all 20 of the handle's slots are held, each claimed by an atomic cache add() and freed one 10-second window after its call, or 503 rate_limit_unavailable when neither memcached nor APCu answers, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the command binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so a payload can never close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees nine tools, a tune session two more, and five commands have no tool at all: performance.list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
 **Permission**: an `Authorization: Bearer <handle>.<secret>` header naming a live command
 session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`,
@@ -332,7 +332,7 @@ which tells an MCP client where to sign in. A session an OAuth grant minted for 
 resource answers 401 `mcp_unauthorized`; a session issued by hand names no resource and is
 admitted.
 
-Eleven tools, one per verb:
+Eleven tools, one per command:
 
 | Tool | Node.verb | Role |
 |------|-----------|------|
@@ -349,12 +349,12 @@ Eleven tools, one per verb:
 | `rules_delete` | `rules.delete` | TUNE |
 
 `performance_urls`, `dump_url`, `performance_query` and `performance_ask` each take `bucket`, a
-selection of five-minute buckets, and narrow as their verbs' `--bucket` does: up to the
+selection of five-minute buckets, and narrow as their commands' `--bucket` does: up to the
 chart's span, or for `performance_query` up to its source's retention, the span plus 12
 buckets. Each tool's description names both counts as `min_lifetime` sets them when the
 tools are listed.
 `performance_query` takes `group`, `filter` and `measure` as arrays, beside `top` and `top_by`.
-The `filter` of `performance_urls`, `dump_url` and `performance_ask` opens with its verb's own
+The `filter` of `performance_urls`, `dump_url` and `performance_ask` opens with its command's own
 `filter` description, the one the CLI and the console read: the token grammar, then every
 `Stats_Query::FIELDS['requests']` field but `server` and `bucket`, which their own arguments
 own, each with how its value is spelled and, for `url` and `page`, when the subject owns it.
@@ -403,10 +403,10 @@ human, and refuses everything without a credential.
 
 ## WP-CLI
 
-Both verbs register under the substrate's `nodes` namespace, in the deferred bootstrap, and
+Both commands register under the substrate's `nodes` namespace, in the deferred bootstrap, and
 both run `@when after_wp_load`.
 
-![The two WP-CLI verbs. wp nodes reqgrep in three steps. First it picks the source: --stdin reads packed lines from stdin and refuses --follow, --recent and --firehose; --follow runs one Consumer per partition from the tail under the event loop; otherwise one Consumer per partition reads from the first segment, or from the second-to-last with --recent; and --firehose must resolve inside Config::get_logs_directory(). Second, Reqgrep_Core matches each line when its rid equals the pattern or the preg_quoted pattern appears case-insensitively, an absent pattern counting as a dot; unmatched lines wait in a history ring of --num-buckets (10, clamped 1 to 100) buckets of --bucket-size (250, clamped 1 to 10,000), and a matched rid enters an in-flight LRU of 100 items by 3 buckets rotating every 60 seconds, capped at 20,000 lines and 10 MiB a request. Third, it prints each request as it reaches process (complete) or process (aborted), and anything evicted or still open prints as [incomplete]. wp nodes ruleset-bench times three paths, autoload, inline and pointer, over a grid of 50 to 5,000 hooks per rule by 1, 10 and 50 rules, --iterations times (default 200, minimum 1), and prints the rule for picking INLINE_HOOK_LIMIT: the largest K whose inline cost stays below the pointer floor while the autoload tax stays negligible, never below 65. With no cache backend the pointer column is the bind loop alone.](img/api-cli-flows.png)
+![The two WP-CLI commands. wp nodes reqgrep in three steps. First it picks the source: --stdin reads packed lines from stdin and refuses --follow, --recent and --firehose; --follow runs one Consumer per partition from the tail under the event loop; otherwise one Consumer per partition reads from the first segment, or from the second-to-last with --recent; and --firehose must resolve inside Config::get_logs_directory(). Second, Reqgrep_Core matches each line when its rid equals the pattern or the preg_quoted pattern appears case-insensitively, an absent pattern counting as a dot; unmatched lines wait in a history ring of --num-buckets (10, clamped 1 to 100) buckets of --bucket-size (250, clamped 1 to 10,000), and a matched rid enters an in-flight LRU of 100 items by 3 buckets rotating every 60 seconds, capped at 20,000 lines and 10 MiB a request. Third, it prints each request as it reaches process (complete) or process (aborted), and anything evicted or still open prints as [incomplete]. wp nodes ruleset-bench times three paths, autoload, inline and pointer, over a grid of 50 to 5,000 hooks per rule by 1, 10 and 50 rules, --iterations times (default 200, minimum 1), and prints the rule for picking INLINE_HOOK_LIMIT: the largest K whose inline cost stays below the pointer floor while the autoload tax stays negligible, never below 65. With no cache backend the pointer column is the bind loop alone.](img/api-cli-flows.png)
 
 ### `wp nodes reqgrep [<pattern>]`
 
@@ -584,7 +584,7 @@ Named substrate callables the bootstrap registers alongside them:
 - `Command_Interpreter_Node::$around_dispatch`, wrapped by
   [`Diagnostics_Bridge::install()`](../includes/class-diagnostics-bridge.php) around
   whatever it already held, and passing on to it, unrendered, the command-line
-  closure the substrate hands each verb. The architecture guide states the verb
+  closure the substrate hands each command. The architecture guide states the command
   span it opens and
   `Log_Manager::timed()`'s rule that every throwable propagates.
 

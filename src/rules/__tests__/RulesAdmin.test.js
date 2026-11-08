@@ -95,7 +95,7 @@ describe( 'RulesAdmin', () => {
 	let reset;
 	const mounted = [];
 
-	// The verb answers are published, not awaited: the graph hands the
+	// The command answers are published, not awaited: the graph hands the
 	// component an `onMutation` handler and calls it when a reply lands.
 	let onMutation;
 
@@ -121,7 +121,7 @@ describe( 'RulesAdmin', () => {
 		} );
 	}
 
-	// Publish a verb's answer, as a reply landing on its node would.
+	// Publish a command's answer, as a reply landing on its node would.
 	const answer = ( verb, error = null ) =>
 		act( () => onMutation( { verb, error } ) );
 

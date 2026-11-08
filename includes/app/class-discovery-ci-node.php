@@ -4,7 +4,7 @@
  *
  * `newspack-event-logger-nodes.php` mounts this as the `discovery` node on the
  * substrate's `newspack_nodes/request_graph_ready` action, beside the
- * `performance` and `rules` service CIs. One caller asks its one verb: the
+ * `performance` and `rules` service CIs. One caller asks its one command: the
  * hub's `Discovery_Collector_Node` fans `discovery.get` at every connected
  * spoke and union-merges the replies into the `discovered_hooks` staging
  * option behind the ruleset editor's hook picker.
@@ -30,22 +30,22 @@ use Newspack_Nodes\Service_CI_Node;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * The `discovery` service CI. Its one verb is declared in node_schema(), and
+ * The `discovery` service CI. Its one command is declared in node_schema(), and
  * the inherited Service_CI_Node constructor builds the dispatch table from
- * that declaration, wrapping the handler in the capability role the verb
+ * that declaration, wrapping the handler in the capability role the command
  * names — so this class needs neither a constructor nor a gate of its own,
- * and the catalog scan picks the verb up with no registration.
+ * and the catalog scan picks the command up with no registration.
  */
 class Discovery_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Declare the `discovery` CI: its category, description, and the single
-	 * `get` verb with its capability role and handler. The inherited
+	 * `get` command with its capability role and handler. The inherited
 	 * Service_CI_Node ctor turns this into the dispatch table, and the topology
 	 * console reads the same array for the palette entry.
 	 *
 	 * `get` declares READ, the lowest of the substrate's three roles, because it
-	 * only reads `$wp_filter`. Service_CI_Node applies whatever role the verb
+	 * only reads `$wp_filter`. Service_CI_Node applies whatever role the command
 	 * declares, so a handler gating itself would override this declaration
 	 * silently.
 	 *

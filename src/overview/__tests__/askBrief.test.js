@@ -1049,6 +1049,9 @@ test( 'a brief carries the tool call that fetches it again', () => {
 	expect( md ).toContain(
 		'https://example.test/wp-json/newspack-event-logger-nodes/v1/mcp'
 	);
+	expect( md ).toContain(
+		'it answers the same commands this brief was built from.'
+	);
 } );
 
 // The endpoint is a property of the site, not of each thing asked about.
@@ -1151,7 +1154,7 @@ test( 'nothing to say is an empty string, not "undefined"', () => {
 /**
  * A brief is only useful where it lands. This opens a chat with the brief
  * already in it — worth having wherever the site is publicly reachable, since
- * an agent there can also call the `fetch` verbs itself.
+ * an agent there can also call the `fetch` commands itself.
  */
 test( 'the Claude link carries the brief as a prefilled prompt', () => {
 	const url = new URL( askClaudeUrl( '## span\n\n- **ms:** 791.5' ) );

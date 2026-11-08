@@ -469,7 +469,7 @@ class FlameTreeTest extends TestCase {
 		$this->assertFalse( Flame_Tree::is_hook_span( 'sync remote plugin' ) );
 	}
 
-	/** A verb's span is `<class> <verb> command`, read by its base's suffix. */
+	/** A command's span is `<class> <verb> command`, read by its base's suffix. */
 	public function test_a_command_span_is_read_by_its_suffix(): void {
 		$this->assertSame( 'command', Flame_Tree::span_kind( 'Performance_CI urls' . Flame_Tree::COMMAND_SUFFIX ) );
 		$this->assertSame( 'command', Flame_Tree::span_kind( 'Rules_CI dump command: traced' ) );
@@ -611,7 +611,7 @@ class FlameTreeTest extends TestCase {
 		$this->assertNotContains( '#905665', \array_map( 'strtolower', Flame_Tree::platform_colors() ) );
 	}
 
-	/** A verb's reads nest inside its command span, so they stand out from it. */
+	/** A command's reads nest inside its command span, so they stand out from it. */
 	public function test_the_reads_differ_from_the_command_spans_by_twenty_delta_e_or_more(): void {
 		$colors = Flame_Tree::platform_colors();
 		foreach ( [ 'stats query', 'flame lookup', 'grep scan' ] as $span ) {
@@ -701,7 +701,7 @@ class FlameTreeTest extends TestCase {
 		}
 	}
 
-	/** The builders' and the prefetch job's own upkeep spans — never their point lines, a verb or a hook. */
+	/** The builders' and the prefetch job's own upkeep spans — never their point lines, a command or a hook. */
 	public function test_span_kind_names_the_plugins_own_spans_upkeep(): void {
 		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_PAGES, Flame_Tree::SNAPSHOT_INDEX . ': pages_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS, Flame_Tree::STATS_QUERY . ': timings by category', Flame_Tree::FLAME_LOOKUP, Flame_Tree::GREP_SCAN . ': firehose.p0' ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::span_kind( $span ), $span );

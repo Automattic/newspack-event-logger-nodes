@@ -6,7 +6,7 @@
  * renders this inside the URL modal once a request row is selected.
  *
  * The data arrives already assembled. The `request-detail:view` node holds the
- * slice the `performance` CI's `dump_request` verb returns — the durable
+ * slice the `performance` CI's `dump_request` command returns — the durable
  * request body read out of a `requests.log` partition, with the matching
  * `flames.log` entry merged in as `flame_data`. Nothing here fetches: each
  * section renders its prop and hides itself when that prop is empty.

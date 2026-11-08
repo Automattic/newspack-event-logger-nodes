@@ -1117,9 +1117,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Emit the base config plus this node's verb-config, from STATE — one
+	 * Emit the base config plus this node's command config, from STATE — one
 	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
-	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
+	 * default, for dump_config introspection (REPL/GUI). No generic command recording.
 	 *
 	 * `set_inflight_target` reads the Flight sibling, which owns the target as
 	 * a base-Node property — its config would otherwise never round-trip, being
@@ -2062,13 +2062,13 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * The Flight sibling, narrowed to non-null for the two `set_inflight_*`
-	 * verbs, which cannot honour a setting with no sibling to hold it.
-	 * Throwing IS how a verb refuses here — the substrate wraps a handler
+	 * commands, which cannot honour a setting with no sibling to hold it.
+	 * Throwing IS how a command refuses here — the substrate wraps a handler
 	 * throw as `TM_COMMAND|TM_ERROR`, where a refusal string would report
 	 * success for a command that applied nothing.
 	 *
 	 * A torn-down builder never reaches it: teardown unregisters the `:config`
-	 * interpreter and drops its patron link, so the verbs refuse one step
+	 * interpreter and drops its patron link, so the commands refuse one step
 	 * earlier and identically to every other `patron()` handler in the tree.
 	 * Introspection runs on whatever the registry hands a sweep, so
 	 * `dump_config()` reads the nullable `flight_target()` instead.
@@ -2121,10 +2121,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Delta mode for the hidden Flight sibling. The setting lives HERE, not on
 	 * the sibling: Flight is the node that reads it, but this is the node whose
-	 * verb sets it and whose `dump_config()` has to replay it, and a sibling is
+	 * command sets it and whose `dump_config()` has to replay it, and a sibling is
 	 * derived state a teardown takes with it.
 	 *
-	 * This IS the `set_inflight_delta` verb: `Schema_Reflection` synthesizes a
+	 * This IS the `set_inflight_delta` command: `Schema_Reflection` synthesizes a
 	 * handler that calls it dynamically, so nothing references it statically.
 	 *
 	 * @param bool $on True to emit only rows whose activity advanced since the last tick.
@@ -2139,9 +2139,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Declared arguments, `{name}:config` verbs, and TM_REQUEST verbs.
+	 * Declared arguments, `{name}:config` commands, and TM_REQUEST requests.
 	 *
-	 * The `set_inflight_*` verbs configure in-flight snapshotting, whose work
+	 * The `set_inflight_*` commands configure in-flight snapshotting, whose work
 	 * the hidden Flight sibling does — Flight is hidden from the topology
 	 * editor, so the knobs have to surface on this node's interpreter to be
 	 * reachable at all.

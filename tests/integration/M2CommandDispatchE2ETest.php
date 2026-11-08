@@ -4,7 +4,7 @@
  *
  * Proves that every service CI mounted by the plugin's
  * `newspack_nodes/request_graph_ready` listener responds
- * end-to-end to a representative verb when driven through the
+ * end-to-end to a representative command when driven through the
  * substrate's production `HTTP_In` endpoint. The path under
  * test:
  *
@@ -15,7 +15,7 @@
  *                                       (mount hook installs every service CI
  *                                       via $base_interpreter->make_node())
  *                                    →  Router (peels TO head)
- *                                    →  Service CI (interpret + run verb)
+ *                                    →  Service CI (interpret + run command)
  *                                    →  interpreter sink → base interpreter → Router
  *                                    →  HTTP_In (writes packed Message)
  *                                    →  ob_get_clean captures the body
@@ -48,9 +48,9 @@ class M2CommandDispatchE2ETest extends TestCase {
 	}
 
 	/**
-	 * @dataProvider verb_provider
+	 * @dataProvider command_provider
 	 */
-	public function test_each_ci_responds_to_a_representative_verb( string $to, string $verb, string $args ): void {
+	public function test_each_ci_responds_to_a_representative_command( string $to, string $verb, string $args ): void {
 		// HTTP_In::dispatch lazy-builds the request-scope graph
 		// (`_router` / `_command_interpreter` / `_http`) and fires
 		// `newspack_nodes/request_graph_ready`, which the mount hook in
@@ -98,12 +98,12 @@ class M2CommandDispatchE2ETest extends TestCase {
 	/**
 	 * Fidelity guard for the data-provider's JSON-string args: the provider
 	 * passes `'{}'` for performance.overview, and build_request() must decode it
-	 * into the array the verb consumes (verbs do
+	 * into the array the command consumes (commands do
 	 * `is_array($payload) ? $payload : []`, so a raw string collapses to `[]`).
-	 * Asserting the verb returns a structured payload proves the body arrived
+	 * Asserting the command returns a structured payload proves the body arrived
 	 * decoded.
 	 */
-	public function test_verb_receives_decoded_json_string_args_from_provider(): void {
+	public function test_command_receives_decoded_json_string_args_from_provider(): void {
 		$ctrl = new HTTP_In_Node();
 		$ctrl->set_test_mode( true );
 		\ob_start();
@@ -122,8 +122,8 @@ class M2CommandDispatchE2ETest extends TestCase {
 	 * doesn't read headers but real callers always set Content-Type.
 	 */
 	/**
-	 * Extract a verb's response Message from a dispatch body. The `/command`
-	 * body is JSONL — one packed Message per line — because a verb may emit
+	 * Extract a command's response Message from a dispatch body. The `/command`
+	 * body is JSONL — one packed Message per line — because a command may emit
 	 * stderr/log lines alongside its response. Pick the line carrying THIS
 	 * command's correlation id (`e2e-{verb}`) rather than `Message::unpacked()`
 	 * on the whole body (which would choke on the multi-line JSONL).
@@ -159,9 +159,9 @@ class M2CommandDispatchE2ETest extends TestCase {
 		// json-encoded; only the whole-message envelope (Message::packed) is
 		// JSON. The packed body is one JSONL line, which the substrate's
 		// messages_from_body() parses as a single command. `$args` is a
-		// JSON-string from the provider; decode it into the array the verbs
+		// JSON-string from the provider; decode it into the array the commands
 		// expect (they do `is_array($payload) ? $payload : []`, so a raw
-		// string collapses to `[]` and the verb loses its parameters).
+		// string collapses to `[]` and the command loses its parameters).
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_COMMAND;
 		$message[ Message::FROM ]  = '_http';
@@ -179,14 +179,14 @@ class M2CommandDispatchE2ETest extends TestCase {
 	}
 
 	/**
-	 * Representative verb per CI. Each verb either takes no args or accepts a
-	 * minimal safe arg blob. Verbs that mutate / require complex setup are
-	 * avoided — this test proves the dispatch path works, not that every verb
-	 * is implemented correctly (per-verb tests cover that).
+	 * Representative command per CI. Each command either takes no args or accepts a
+	 * minimal safe arg blob. Commands that mutate / require complex setup are
+	 * avoided — this test proves the dispatch path works, not that every command
+	 * is implemented correctly (per-command tests cover that).
 	 *
 	 * @return array<string,array{string,string,string}>
 	 */
-	public static function verb_provider(): array {
+	public static function command_provider(): array {
 		return [
 			'workers.list'       => [ 'workers',     'list',   '{}' ],
 			'discovery.get'      => [ 'discovery',   'get',    '{}' ],

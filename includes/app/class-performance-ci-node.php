@@ -2,7 +2,7 @@
 /**
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
- * Verbs the live surfaces drive:
+ * Commands the live surfaces drive:
  *   - overview / urls / dump_url / search_requests / grep_requests /
  *     dump_request — the performance dashboard's per-slice graph
  *     (`src/overview/hooks/usePerformanceGraph.js`), plus the
@@ -21,7 +21,7 @@
  * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
- *  - Auth: each verb DECLARES its role in node_schema() — `read` for the
+ *  - Auth: each command DECLARES its role in node_schema() — `read` for the
  *    dashboard slices, `tune` for the settings receiver — and `dispatch()`
  *    refuses a caller below it (ADR-26). No handler re-gates itself; a hard-coded
  *    gate would silently override the declaration.
@@ -73,7 +73,7 @@ use Newspack_Nodes\Service_CI_Node;
 /**
  * Service CI mounted as `performance` on `newspack_nodes/request_graph_ready`.
  *
- * Every verb is declared once in `node_schema()['commands']`; the inherited
+ * Every command is declared once in `node_schema()['commands']`; the inherited
  * Service_CI_Node constructor turns that schema into the dispatch table, so
  * this class holds no commands table of its own.
  *
@@ -118,7 +118,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const OVERVIEW_BRIEF_PAGES = Ask_Assembler::TOP_SPANS;
 
 	/**
-	 * TSL node names the disk-walking verbs resolve their partitions through.
+	 * TSL node names the disk-walking commands resolve their partitions through.
 	 * The dirs come from the DECLARATION (`Bootstrap::node_dirs`), never from a
 	 * path this class builds: request-builder alone pins `alerts.p0` and
 	 * `gyroscope.p0` while `requests.p{partition}` expands, so any assumption
@@ -1515,7 +1515,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * not read for `$read`, which is said once a window. Only a
 	 * `PDOException` falls back; anything else `$read` raises propagates.
 	 *
-	 * @param array<array-key,mixed>                                                            $args The bound verb args.
+	 * @param array<array-key,mixed>                                                            $args The bound command args.
 	 * @param int                                                                               $now  The reply's clock.
 	 * @param \Closure(Url_Snapshot, array<array-key,mixed>): array<string,mixed>               $read The answer off the opened snapshot, as `stored_urls()` gives one.
 	 * @return array<string,mixed>|null
@@ -1538,7 +1538,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `SNAPSHOT_VARIES` at the default the binder gives it, so a search, a
 	 * bucket selection, a filter or any arg added later answers live.
 	 *
-	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @param array<array-key,mixed> $args The bound command args.
 	 */
 	private static function snapshot_answers( array $args ): bool {
 		$defaults = \array_diff_key( self::url_defaults(), \array_flip( self::SNAPSHOT_VARIES ) );
@@ -1557,7 +1557,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException As `Command_Args::bind()`.
 	 */
 	private static function url_defaults(): array {
-		return Command_Args::bind( Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) ), [] );
+		return Command_Args::bind( Core::arr( Command_Interpreter_Node::declared_commands( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) ), [] );
 	}
 
 	/**
@@ -1566,7 +1566,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * that page's URLs.
 	 *
 	 * @param Url_Snapshot           $snapshot The published snapshot.
-	 * @param array<array-key,mixed> $args     The bound verb args.
+	 * @param array<array-key,mixed> $args     The bound command args.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException As `Url_Snapshot::pages()` and `shapes()`.
 	 * @throws \PDOException When the snapshot opens but will not read.
@@ -1600,7 +1600,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param Url_Snapshot|null      $built The snapshot being built; null reads the rows.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a verb without a stored answer, or
-	 *                                   what the verb refuses.
+	 *                                   what the command refuses.
 	 */
 	public static function answer_live( string $verb, array $args, int $now, ?Url_Snapshot $built ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
@@ -1922,7 +1922,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * unknown sort reads as `count`, any order but `asc` as `desc`, and the
 	 * listing's limit and offset clamp inside `Stats_Query`'s bounds.
 	 *
-	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @param array<array-key,mixed> $args The bound command args.
 	 * @return array{0:string, 1:string, 2:Url_Filters, 3:string, 4:string, 5:int, 6:int}
 	 */
 	private static function url_question( array $args ): array {
@@ -2326,7 +2326,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * filter token one value and a field's tokens ORed, the bucket column
 	 * spelled as keys, and what the rows are OF.
 	 *
-	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @param array<array-key,mixed> $args The bound command args.
 	 * @param int                    $now  The reply's clock.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a bucket selection `Bucket::selection()`
@@ -2471,7 +2471,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Epoch seconds from `Core::$now`, read once per verb and passed down,
+	 * Epoch seconds from `Core::$now`, read once per command and passed down,
 	 * per ELN decision 29.
 	 */
 	private static function now(): int {
@@ -2538,7 +2538,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `filter` arg a verb filtering a URL set declares: the grammar, then
+	 * The `filter` arg a command filtering a URL set declares: the grammar, then
 	 * every `requests` field `URL_SET_OWNERS` leaves, each spelled and, where
 	 * a subject argument owns it, saying when it is refused.
 	 *
@@ -2562,11 +2562,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Schema-driven dispatch: each verb is declared once in
+	 * Schema-driven dispatch: each command is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
-	 * builds the commands table from this schema. Stats-reading verbs ask
+	 * builds the commands table from this schema. Stats-reading commands ask
 	 * `Stats_Query`, which answers no rows when the stats file will not
-	 * open. Disk-walking verbs work regardless.
+	 * open. Disk-walking commands work regardless.
 	 *
 	 * The substrate binds each verb's tokens against its `args` before the
 	 * handler runs, so a handler reads `$args['<name>']` typed and defaulted,

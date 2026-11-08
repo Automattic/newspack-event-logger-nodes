@@ -5,7 +5,7 @@
  * The orchestrator reads FOUR per-slice view nodes
  * (`overview:view` / `urls:view` / `url-detail:view` / `request-detail:view`), each
  * via its own `useNodeField`. `usePerformanceGraph` mounts the polls and hands
- * back `handleUrlParamsChange` alone; the verbs a click drives are this
+ * back `handleUrlParamsChange` alone; the commands a click drives are this
  * component's own one-shots, held beside the state each reply sets.
  *
  * These tests cover the ORCHESTRATION contract only — which child renders given
@@ -51,9 +51,9 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 	nodesData: () => ( { restUrl: '/wp-json/', nonce: 'NONCE' } ),
 } ) );
 
-// @longform Every on-demand verb this page drives is a one-shot, and this
+// @longform Every on-demand command this page drives is a one-shot, and this
 // suite has no graph for them. The double records each by scope and hands the
-// test `answerCommand`, which fires that verb's own `onDone` — the same
+// test `answerCommand`, which fires that command's own `onDone` — the same
 // callback the real reply would land in, so the paths under test are the real
 // ones and only the wire is stood in for. It keeps the asks standing as the
 // Fetcher does: `run()` asks, a read's superseding the last, `abandon()`
@@ -96,10 +96,10 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 } ) );
 
 /**
- * Deliver a reply to the verb registered under `key`. One naming its `args`
+ * Deliver a reply to the command registered under `key`. One naming its `args`
  * is judged as the gate judges it: dropped unless an ask standing asked
  * exactly those, which it then settles. Its `subject` is what the real hook
- * reads off the reply's address: the verb's `subjectOf` of those args, by
+ * reads off the reply's address: the command's `subjectOf` of those args, by
  * default the first token, unless the answer names its own.
  *
  * @param {string} key    Scope, or `<ci>:<command>`.
@@ -135,7 +135,7 @@ function answerCommand( key, answer ) {
 }
 
 /**
- * What a verb was asked, most recent last.
+ * What a command was asked, most recent last.
  *
  * @param {string} key Scope, or `<ci>:<command>`.
  * @return {Array[]} The argument arrays it was run with.

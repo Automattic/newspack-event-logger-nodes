@@ -6,10 +6,10 @@
  * Each extends Service_CI_Node, whose ctor builds its dispatch table from
  * `node_schema()['commands']` via `commands_from_schema()`. That helper emits a
  * rate-limited "no callable handler; skipping" warning (through
- * Core::print_less_often → the stderr handler) for any named verb lacking a
+ * Core::print_less_often → the stderr handler) for any named command lacking a
  * handler. `test_migrated_ci_emits_no_handlerless_warning` captures the stderr
  * handler and asserts NO CI warns at construction — i.e. every node_schema
- * verb has a callable handler.
+ * command has a callable handler.
  *
  * Two further guards protect the HEADLINE contract — that these CIs are
  * catalog-visible (Inspector-invokable) Service nodes:
@@ -18,9 +18,9 @@
  *     catalog with `category === 'Service'`. A typo dropping a category
  *     to '' would silently drop the interpreter from the catalog, and one to
  *     'Hidden' would mislabel it; this fails loudly on either.
- *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
- *     verb in its node_schema()['commands'] is a key in `commands()` — the
- *     schema→commands derivation installed each verb (symmetry with the
+ *   - test_every_schema_command_installs: for each CI, asserts every
+ *     command in its node_schema()['commands'] is a key in `commands()` — the
+ *     schema→commands derivation installed each command (symmetry with the
  *     substrate's ServiceCiSchemaCommandsTest install guard).
  *
  * Mirrors the substrate's ClassesCITest + ServiceCiSchemaCommandsTest guards.
@@ -31,7 +31,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -49,13 +49,13 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	];
 
 	protected function tearDown(): void {
-		VerbHarness::reset();
+		CommandHarness::reset();
 		parent::tearDown();
 	}
 
 	/**
 	 * Construct each guarded CI and assert it does NOT emit the
-	 * "no callable handler" warning — proving every schema verb has a handler.
+	 * "no callable handler" warning — proving every schema command has a handler.
 	 *
 	 * @dataProvider provide_migrated_cis
 	 *
@@ -72,7 +72,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 		$this->assertStringNotContainsString(
 			'no callable handler',
 			$buf,
-			'a migrated service CI dropped a verb handler in the schema migration'
+			'a migrated service CI dropped a command handler in the schema migration'
 		);
 	}
 
@@ -93,7 +93,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	public function test_migrated_cis_appear_in_substrate_class_catalog_as_service(): void {
 		// `classes dump` is gate-by-default (manage_options) in the substrate.
 		$GLOBALS['_current_user_can'] = true;
-		$result = VerbHarness::fire( new Classes_CI_Node(), 'classes', 'dump' );
+		$result = CommandHarness::fire( new Classes_CI_Node(), 'classes', 'dump' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'classes', $result );
@@ -125,42 +125,42 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	}
 
 	/**
-	 * Install-as-command guard: for each guarded CI, every verb declared in its
+	 * Install-as-command guard: for each guarded CI, every command declared in its
 	 * node_schema()['commands'] is present as a key in `commands()`. The
 	 * schema→commands derivation (Service_CI_Node::commands_from_schema) must
-	 * install each verb — this catches a verb that lists in the schema
+	 * install each command — this catches a command that lists in the schema
 	 * but gets filtered out of dispatch.
 	 *
-	 * Non-vacuous: the assertion can fail — it would if a schema verb were
+	 * Non-vacuous: the assertion can fail — it would if a schema command were
 	 * dropped from the commands table (e.g. losing its callable handler, which
 	 * commands_from_schema skips). The provider asserts every CI declares at
-	 * least one verb, so the loop is never empty.
+	 * least one command, so the loop is never empty.
 	 *
 	 * @dataProvider provide_migrated_cis
 	 *
 	 * @param callable $factory Builds the interpreter instance.
 	 */
-	public function test_every_schema_verb_installs_as_a_command( callable $factory ): void {
+	public function test_every_schema_command_installs( callable $factory ): void {
 		$interpreter = $factory();
 		$this->assertInstanceOf( Command_Interpreter_Node::class, $interpreter );
 
-		$schema = $interpreter::node_schema();
-		$verbs  = \array_filter(
+		$schema   = $interpreter::node_schema();
+		$declared = \array_filter(
 			$schema['commands'] ?? [],
 			static fn ( $v ): bool => \is_array( $v ) && '' !== (string) ( $v['name'] ?? '' )
 		);
 		$this->assertNotEmpty(
-			$verbs,
-			'migrated CI declares no named verbs — schema scan is vacuous'
+			$declared,
+			'migrated CI declares no named commands — schema scan is vacuous'
 		);
 
 		$commands = $interpreter->commands();
-		foreach ( $verbs as $verb ) {
-			$name = (string) $verb['name'];
+		foreach ( $declared as $command ) {
+			$name = (string) $command['name'];
 			$this->assertArrayHasKey(
 				$name,
 				$commands,
-				"schema verb '{$name}' on " . $interpreter::class . ' did not install as a command — schema→commands derivation dropped it'
+				"schema command '{$name}' on " . $interpreter::class . ' did not install as a command — schema→commands derivation dropped it'
 			);
 		}
 	}

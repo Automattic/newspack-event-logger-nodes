@@ -16,7 +16,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 #[CoversClass( Ask_Assembler::class )]
 class AskAssemblerTest extends TestCase {
 
-	/** The URL filters of an unfiltered page, as the `ask` verb hands them on. */
+	/** The URL filters of an unfiltered page, as the `ask` command hands them on. */
 	private const FILTERS = [ 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '' ];
 
 	/** The URL a record's request fetched, as the builder stores it: query kept, redacted at log time. */
@@ -551,7 +551,7 @@ class AskAssemblerTest extends TestCase {
 	 * The series is what `dump_url` returns, and nothing renders it here —
 	 * it was the largest thing in the brief and the only unbounded one.
 	 */
-	public function test_a_url_brief_leaves_the_time_series_to_the_verb_that_owns_it(): void {
+	public function test_a_url_brief_leaves_the_time_series_to_the_command_that_owns_it(): void {
 		$brief = Ask_Assembler::for_url(
 			'url',
 			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12, 'errors' => 3 ],

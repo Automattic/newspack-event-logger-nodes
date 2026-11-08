@@ -504,7 +504,7 @@ class Config {
 
 	/**
 	 * Whether a given option should be written with `autoload=true`. The write
-	 * paths that touch settings options — `Performance_CI_Node`'s `set` verb and
+	 * paths that touch settings options — `Performance_CI_Node`'s `set` command and
 	 * `Discovery_Collector_Node`'s staging writes — ask here instead of
 	 * passing a literal, so hot-path scalars stay on the single alloptions query
 	 * and the fleet-sized staging options stay off it. The ruleset options are

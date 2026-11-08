@@ -1,10 +1,10 @@
 /**
  * The `?` picker, end to end without a wire: `useAsk` holds the mode, a click on
- * anything carrying `data-ask` becomes an `ask` verb, and each reply fills the
+ * anything carrying `data-ask` becomes an `ask` command, and each reply fills the
  * pick its address names with a brief the panel shows before a single byte
  * leaves the page. Taking a pick back takes its brief with it.
  *
- * The verb is doubled at the hook boundary — the test fires the same `onDone`
+ * The command is doubled at the hook boundary — the test fires the same `onDone`
  * the real reply lands in, so the paths under test are the production ones and
  * only the wire is stood in for.
  */
@@ -155,7 +155,7 @@ afterEach( () => {
 	view = null;
 } );
 
-test( 'a pick sends the innermost descriptor chain to the ask verb', () => {
+test( 'a pick sends the innermost descriptor chain to the ask command', () => {
 	render();
 
 	pick();

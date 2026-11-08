@@ -39,7 +39,7 @@ export const slotsEndingAt = ( last, count ) => {
  * @param {string[]} columns The answer's columns, groups then measures.
  * @param {Array[]}  rows    Its rows, each positional in `columns` order.
  * @param {Object}   [extra] Fields to set over the defaults, such as `groups`.
- * @return {Object} The answer as the `query` verb sends it.
+ * @return {Object} The answer as the `query` command sends it.
  */
 export const rowsWire = ( columns, rows, extra = {} ) => ( {
 	source: 'requests',

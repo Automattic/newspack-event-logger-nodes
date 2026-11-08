@@ -8,7 +8,7 @@
  * slice answers, at most a page's worth and then how many more.
  *
  * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
- * `urls` verb and this table draws the page it is handed, in the order it
+ * `urls` command and this table draws the page it is handed, in the order it
  * arrives: the search box, the sort headers, the Include Workers toggle and
  * the pager are local state that only reports itself upward through
  * `onParamsChange`. Re-applying any of it here makes the footer's total
@@ -86,21 +86,21 @@ const ROW_HEIGHT = 40;
  */
 const restorePage = ( raw ) => {
 	const n = Number( raw );
-	// Safe, or `1e21` reaches the wire as an exponent the verb refuses.
+	// Safe, or `1e21` reaches the wire as an exponent the command refuses.
 	return Number.isSafeInteger( n ) && n > 0 ? n : 1;
 };
 
 /**
  * Page size, in rows.
  *
- * `usePerformanceGraph` fixes the `urls` verb's `limit` at 100 to match, since
+ * `usePerformanceGraph` fixes the `urls` command's `limit` at 100 to match, since
  * every `offset` this table sends is derived from this number: the two are one
  * page size split across two files.
  */
 const URLS_PER_PAGE = 100;
 
 /**
- * The last offset the `urls` verb serves (`Stats_Query::MAX_OFFSET`); it
+ * The last offset the `urls` command serves (`Stats_Query::MAX_OFFSET`); it
  * clamps a later one to this, so the pager stops at the page that starts here,
  * and an expanded page's shapes at the window that starts here.
  */
@@ -113,7 +113,7 @@ const URLS_MAX_OFFSET = 10000;
  */
 const SHAPES_STEP = SHAPES_PER_ASK / 2;
 
-/** The most shapes the verb lists under a page: its last window's end. */
+/** The most shapes the command lists under a page: its last window's end. */
 const SHAPES_REACH = URLS_MAX_OFFSET + SHAPES_PER_ASK;
 
 /**
@@ -296,7 +296,7 @@ const renderCell = ( col, url, formatNum ) => {
 /**
  * The table's rows in order: each page, and beneath a page of several shapes
  * the reader expanded, one slot per shape, then any shapes past the last the
- * verb lists as a count. A slot is a position, filled when the window of the
+ * command lists as a count. A slot is a position, filled when the window of the
  * page's slice holding it answers, so every row is laid out before any shape
  * arrives.
  *
@@ -630,7 +630,7 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
  * and the pager beneath it.
  *
  * @param {Object}                     props                  Component props.
- * @param {Array<Object>}              props.urls             The page rows the `urls` verb returned.
+ * @param {Array<Object>}              props.urls             The page rows the `urls` command returned.
  * @param {?Object}                    props.selectedSubject  The `{ field, hash }` the detail modal is open on, or null.
  * @param {(url: Object) => void}      props.onSelect         Receives the row clicked or activated by Enter/Space: a page, or a shape.
  * @param {string[]}                   [props.expanded]       The keys of the expanded pages, as `pageKey()` spells them.

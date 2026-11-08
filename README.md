@@ -22,7 +22,7 @@ The vocabulary here comes from the substrate. Its [documentation map](https://gi
 | A cache backend | Memcached, or APCu |
 | `pdo_sqlite`, with FTS5 | On every host running the stats builder |
 
-The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and the dashboard verbs do not answer. The statistics need neither: they live in the `flame-facts` Row_Table, one SQLite file per partition under the substrate's base directory, `{base}/tables/flame-facts.p{N}.sqlite`, which [`stats-builder.tsl.php`](topologies/stats-builder.tsl.php) declares. Without `pdo_sqlite` the `stats-builder` topology, and `performance` and `complete` through it, refuse to load, naming the Table that cannot open, and the dashboards answer no statistics.
+The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and the dashboard commands do not answer. The statistics need neither: they live in the `flame-facts` Row_Table, one SQLite file per partition under the substrate's base directory, `{base}/tables/flame-facts.p{N}.sqlite`, which [`stats-builder.tsl.php`](topologies/stats-builder.tsl.php) declares. Without `pdo_sqlite` the `stats-builder` topology, and `performance` and `complete` through it, refuse to load, naming the Table that cannot open, and the dashboards answer no statistics.
 
 ## Quick Start
 
@@ -91,22 +91,22 @@ A fresh clone needs `npm install && composer install && npm run build`. The `new
 
 ## Dashboards
 
-A dashboard reaches the server two ways, both of them substrate routes: a TM_COMMAND envelope to a service CI through `POST /wp-json/newspack-nodes/v1/command`, and a subscription on `GET /wp-json/newspack-nodes/v1/messages/stream`. Most surfaces use one or the other. The verbs column lists what each one calls; the live-data column lists what it subscribes to.
+A dashboard reaches the server two ways, both of them substrate routes: a TM_COMMAND envelope to a service CI through `POST /wp-json/newspack-nodes/v1/command`, and a subscription on `GET /wp-json/newspack-nodes/v1/messages/stream`. Most surfaces use one or the other. The commands column lists what each one calls; the live-data column lists what it subscribes to.
 
-| Surface | Service CI verbs | Live data | Source |
+| Surface | Service CI commands | Live data | Source |
 |---------|------------------|-----------|--------|
 | **Performance** (Event Logger → Performance) | [`performance`](docs/API.md#performance--the-omnibus-dashboard-ci)`.{overview, urls, query, dump_url, search_requests, dump_request, grep_requests, ask, list_hooks}`, [`rules.{dump, upsert, delete}`](docs/API.md#rules--per-url-logging-ruleset-crud) | — | [`Request_Builder_Node`](includes/class-request-builder-node.php) + [`Flame_Builder_Node`](includes/class-flame-builder-node.php) + [`Stats_Query`](includes/app/class-stats-query.php) + [`Reqgrep_Core`](includes/class-reqgrep-core.php), over the `flame-facts` rows and the `requests` and `flames` partitions |
 | **Gyroscope** (Event Logger → Gyroscope) | — | `subscribe=gyroscope.*` | [`Request_Flight_Node`](includes/class-request-flight-node.php) in-flight snapshots plus the `completed:tee` fan-out |
-| **Request Log** (Event Logger → Request Log) | substrate [`raw-logs.{list_logs, dump_log, read_message}`](docs/API.md#substrate-verbs-the-dashboards-use) | `subscribe=completed.*` | `completed.p0`, the finished requests `completed:tee` fans out |
+| **Request Log** (Event Logger → Request Log) | substrate [`raw-logs.{list_logs, dump_log, read_message}`](docs/API.md#substrate-commands-the-dashboards-use) | `subscribe=completed.*` | `completed.p0`, the finished requests `completed:tee` fans out |
 | **Errors** (Event Logger → Errors) | substrate `raw-logs.{list_logs, dump_log, read_message}` | `subscribe=errors.*` | `errors.p0`, written by `Request_Builder_Node`: its own error and warning records, and the `stderr` lines [`Diagnostics_Bridge`](includes/class-diagnostics-bridge.php) carries in from the substrate |
 | **Settings** (Settings → Event Logger) | `performance.list_hooks`, `rules.{dump, save, upsert, delete, reset}` | — | The hook taxonomy and [`Rule_Set`](includes/class-rule-set.php) |
 | **Request** (a debug-overlay tab) | `performance.dump_request` | — | This request's own record |
 
 `performance.list_hooks` answers two surfaces because one editor serves both: the Performance dashboard's "Log this URL" opens the same `RuleEditModal`, and the same hook picker beneath it, that the settings page's ruleset table opens.
 
-Two verbs answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and [`discovery.get`](docs/API.md#discovery--spoke-side-hook-roster) reports every hook a spoke registers a callback on — to the hub's [`Discovery_Collector_Node`](includes/class-discovery-collector-node.php), and to the substrate's `vault` CI when it probes one spoke's connection. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Console, Log Viewer, Config Audit, Vault, Sessions and Aggregator.
+Two commands answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and [`discovery.get`](docs/API.md#discovery--spoke-side-hook-roster) reports every hook a spoke registers a callback on — to the hub's [`Discovery_Collector_Node`](includes/class-discovery-collector-node.php), and to the substrate's `vault` CI when it probes one spoke's connection. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Console, Log Viewer, Config Audit, Vault, Sessions and Aggregator.
 
-For the full per-CI verb tables and the TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
+For the full per-CI command tables and the TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
 
 ## Command line
 
@@ -121,7 +121,7 @@ wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, 
 
 ## MCP
 
-[MCP](https://modelcontextprotocol.io/) re-serves eleven of the service-CI verbs as [JSON-RPC](https://www.jsonrpc.org/specification) tools, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no verbs of its own: `tools/call` mounts the same request graph `/command` mounts and dispatches through the same interpreter.
+[MCP](https://modelcontextprotocol.io/) re-serves eleven of the service-CI commands as [JSON-RPC](https://www.jsonrpc.org/specification) tools, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no commands of its own: `tools/call` mounts the same request graph `/command` mounts and dispatches through the same interpreter.
 
 ```
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
@@ -165,4 +165,4 @@ GPL-2.0-or-later
 
 ## Status
 
-This plugin releases independently of the substrate: it declares a minimum runtime version, not a matching one, and the plugin header and `CHANGELOG.md` carry its own. The dashboards clip onto the substrate's browser backbone — `_router`, `_command_interpreter`, `_shell`, `_http`, `_heartbeat` and `_stream` — and its canonical UI layer. The `status.get` verb — substrate-owned — reports the runtime version, the partition count, the active topologies and cache reachability; it carries no separate application version.
+This plugin releases independently of the substrate: it declares a minimum runtime version, not a matching one, and the plugin header and `CHANGELOG.md` carry its own. The dashboards clip onto the substrate's browser backbone — `_router`, `_command_interpreter`, `_shell`, `_http`, `_heartbeat` and `_stream` — and its canonical UI layer. The `status.get` command — substrate-owned — reports the runtime version, the partition count, the active topologies and cache reachability; it carries no separate application version.

@@ -89,7 +89,7 @@ export function clipboardBrief( markdown ) {
 
 /** Where the `fetch` calls above are answered. Named once per document. */
 const MCP_NOTE =
-	'Run those with this site\u2019s MCP server at %s — it answers the same verbs this brief was built from.';
+	'Run those with this site\u2019s MCP server at %s — it answers the same commands this brief was built from.';
 
 /**
  * A number a reader can scan, without dragging a formatter in.

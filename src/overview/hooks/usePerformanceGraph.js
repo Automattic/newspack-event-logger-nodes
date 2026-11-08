@@ -59,7 +59,7 @@
  * selection asks `dump_request` through `request-detail:fetch` the same way,
  * so the late answer about the request the operator left never lands.
  *
- * ON-DEMAND verbs are NOT here. The deep-link reads, the search box, the rules
+ * ON-DEMAND commands are NOT here. The deep-link reads, the search box, the rules
  * writes and the grep each live beside the state their reply sets, in
  * `PerformanceDashboard`, because a command held one layer above the state it
  * feeds has to hand its answer back down, and that hand-back is what a
@@ -109,7 +109,7 @@ import {
 /** @typedef {typeof import('@newspack-nodes/runtime').Node} NodeClass */
 
 /**
- * The server CI mount that owns every verb this dashboard sends.
+ * The server CI mount that owns every command this dashboard sends.
  *
  * Exported because `PerformanceDashboard` and `UrlDetailView` send their own
  * one-shot commands to the same CI through `useCommandOnce`.
@@ -143,7 +143,7 @@ const STATS_NO_REASK = 0;
 
 /**
  * Matched-request cap `PerformanceDashboard` sends with `grep_requests`. It
- * matches the verb's own default, and the server clamps anything larger to 50.
+ * matches the command's own default, and the server clamps anything larger to 50.
  */
 export const GREP_RESULT_LIMIT = 20;
 
@@ -153,7 +153,7 @@ export const GREP_RESULT_LIMIT = 20;
  * from — its own name — and the verb its question asks.
  *
  * @param {string}          subject   The slice, as `chart`.
- * @param {string}          command   The verb it sends.
+ * @param {string}          command   The name of the command it sends.
  * @param {NodeClass}       viewClass Its view's class.
  * @param {() => ?string[]} argsFn    Its question, read at fire time.
  * @return {{fetcher: string, receiver: string, view: string, controlFrom: string, command: string, viewClass: NodeClass, argsFn: () => ?string[]}} The slice.
@@ -402,7 +402,7 @@ const overviewArgs = ( serverFilter ) =>
 
 /**
  * Build the `urls` args from the table's own controls and the page's server
- * scope. One verb answers for the table and for the header totals summed from
+ * scope. One command answers for the table and for the header totals summed from
  * it, so the scope reaches both or the two contradict each other.
  *
  * The table's `limit` is `URLS_PER_ASK` because `UrlTable` derives every
@@ -410,7 +410,7 @@ const overviewArgs = ( serverFilter ) =>
  * size, split across two files. An expanded page's shapes ask
  * `SHAPES_PER_ASK`.
  *
- * `include_workers` widens a set the verb excludes by default, because a
+ * `include_workers` widens a set the command excludes by default, because a
  * long-running job would otherwise dominate every average on the page.
  * `bucket` narrows to a selection of five-minute buckets, by its spelling,
  * each row then carrying their summed numbers. The chart's chips narrow it

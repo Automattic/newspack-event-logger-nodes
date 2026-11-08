@@ -148,7 +148,7 @@ function HeldClick( { onCancel } ) {
 /**
  * Order two request rows by one column in one direction. A null duration,
  * one `dump_url` measured none of (decision 24), ranks LAST either way, as
- * the `urls` verb ranks a URL without a timed request; such rows keep their
+ * the `urls` command ranks a URL without a timed request; such rows keep their
  * order among themselves. A row missing any other field counts as 0.
  *
  * @param {Object}                       a    A `dump_url` request row.
@@ -582,7 +582,7 @@ export default function PerformanceDashboard( {
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
-	// The graph polls and publishes; this page's own verbs are below.
+	// The graph polls and publishes; this page's own actions are below.
 	const { handleUrlParamsChange } = usePerformanceGraph( {
 		serverFilter,
 		chartBreakdown: activeBreakdown,

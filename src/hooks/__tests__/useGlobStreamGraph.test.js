@@ -76,7 +76,7 @@ const LINK = reservedNames.STREAM;
 const VIEW = 'globtest:view';
 const GLOB = 'errors.*';
 
-// Every verb here rides the router tick; jest's 5s default is not enough.
+// Every command here rides the router tick; jest's 5s default is not enough.
 jest.setTimeout( 20000 );
 
 let wire;

@@ -189,13 +189,13 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertSame( '', $snap['r-early-9031']['method'] );
 	}
 
-	public function test_set_completed_target_via_verb_enables_compact_summary_on_next_completion(): void {
+	public function test_set_completed_target_via_command_enables_compact_summary_on_next_completion(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$captured = [];
 		$rb->sink( $this->capture_sink( $captured ) );
 
-		// Invoke set_completed_target via the interpreter verb (not the direct setter).
+		// Invoke set_completed_target via the interpreter command (not the direct setter).
 		$interpreter = $this->read_private( $rb, 'interpreter' );
 		$interpreter->dispatch( 'set_completed_target', [ 'completed:tee' ] );
 
@@ -216,7 +216,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertCount( 1, $compact );
 	}
 
-	public function test_set_completed_target_empty_via_verb_clears_and_subsequent_emit_is_silent(): void {
+	public function test_set_completed_target_empty_via_command_clears_and_subsequent_emit_is_silent(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$captured = [];

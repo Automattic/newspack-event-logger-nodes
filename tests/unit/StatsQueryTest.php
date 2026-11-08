@@ -12,7 +12,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
-use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\CommandHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
@@ -707,7 +707,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_the_live_urls_listing_reads_the_url_window(): void {
 		$this->seed_url_traffic();
 		$page    = Log_Manager::url_hash( self::TUI_PAGE );
-		$listing = static fn ( string $args ): array => Core::arr( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $args ) );
+		$listing = static fn ( string $args ): array => Core::arr( CommandHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $args ) );
 		$names   = static fn ( array $answer ): array => \array_column( Core::arr( $answer['data'] ), 'url' );
 		$before  = [ $listing( '' ), $listing( '--server=' . self::KAKA . ' --include_workers=1' ) ];
 
@@ -730,7 +730,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_url_traffic();
 		$this->seed_url_window( 0, Bucket::id( self::NOW ) - Bucket::window() );
 		$this->seed_url_window( 2, Bucket::id( self::NOW ) - Bucket::window() );
-		$listing = static fn (): array => Core::arr( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '' ) );
+		$listing = static fn (): array => Core::arr( CommandHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '' ) );
 		$shapes  = static fn ( array $answer ): array => \array_column( Core::arr( $answer['data'] ), 'shapes', 'page_hash' );
 		$page    = Log_Manager::url_hash( self::TUI_PAGE );
 		$before  = $listing();
@@ -2308,7 +2308,7 @@ final class StatsQueryTest extends TestCase {
 	 * JSON wire, which carries a whole float as an integer.
 	 */
 	private static function query( string ...$tokens ): mixed {
-		return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
+		return CommandHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
 	}
 
 	/**
@@ -2349,12 +2349,12 @@ final class StatsQueryTest extends TestCase {
 		$this->use_min_lifetime( 7200 );
 		$latest = Bucket::id( self::NOW );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 24 ) . '..' . Bucket::key( $latest + 1 ) ] );
+		$reply = CommandHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 24 ) . '..' . Bucket::key( $latest + 1 ) ] );
 
 		$this->assertSame( 'bucket selection holds more than 24 buckets', \trim( Core::as_string( $reply ) ) );
 	}
 
-	public function test_the_query_verb_spells_buckets_as_keys_and_echoes_its_filters(): void {
+	public function test_the_query_command_spells_buckets_as_keys_and_echoes_its_filters(): void {
 		$now = Bucket::id( self::NOW );
 		$this->seed_request( [ 'bucket' => $now - 6, 'status' => 503 ] );
 		$this->seed_request( [ 'bucket' => $now - 5, 'status' => 204 ], partition: 3 );
@@ -2404,7 +2404,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( $asked['rows'], $reply['rows'] );
 	}
 
-	public function test_the_query_verb_reads_the_span_by_default(): void {
+	public function test_the_query_command_reads_the_span_by_default(): void {
 		$this->use_min_lifetime( 3900 );
 		$now = Bucket::id( self::NOW );
 		$this->seed_request( [ 'bucket' => $now - 13, 'ms' => 1.0 ] );
@@ -2417,7 +2417,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( Bucket::key( $now - 12 ) . '..' . Bucket::key( $now + 1 ), $reply['filters']['bucket'], 'the run closes at the end of the current bucket' );
 	}
 
-	public function test_the_query_verb_groups_positionally_and_pages(): void {
+	public function test_the_query_command_groups_positionally_and_pages(): void {
 		foreach ( [ 'kea.example', 'kea.example', 'tui.example', 'weka.example', 'weka.example', 'weka.example' ] as $i => $server ) {
 			$this->seed_request( [ 'server' => $server ], partition: $i % 4 );
 		}
@@ -2428,7 +2428,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( 'seed', $reply['filters']['search'] );
 	}
 
-	public function test_the_query_verb_ranks_under_top_and_answers_groups(): void {
+	public function test_the_query_command_ranks_under_top_and_answers_groups(): void {
 		$now = Bucket::id( self::NOW );
 		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 3, 'ms' => 5.0 ] );
 		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 3, 'ms' => 5.0 ], partition: 3 );
@@ -2440,8 +2440,8 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( 2, $reply['groups'] );
 	}
 
-	public function test_the_query_verb_names_the_measures_top_ranks_by(): void {
-		$query = \array_values( \array_filter( Performance_CI_Node::node_schema()['commands'], static fn ( array $verb ): bool => 'query' === $verb['name'] ) )[0];
+	public function test_the_query_command_names_the_measures_top_ranks_by(): void {
+		$query = \array_values( \array_filter( Performance_CI_Node::node_schema()['commands'], static fn ( array $command ): bool => 'query' === $command['name'] ) )[0];
 		$top_by = \array_values( \array_filter( $query['args'], static fn ( array $arg ): bool => 'top_by' === $arg['name'] ) )[0];
 
 		foreach ( [ 'count', 'timed', 'sum_ms', 'sum_peak_mb', 'errors', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'ms', 'calls', 'requests' ] as $additive ) {
@@ -2449,7 +2449,7 @@ final class StatsQueryTest extends TestCase {
 		}
 	}
 
-	public function test_the_query_verb_refuses_top_with_a_limit(): void {
+	public function test_the_query_command_refuses_top_with_a_limit(): void {
 		$reply = self::query( 'requests', 'bucket', 'server', '--measure=count', '--top=3', '--top_by=count', '--limit=40' );
 
 		$this->assertIsString( $reply );
@@ -2466,14 +2466,14 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 70 ] ], $reply['rows'] );
 	}
 
-	public function test_the_query_verb_refuses_a_future_bucket(): void {
+	public function test_the_query_command_refuses_a_future_bucket(): void {
 		$reply = self::query( 'requests', '--measure=count', '--bucket=' . Bucket::key( Bucket::id( self::NOW ) + 1 ) );
 
 		$this->assertIsString( $reply );
 		$this->assertStringContainsString( 'in the future', $reply );
 	}
 
-	public function test_the_query_verb_refuses_a_filter_with_no_field(): void {
+	public function test_the_query_command_refuses_a_filter_with_no_field(): void {
 		$reply = self::query( 'requests', '--measure=count', '--filter=kakapo' );
 
 		$this->assertIsString( $reply );
@@ -2495,7 +2495,7 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ 'ua' => [ $ua, 'Weka/1.2' ] ], $reply['filters']['filter'] );
 	}
 
-	public function test_the_query_verb_refuses_an_unknown_measure(): void {
+	public function test_the_query_command_refuses_an_unknown_measure(): void {
 		$reply = self::query( 'timings', '--measure=p95_ms' );
 
 		$this->assertIsString( $reply );

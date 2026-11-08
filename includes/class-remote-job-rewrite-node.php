@@ -31,7 +31,7 @@ use Newspack_Nodes\Node;
 /**
  * Stateless pass-through transform: one `k` rewrite, then the base forward.
  *
- * The node takes no constructor arguments, exposes no verbs and adds no state
+ * The node takes no constructor arguments, exposes no commands and adds no state
  * of its own, so the topology makes a single `remote-job-rewrite` and every
  * spoke's broker connects to that one instance.
  */

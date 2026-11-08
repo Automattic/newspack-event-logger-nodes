@@ -17,7 +17,7 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use Newspack_Nodes\Tests\Mcp_Requests;
 
 /**
- * The MCP surface: a thin wrapper over verbs that already exist, authenticated
+ * The MCP surface: a thin wrapper over commands that already exist, authenticated
  * by a scoped session and acting AS the user who minted it.
  *
  * The load-bearing property is that a scope is a CEILING. A read-scoped session
@@ -298,9 +298,9 @@ class McpControllerTest extends TestCase {
 	 * Each URL-set tool's `filter` carries its verb's own `filter` text, so
 	 * the CLI, the console and MCP read one grammar and one field list.
 	 */
-	public function test_each_url_set_filter_carries_its_verbs_own_text(): void {
+	public function test_each_url_set_filter_carries_its_commands_own_text(): void {
 		$tools    = $this->tune_tools();
-		$declared = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+		$declared = Command_Interpreter_Node::declared_commands( Performance_CI_Node::class );
 
 		foreach ( [ 'performance_urls' => 'urls', 'dump_url' => 'dump_url', 'performance_ask' => 'ask' ] as $tool => $verb ) {
 			$arg = \array_column( $declared[ $verb ]['args'], null, 'name' )['filter'];
@@ -378,8 +378,8 @@ class McpControllerTest extends TestCase {
 		return \array_column( $tools, null, 'name' );
 	}
 
-	/** A tool's schema requires exactly the args its verb refuses to go without. */
-	public function test_each_tool_schema_requires_what_its_verb_requires(): void {
+	/** A tool's schema requires exactly the args its command refuses to go without. */
+	public function test_each_tool_schema_requires_what_its_command_requires(): void {
 		$tools = $this->tune_tools();
 
 		$required = [
@@ -400,7 +400,7 @@ class McpControllerTest extends TestCase {
 	}
 
 	/** A variadic arg is a list, and a typed arg carries its JSON type. */
-	public function test_each_tool_schema_types_its_args_as_the_verb_declares(): void {
+	public function test_each_tool_schema_types_its_args_as_the_command_declares(): void {
 		$tools = $this->tune_tools();
 
 		$context = $tools['performance_ask']['inputSchema']['properties']['context'];
@@ -419,7 +419,7 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( [ 'rid' ], \array_keys( $tools['dump_request']['inputSchema']['properties'] ) );
 	}
 
-	/** Requiredness lives in the verb declaration, never in a description. */
+	/** Requiredness lives in the command declaration, never in a description. */
 	public function test_no_tool_arg_spells_requiredness_in_prose(): void {
 		foreach ( $this->tune_tools() as $name => $tool ) {
 			foreach ( (array) $tool['inputSchema']['properties'] as $arg => $schema ) {
@@ -505,7 +505,7 @@ class McpControllerTest extends TestCase {
 
 	/**
 	 * A tool is offered exactly when the session may spend the capability its
-	 * verb declares; the tool map keeps no role of its own to disagree with it.
+	 * command declares; the tool map keeps no role of its own to disagree with it.
 	 */
 	public function test_tool_visibility_follows_the_verbs_declared_capability(): void {
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
@@ -520,7 +520,7 @@ class McpControllerTest extends TestCase {
 
 			$expected = [];
 			foreach ( $tools as $name => $spec ) {
-				$capability = \Newspack_Nodes\Command_Interpreter_Node::declared_verbs( $spec['class'] )[ $spec['verb'] ]['capability'];
+				$capability = \Newspack_Nodes\Command_Interpreter_Node::declared_commands( $spec['class'] )[ $spec['verb'] ]['capability'];
 				if ( Capabilities::can( $capability ) ) {
 					$expected[] = $name;
 				}
@@ -600,7 +600,7 @@ class McpControllerTest extends TestCase {
 
 	public function test_a_filter_whose_default_removes_data_is_declared(): void {
 		// The parity test above runs one way: every ARG declared names a real
-		// verb arg. Omission is the other failure, and it is worse for exactly
+		// command arg. Omission is the other failure, and it is worse for exactly
 		// one class of option — a filter that is ON unless asked otherwise.
 		// An agent reading this table sees no worker filter, so it reads the
 		// worker-excluded totals as the totals for the whole site.

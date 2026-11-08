@@ -80,7 +80,7 @@ class RequestBuilderTest extends TestCase {
 
 	/**
 	 * Read the in-flight cache count via the production GET_STATS request
-	 * verb (the same path the dashboard reads), not a test-only accessor.
+	 * (the same path the dashboard reads), not a test-only accessor.
 	 */
 	private function cache_size( Request_Builder_Node $rb ): int {
 		$prev    = $rb->sink();
@@ -2330,7 +2330,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( $rb, $sibling->patron() );
 	}
 
-	public function test_request_builder_set_errors_target_verb_records_and_dumps(): void {
+	public function test_request_builder_set_errors_target_command_records_and_dumps(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'req_builder' );
 
@@ -2341,7 +2341,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'command_node req_builder:config set_errors_target errors:partition', $dump );
 	}
 
-	public function test_request_builder_set_errors_target_verb_empty_clears_target(): void {
+	public function test_request_builder_set_errors_target_command_empty_clears_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'req_builder' );
 
@@ -2354,7 +2354,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '', $p->getValue( $rb ) );
 	}
 
-	public function test_request_builder_node_schema_declares_verb(): void {
+	public function test_request_builder_node_schema_declares_command(): void {
 		$schema = Request_Builder_Node::node_schema();
 		$this->assertSame( 'Transform', $schema['category'] );
 		$verb_names = \array_column( $schema['commands'], 'name' );
@@ -2362,7 +2362,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertContains( 'purge', $verb_names );
 	}
 
-	public function test_purge_verb_drops_every_in_flight_request_and_reports_the_count(): void {
+	public function test_purge_command_drops_every_in_flight_request_and_reports_the_count(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'req_builder' );
 		$capture = new Capture_Sink_Node();
@@ -2579,7 +2579,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
-	// --- TM_REQUEST verbs (GET_STATS) ------------------------------------
+	// --- TM_REQUEST requests (GET_STATS) ---------------------------------
 
 	private function request_msg( string $verb, string $from = 'asker', string $id = 'req-1' ): array {
 		$message                      = Message::new_message();
@@ -2698,7 +2698,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 3, $payload['data']['line_counter'] );
 	}
 
-	public function test_a_reply_carrying_the_verb_is_not_answered(): void {
+	public function test_a_reply_carrying_the_command_is_not_answered(): void {
 		// A reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) bypasses fill()'s
 		// TM_REQUEST gate, so it's never re-dispatched as a request.
 		$rb      = new Request_Builder_Node();
@@ -3244,7 +3244,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull( Core::node( 'taken' ) );
 		$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
 	}
-	public function test_the_target_setter_verbs_round_trip_through_dump_config(): void {
+	public function test_the_target_setter_commands_round_trip_through_dump_config(): void {
 		// Each is one trim-and-assign; the dump has to replay every one of them
 		// or a serialized topology comes back with its secondary emits dark.
 		$rb = new Request_Builder_Node();

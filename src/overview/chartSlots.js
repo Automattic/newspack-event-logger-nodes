@@ -515,7 +515,7 @@ export const chipParts = ( chip ) => {
 };
 
 /**
- * One `--filter=` token for each filter, since the verbs take the option
+ * One `--filter=` token for each filter, since the commands take the option
  * repeated where `formatCommandArgs()` would join a list on commas.
  *
  * @param {string[]} filters Each filter as `field=value`.

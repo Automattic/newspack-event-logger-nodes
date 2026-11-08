@@ -15,7 +15,7 @@ export const views = registerSliceViews( {
 	/**
 	 * `hook-catalog:view` — the registered-hook taxonomy behind the hook picker.
 	 *
-	 * The `performance` CI's `list_hooks` verb answers a PHP array. The
+	 * The `performance` CI's `list_hooks` command answers a PHP array. The
 	 * picker needs three of its five fields: the category-to-hooks map it
 	 * lists, the one-liners it prints beside each category name, and the
 	 * `noisy` names no bulk selection takes. The descriptions fall back to an
