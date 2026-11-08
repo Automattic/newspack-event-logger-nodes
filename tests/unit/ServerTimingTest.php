@@ -145,8 +145,10 @@ class ServerTimingTest extends TestCase {
 		$this->a_reader();
 		new \Newspack_Event_Logger_Nodes\App\Core();
 		$preloaded = new \WP_REST_Response( [ 'kea' => 7746 ] );
+		$request   = new \WP_REST_Request();
+		$request->set_route( '/wp/v2/posts/7746' );
 
-		$after = \apply_filters( 'rest_post_dispatch', $preloaded, null, null );
+		$after = \apply_filters( 'rest_post_dispatch', $preloaded, new \WP_REST_Server(), $request );
 
 		$this->assertSame( [], $after->get_headers() );
 		$this->assertSame( [], $this->sent );

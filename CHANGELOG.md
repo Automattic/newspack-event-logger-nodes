@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The MCP door derives its tools through the substrate's `Mcp_Door::declared_tools()`.** `MCP_Controller`'s hand table of eleven tools becomes two per-verb text tables, `PERFORMANCE` and `RULES`, and two except-lists, `list_hooks` and `set` for `performance` and `save` and `reset` for `rules`, so every other command either CI declares is a tool. `Performance_CI_Node` declares `dump_url` before `query` and `dump_request` before `grep_requests`, the order the tools list in, so `help performance` lists them in that order too. The listing an agent reads is byte-identical. Requires the substrate that carries `declared_tools()`.
+
 ## [0.161.0] - 2026-11-06
 
 ### Changed

@@ -13,7 +13,6 @@ use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Mcp_Door;
-use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use Newspack_Nodes\Tests\Mcp_Requests;
 
 /**
@@ -30,12 +29,9 @@ class McpControllerTest extends TestCase {
 	use FactsSeeder;
 	use Mcp_Requests;
 
-	private ?\Memcached $prev_memd = null;
-
 	protected function setUp(): void {
 		parent::setUp();
-		$this->prev_memd = Core::$memd;
-		Core::$memd      = new InMemoryMemcached();
+		$this->use_in_memory_memcached();
 		$GLOBALS['_wp_test_current_user_id'] = 42;
 		$GLOBALS['_current_user_can']        = true;
 	}
@@ -43,9 +39,17 @@ class McpControllerTest extends TestCase {
 	protected function tearDown(): void {
 		Capabilities::$session_scope         = null;
 		$GLOBALS['_wp_test_current_user_id'] = 0;
-		Core::$memd                          = $this->prev_memd;
+		$this->restore_memcached();
 		unset( $GLOBALS['_current_user_can'] );
 		parent::tearDown();
+	}
+
+	/** A door holding a session of `$scope` open, and its bearer. */
+	private function door( string $scope ): array {
+		[ , $bearer ] = $this->session( $scope );
+		$door         = new MCP_Controller();
+		$door->check_permission( $this->request( [], $bearer ) );
+		return [ $door, $bearer ];
 	}
 
 	/**
@@ -53,9 +57,7 @@ class McpControllerTest extends TestCase {
 	 * protocol, and ELN names itself at the version it ships.
 	 */
 	public function test_initialize_names_the_server_and_its_protocol(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
 		$reply = $controller->dispatch(
 			$this->request( [ 'jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize' ], $bearer )
@@ -67,16 +69,9 @@ class McpControllerTest extends TestCase {
 	}
 
 	public function test_tools_list_offers_only_what_the_scope_covers(): void {
-		[ , $read_bearer ] = $this->session( Capabilities::READ );
-		$controller        = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $read_bearer ) );
+		[ $controller, $read_bearer ] = $this->door( Capabilities::READ );
 
-		$names = \array_column(
-			$controller->dispatch(
-				$this->request( [ 'jsonrpc' => '2.0', 'id' => 2, 'method' => 'tools/list' ], $read_bearer )
-			)['result']['tools'],
-			'name'
-		);
+		$names = \array_keys( $this->listed( $controller, $read_bearer ) );
 
 		$this->assertContains( 'performance_overview', $names );
 		$this->assertContains( 'performance_ask', $names );
@@ -92,21 +87,24 @@ class McpControllerTest extends TestCase {
 	}
 
 	/**
+	 * One of the door's per-verb text tables, `PERFORMANCE` or `RULES`.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function text( string $table ): array {
+		return ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( $table );
+	}
+
+	/**
 	 * Every tool and argument naming a stats span names the one
 	 * `min_lifetime` sets, read when the tools are listed: 13 buckets at
 	 * 3,900 seconds, kept 25.
 	 */
 	public function test_the_tools_name_the_span_min_lifetime_sets(): void {
 		$this->use_min_lifetime( 3900 );
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$tools = \array_column(
-			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
-			null,
-			'name'
-		);
+		$tools = $this->listed( $controller, $bearer );
 		$arg   = static fn ( string $tool, string $name ): string => $tools[ $tool ]['inputSchema']['properties'][ $name ]['description'];
 
 		$this->assertStringContainsString( 'The site over the last 13 five-minute buckets', $tools['performance_overview']['description'] );
@@ -134,16 +132,10 @@ class McpControllerTest extends TestCase {
 	 */
 	public function test_a_span_short_of_a_bucket_lists_the_tools_and_fails_the_call(): void {
 		$this->use_min_lifetime( 299 );
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$tools = \array_column(
-			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 7, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
-			null,
-			'name'
-		);
-		$reply = $controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 8, 'method' => 'tools/call', 'params' => [ 'name' => 'performance_overview', 'arguments' => [] ] ], $bearer ) );
+		$tools = $this->listed( $controller, $bearer );
+		$reply = $this->call( $controller, $bearer, 'performance_overview', [], 8 );
 
 		$this->assertStringContainsString( 'The site over the last `min_lifetime` / 300 five-minute buckets', $tools['performance_overview']['description'] );
 		$this->assertTrue( $reply['result']['isError'] );
@@ -157,15 +149,9 @@ class McpControllerTest extends TestCase {
 	 * three-field row, misreads the answer.
 	 */
 	public function test_the_tools_say_how_search_matches_and_what_an_overview_row_holds(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$tools = \array_column(
-			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 4, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
-			null,
-			'name'
-		);
+		$tools = $this->listed( $controller, $bearer );
 
 		foreach ( [ 'performance_urls', 'performance_ask' ] as $tool ) {
 			$search = $tools[ $tool ]['inputSchema']['properties']['search']['description'];
@@ -228,15 +214,9 @@ class McpControllerTest extends TestCase {
 	 * the descriptions name the row's fields and the filter that lists URLs.
 	 */
 	public function test_the_url_tools_describe_page_rows_and_the_page_filter(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$tools = \array_column(
-			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 5, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
-			null,
-			'name'
-		);
+		$tools = $this->listed( $controller, $bearer );
 
 		$urls = $tools['performance_urls']['description'];
 		foreach ( [ '`page_hash`', '`page`', '`server`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page`' ] as $named ) {
@@ -295,7 +275,7 @@ class McpControllerTest extends TestCase {
 	}
 
 	/**
-	 * Each URL-set tool's `filter` carries its verb's own `filter` text, so
+	 * Each URL-set tool's `filter` carries its command's own `filter` text, so
 	 * the CLI, the console and MCP read one grammar and one field list.
 	 */
 	public function test_each_url_set_filter_carries_its_commands_own_text(): void {
@@ -316,9 +296,7 @@ class McpControllerTest extends TestCase {
 	 * leads it, said once, and ELN's own text follows.
 	 */
 	public function test_initialize_carries_a_glossary(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
 		$instructions = $controller->dispatch(
 			$this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'initialize' ], $bearer )
@@ -349,16 +327,9 @@ class McpControllerTest extends TestCase {
 	}
 
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {
-		[ , $bearer ] = $this->session( Capabilities::TUNE );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::TUNE );
 
-		$names = \array_column(
-			$controller->dispatch(
-				$this->request( [ 'jsonrpc' => '2.0', 'id' => 3, 'method' => 'tools/list' ], $bearer )
-			)['result']['tools'],
-			'name'
-		);
+		$names = \array_keys( $this->listed( $controller, $bearer ) );
 
 		$this->assertContains( 'rules_upsert', $names );
 	}
@@ -369,13 +340,8 @@ class McpControllerTest extends TestCase {
 	 * @return array<string,array<string,mixed>>
 	 */
 	private function tune_tools(): array {
-		[ , $bearer ] = $this->session( Capabilities::TUNE );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
-		$tools = $controller->dispatch(
-			$this->request( [ 'jsonrpc' => '2.0', 'id' => 31, 'method' => 'tools/list' ], $bearer )
-		)['result']['tools'];
-		return \array_column( $tools, null, 'name' );
+		[ $controller, $bearer ] = $this->door( Capabilities::TUNE );
+		return $this->listed( $controller, $bearer );
 	}
 
 	/** A tool's schema requires exactly the args its command refuses to go without. */
@@ -476,23 +442,14 @@ class McpControllerTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 503 ] );
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 504 ], partition: 1 );
 		$this->seed_request( [ 'server' => 'egret.example', 'status' => 200 ], partition: 1 );
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$reply = $controller->dispatch(
-			$this->request(
-				[
-					'jsonrpc' => '2.0',
-					'id'      => 61,
-					'method'  => 'tools/call',
-					'params'  => [
-						'name'      => 'performance_query',
-						'arguments' => [ 'source' => 'requests', 'group' => [ 'server', 'status' ], 'filter' => [ 'status_class=5' ], 'measure' => [ 'count' ] ],
-					],
-				],
-				$bearer
-			)
+		$reply = $this->call(
+			$controller,
+			$bearer,
+			'performance_query',
+			[ 'source' => 'requests', 'group' => [ 'server', 'status' ], 'filter' => [ 'status_class=5' ], 'measure' => [ 'count' ] ],
+			61
 		);
 
 		$this->assertArrayNotHasKey( 'error', $reply );
@@ -507,16 +464,16 @@ class McpControllerTest extends TestCase {
 	 * A tool is offered exactly when the session may spend the capability its
 	 * command declares; the tool map keeps no role of its own to disagree with it.
 	 */
-	public function test_tool_visibility_follows_the_verbs_declared_capability(): void {
-		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
-		foreach ( $tools as $name => $spec ) {
-			$this->assertArrayNotHasKey( 'role', $spec, $name );
+	public function test_tool_visibility_follows_the_commands_declared_capability(): void {
+		foreach ( [ 'PERFORMANCE', 'RULES' ] as $table ) {
+			foreach ( self::text( $table ) as $verb => $spec ) {
+				$this->assertArrayNotHasKey( 'role', $spec, $verb );
+			}
 		}
+		$tools = ( new \ReflectionMethod( MCP_Controller::class, 'tools' ) )->invoke( new MCP_Controller() );
 
 		foreach ( [ Capabilities::READ, Capabilities::TUNE ] as $scope ) {
-			[ , $bearer ] = $this->session( $scope );
-			$controller   = new MCP_Controller();
-			$controller->check_permission( $this->request( [], $bearer ) );
+			[ $controller, $bearer ] = $this->door( $scope );
 
 			$expected = [];
 			foreach ( $tools as $name => $spec ) {
@@ -525,12 +482,7 @@ class McpControllerTest extends TestCase {
 					$expected[] = $name;
 				}
 			}
-			$listed = \array_column(
-				$controller->dispatch(
-					$this->request( [ 'jsonrpc' => '2.0', 'id' => 41, 'method' => 'tools/list' ], $bearer )
-				)['result']['tools'],
-				'name'
-			);
+			$listed = \array_keys( $this->listed( $controller, $bearer ) );
 
 			$this->assertNotSame( [], $expected, $scope );
 			$this->assertSame( $expected, $listed, $scope );
@@ -539,13 +491,9 @@ class McpControllerTest extends TestCase {
 
 	/** Every tool description carries the caveat; a bare ratio invites invention. */
 	public function test_every_tool_says_what_is_not_measured(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$tools = $controller->dispatch(
-			$this->request( [ 'jsonrpc' => '2.0', 'id' => 4, 'method' => 'tools/list' ], $bearer )
-		)['result']['tools'];
+		$tools = $this->listed( $controller, $bearer );
 
 		foreach ( $tools as $tool ) {
 			$this->assertStringContainsString( 'SQL', $tool['description'] );
@@ -553,21 +501,9 @@ class McpControllerTest extends TestCase {
 	}
 
 	public function test_calling_a_read_tool_returns_its_payload_as_content(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+		[ $controller, $bearer ] = $this->door( Capabilities::READ );
 
-		$reply = $controller->dispatch(
-			$this->request(
-				[
-					'jsonrpc' => '2.0',
-					'id'      => 6,
-					'method'  => 'tools/call',
-					'params'  => [ 'name' => 'performance_overview', 'arguments' => [] ],
-				],
-				$bearer
-			)
-		);
+		$reply = $this->call( $controller, $bearer, 'performance_overview', [], 6 );
 
 		$this->assertArrayNotHasKey( 'error', $reply );
 		$this->assertSame( 'text', $reply['result']['content'][0]['type'] );
@@ -585,17 +521,17 @@ class McpControllerTest extends TestCase {
 	 * each says how a selection is spelled and how many buckets it holds.
 	 */
 	public function test_the_bucketed_tools_take_a_selection(): void {
-		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+		$tools = self::text( 'PERFORMANCE' );
 
-		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
-			$this->assertArrayHasKey( 'bucket', $tools[ $tool ]['args'], $tool );
-			$this->assertStringContainsString( 'Y-m-d-H-i', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringContainsString( 'up to the key that closes it', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringNotContainsString( 'inclusive', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringContainsString( 'at most {window} buckets', $tools[ $tool ]['args']['bucket'], $tool );
+		foreach ( [ 'urls', 'dump_url', 'ask' ] as $verb ) {
+			$this->assertArrayHasKey( 'bucket', $tools[ $verb ]['args'], $verb );
+			$this->assertStringContainsString( 'Y-m-d-H-i', $tools[ $verb ]['args']['bucket'], $verb );
+			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30', $tools[ $verb ]['args']['bucket'], $verb );
+			$this->assertStringContainsString( 'up to the key that closes it', $tools[ $verb ]['args']['bucket'], $verb );
+			$this->assertStringNotContainsString( 'inclusive', $tools[ $verb ]['args']['bucket'], $verb );
+			$this->assertStringContainsString( 'at most {window} buckets', $tools[ $verb ]['args']['bucket'], $verb );
 		}
-		$this->assertStringContainsString( '{kept} for any source', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
+		$this->assertStringContainsString( '{kept} for any source', $tools['query']['args']['bucket'], 'a query reaches its source\'s retention' );
 	}
 
 	public function test_a_filter_whose_default_removes_data_is_declared(): void {
@@ -604,28 +540,28 @@ class McpControllerTest extends TestCase {
 		// one class of option — a filter that is ON unless asked otherwise.
 		// An agent reading this table sees no worker filter, so it reads the
 		// worker-excluded totals as the totals for the whole site.
-		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+		$tools = self::text( 'PERFORMANCE' );
 
-		$this->assertArrayHasKey( 'include_workers', $tools['performance_urls']['args'] );
+		$this->assertArrayHasKey( 'include_workers', $tools['urls']['args'] );
 		$this->assertStringContainsString(
 			'excluded',
-			$tools['performance_urls']['args']['include_workers']
+			$tools['urls']['args']['include_workers']
 		);
 	}
 
 	public function test_the_two_rid_lookups_promise_a_definite_answer(): void {
 		// One walks every index line, the other reads the rid's row.
-		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+		$tools = self::text( 'PERFORMANCE' );
 
-		foreach ( [ 'search_requests', 'dump_request' ] as $tool ) {
-			$this->assertStringNotContainsString( 'budget', $tools[ $tool ]['summary'], $tool );
-			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
+		foreach ( [ 'search_requests', 'dump_request' ] as $verb ) {
+			$this->assertStringNotContainsString( 'budget', $tools[ $verb ]['summary'], $verb );
+			$this->assertStringContainsString( 'not found', $tools[ $verb ]['summary'], $verb );
 		}
 		$this->assertStringContainsString( 'that rid is not in any row of the last {kept} buckets', $tools['dump_request']['summary'], 'it says a request outlives its row' );
 		$this->assertStringContainsString( 'aged out of the raw logs', $tools['dump_request']['summary'], 'it says a row can outlive its record' );
 		$this->assertStringContainsString( 'which keep it at least `min_lifetime` unless `max_segments` prunes it sooner', $tools['dump_request']['summary'] );
-		$this->assertStringContainsString( '`request:<rid>`', $tools['performance_ask']['summary'], 'a request is named by its rid alone' );
-		$this->assertStringNotContainsString( '<partition>', $tools['performance_ask']['summary'] );
+		$this->assertStringContainsString( '`request:<rid>`', $tools['ask']['summary'], 'a request is named by its rid alone' );
+		$this->assertStringNotContainsString( '<partition>', $tools['ask']['summary'] );
 		$this->assertStringNotContainsString( 'index', $tools['dump_request']['summary'] );
 		$this->assertStringContainsString( '{rid, url_hash}', $tools['search_requests']['summary'], 'search names a request by its row' );
 		$this->assertStringNotContainsString( 'index', $tools['search_requests']['summary'] );

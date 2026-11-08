@@ -1551,7 +1551,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` verb's args as the binder gives them unasked.
+	 * The `urls` command's args as the binder gives them unasked.
 	 *
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException As `Command_Args::bind()`.
@@ -1612,7 +1612,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `overview` verb's answer over the chart's `Bucket::window()`: the
+	 * The `overview` command's answer over the chart's `Bucket::window()`: the
 	 * non-worker requests' totals, their exact distinct URLs, every server
 	 * with traffic there, worker traffic counted, busiest first, the
 	 * leaderboard and each owner's time. A server scopes the totals, the
@@ -2322,7 +2322,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `query` verb's answer: its tokens as a `Stats_Query` spec, each
+	 * The `query` command's answer: its tokens as a `Stats_Query` spec, each
 	 * filter token one value and a field's tokens ORed, the bucket column
 	 * spelled as keys, and what the rows are OF.
 	 *
@@ -2568,7 +2568,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `Stats_Query`, which answers no rows when the stats file will not
 	 * open. Disk-walking commands work regardless.
 	 *
-	 * The substrate binds each verb's tokens against its `args` before the
+	 * The substrate binds each command's tokens against its `args` before the
 	 * handler runs, so a handler reads `$args['<name>']` typed and defaulted,
 	 * and a token that does not fit never reaches it. A handler throws a
 	 * RuntimeException on a value its declaration cannot rule out; the
@@ -2612,26 +2612,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most ' . $span . ' buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last ' . $span . '. `filters.bucket` echoes the canonical spelling.' ],
 					],
 					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'urls', $args ),
-				],
-				[
-					'name'        => 'query',
-					'capability'  => Capabilities::READ,
-					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ as_of, source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; `as_of` dates every answer.',
-					'args'        => [
-						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
-						self::FILTER_ARG,
-						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: ' . $kept . ' buckets for either source; empty is the last ' . $span . ' buckets.' ],
-						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
-						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
-						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],
-						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'description' => 'Most rows, up to `Stats_Query::MAX_LIMIT`, which is what an absent limit answers; refused under `top`.' ],
-						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'description' => 'Rows to skip, none when absent; refused under `top`.' ],
-						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
-						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
-					],
-					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'query', $args ),
 				],
 				[
 					'name'        => 'dump_url',
@@ -2678,6 +2658,26 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
+					'name'        => 'query',
+					'capability'  => Capabilities::READ,
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ as_of, source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; `as_of` dates every answer.',
+					'args'        => [
+						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
+						self::FILTER_ARG,
+						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: ' . $kept . ' buckets for either source; empty is the last ' . $span . ' buckets.' ],
+						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
+						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
+						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'description' => 'Most rows, up to `Stats_Query::MAX_LIMIT`, which is what an absent limit answers; refused under `top`.' ],
+						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'description' => 'Rows to skip, none when absent; refused under `top`.' ],
+						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
+						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
+					],
+					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'query', $args ),
+				],
+				[
 					'name'        => 'search_requests',
 					'capability'  => Capabilities::READ,
 					'description' => 'Locate a request by rid: {rid, url_hash} from its request row.',
@@ -2690,6 +2690,23 @@ class Performance_CI_Node extends Service_CI_Node {
 					'rid'      => $rid,
 					'url_hash' => self::row_of( $rid )['url'],
 				];
+					},
+				],
+				[
+					'name'        => 'dump_request',
+					'capability'  => Capabilities::READ,
+					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when the rid is not in any row (aged past the ' . $kept . ' buckets the rows keep, or not yet written) or when its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner, though the request still counts in every aggregate.',
+					'args'        => [
+						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+				$result = self::load_request( Core::as_string( $args['rid'] ) );
+				// Findings ride the record; they involve no model.
+				$rule               = self::rule_for_record( $result );
+				$result['findings'] = Findings::for_request( $result, $rule );
+				$result['caveat']   = Findings::caveat();
+				$result['owners']   = Findings::owners( $result );
+				return $result;
 					},
 				],
 				[
@@ -2709,23 +2726,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				$limit = \min( self::GREP_RESULT_LIMIT_MAX, \max( 1, Core::as_int( $args['limit'] ) ) );
 
 				return self::run_grep_requests( $pattern, $limit );
-					},
-				],
-				[
-					'name'        => 'dump_request',
-					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when the rid is not in any row (aged past the ' . $kept . ' buckets the rows keep, or not yet written) or when its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner, though the request still counts in every aggregate.',
-					'args'        => [
-						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
-					],
-					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$result = self::load_request( Core::as_string( $args['rid'] ) );
-				// Findings ride the record; they involve no model.
-				$rule               = self::rule_for_record( $result );
-				$result['findings'] = Findings::for_request( $result, $rule );
-				$result['caveat']   = Findings::caveat();
-				$result['owners']   = Findings::owners( $result );
-				return $result;
 					},
 				],
 				[
