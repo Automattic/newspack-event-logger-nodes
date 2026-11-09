@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.161.1] - 2026-11-09
+
 ### Changed
 
 - On a screen under 600 px, the URL detail view's response-time chart folds its legend below the plot, as the shared time charts do.
