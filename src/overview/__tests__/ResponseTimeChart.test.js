@@ -22,6 +22,7 @@ import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import ResponseTimeChart, { STATUS_PLACE } from '../ResponseTimeChart';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { installViewport } from '@newspack-nodes/shared/test-utils/viewportWidth';
 
 // jsdom lays nothing out and reports clientWidth 0, so `openFrame` falls back.
 const CHART_WIDTH = 800;
@@ -680,6 +681,37 @@ describe( 'ResponseTimeChart', () => {
 
 		expect( container.querySelectorAll( 'svg' ) ).toHaveLength( 1 );
 		expect( dots( container ) ).toHaveLength( 2 );
+		unmount();
+	} );
+} );
+
+describe( 'ResponseTimeChart on a narrow screen', () => {
+	let viewport;
+	const answer = ( matches ) => {
+		viewport = installViewport( matches );
+	};
+	afterEach( () => viewport?.restore() );
+
+	it( 'folds the legend below the plot, which it follows in DOM order', () => {
+		answer( true );
+		const { container, unmount } = mountChart( REQUESTS );
+		const row = container.querySelector( '.newspack-nodes-chart__row' );
+		expect( row.classList.contains( 'is-narrow' ) ).toBe( true );
+		expect(
+			row.querySelector( '.newspack-nodes-chart__plot' )
+				.nextElementSibling.className
+		).toBe( 'newspack-nodes-chart-legend' );
+		unmount();
+	} );
+
+	it( 'keeps the legend beside the plot on a wide screen', () => {
+		answer( false );
+		const { container, unmount } = mountChart( REQUESTS );
+		expect(
+			container
+				.querySelector( '.newspack-nodes-chart__row' )
+				.classList.contains( 'is-narrow' )
+		).toBe( false );
 		unmount();
 	} );
 } );

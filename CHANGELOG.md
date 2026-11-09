@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- On a screen under 600 px, the URL detail view's response-time chart folds its legend below the plot, as the shared time charts do.
 - **`Owner` names a plugin, mu-plugin or theme root that will not list**, with one `[EventLoggerNodes] Owner: dir <root> will not list` line, where it used to read the root as holding no links. It does not throw.
 - **this release needs newspack-nodes 2.150.0**, for `Core::dir_entries()` and `Dir_Unlistable`.
 - **Rule writes declare themselves writes.** The rules editor's `save`, `upsert`, `delete` and `reset`, and the Performance dashboard's inline `upsert` and `delete`, pass `sendsOnRemoval: true` to `useCommandOnce`, so a rule change still queued when the page unmounts or is left reaches the server. Every read, the stats slices, `ask` and `grep_requests` included, declares nothing and sends nothing then. Build against a newspack-nodes source carrying `sendsOnRemoval`: `useCommandOnce` refuses an option it does not know, so an older substrate source fails the mount by name.

@@ -7,7 +7,9 @@
  * colored by HTTP status class and clickable to open that request; a monotone
  * trend line and a dashed mean line sit behind them, and the legend beside
  * the plot lists the status classes present. Picking a class there
- * keeps its dots alone on the plot, trend and mean recomputed over them.
+ * keeps its dots alone on the plot, trend and mean recomputed over them. On
+ * a narrow screen (`useNarrow`) the legend folds below the plot, as the
+ * shared `AreaTimeChart`'s does.
  *
  * D3 owns this SVG subtree, not React: `useTimeChart` calls the render
  * function on mount, on data change and on container resize, and it redraws
@@ -24,6 +26,7 @@ import {
 	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
 import ChartLegend from '@newspack-nodes/shared/components/ChartLegend';
+import useNarrow from '@newspack-nodes/shared/hooks/useNarrow';
 import { useSeriesSelection } from '@newspack-nodes/shared/hooks/useSeriesSelection';
 import {
 	getStatusCategory,
@@ -280,6 +283,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	);
 
 	const { containerRef } = useTimeChart( renderFn );
+	const narrow = useNarrow();
 
 	if ( ! requests || requests.length === 0 ) {
 		return null;
@@ -293,7 +297,11 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 					'newspack-event-logger-nodes'
 				) }
 			</h3>
-			<div className="newspack-nodes-chart__row">
+			<div
+				className={ `newspack-nodes-chart__row${
+					narrow ? ' is-narrow' : ''
+				}` }
+			>
 				<div
 					ref={ containerRef }
 					className="newspack-nodes-chart__plot"
