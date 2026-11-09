@@ -28,7 +28,7 @@ import {
 	useState,
 } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
-import Modal from '@newspack-nodes/shared/components/Modal';
+import Modal, { ModalHeader } from '@newspack-nodes/shared/components/Modal';
 import AskPageRing from '@newspack-nodes/shared/components/AskPageRing';
 import {
 	ASK_TRIGGER_ATTR,
@@ -284,30 +284,30 @@ export default function AskPanel( { ask } ) {
 	// and the raise below is what settles the order between them. The backdrop
 	// is where that layer lives, so it is raised there.
 	return (
-		<Modal
-			ariaLabel={ __( 'Assembled brief', 'newspack-event-logger-nodes' ) }
-			backdropClassName="event-logger-ask__backdrop"
-			onClose={ close }
-		>
-			<h4 className="newspack-nodes-modal__title">
-				{ 1 === briefs.length
-					? sprintf(
-							// translators: %s: the subject asked about.
-							__(
-								'About this %s',
-								'newspack-event-logger-nodes'
-							),
-							briefs[ 0 ].subject
-					  )
-					: sprintf(
-							// translators: %d: how many things were selected.
-							__(
-								'About %d selected things',
-								'newspack-event-logger-nodes'
-							),
-							briefs.length
-					  ) }
-			</h4>
+		<Modal backdropClassName="event-logger-ask__backdrop" onClose={ close }>
+			<ModalHeader
+				title={
+					1 === briefs.length
+						? sprintf(
+								// translators: %s: the subject asked about.
+								__(
+									'About this %s',
+									'newspack-event-logger-nodes'
+								),
+								briefs[ 0 ].subject
+						  )
+						: sprintf(
+								// translators: %d: how many things were selected.
+								__(
+									'About %d selected things',
+									'newspack-event-logger-nodes'
+								),
+								briefs.length
+						  )
+				}
+				onClose={ close }
+				closeLabel={ __( 'Close', 'newspack-event-logger-nodes' ) }
+			/>
 
 			{ briefs.map( ( brief, i ) => (
 				<div
@@ -352,9 +352,6 @@ export default function AskPanel( { ask } ) {
 						? __( 'Copied.', 'newspack-event-logger-nodes' )
 						: '' }
 				</span>
-				<button type="button" className="button" onClick={ close }>
-					{ __( 'Close', 'newspack-event-logger-nodes' ) }
-				</button>
 				<a
 					className="button"
 					href={ askClaudeUrl( markdown ) }

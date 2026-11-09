@@ -5,24 +5,14 @@
  * (enqueue_on_overlay_pages), per-request inline-data injection
  * (enqueue_inline_data), and hook wiring (init).
  *
- * These paths touch admin ENQUEUE functions that aren't in the shared
- * bootstrap, so those stubs are declared here (function_exists-guarded) and
- * record into $GLOBALS the assertions read back. Everything else (admin_url,
- * escaping, i18n) comes from tests/bootstrap.php — per-file copies forbidden.
+ * `wp_script_is()` is the one admin enqueue function the shared shims lack,
+ * so its stub is declared here (function_exists-guarded) and reads the
+ * handles a test marks enqueued. Every other stub (the enqueue and inline
+ * recorders, admin_url, escaping, i18n) comes from tests/bootstrap.php and
+ * the substrate's `wp-shims.php` — per-file copies forbidden.
  */
 
 namespace {
-	if ( ! \function_exists( 'wp_enqueue_style' ) ) {
-		function wp_enqueue_style( ...$args ): void {
-			$GLOBALS['_enqueued_styles'][] = $args;
-		}
-	}
-	if ( ! \function_exists( 'wp_add_inline_script' ) ) {
-		function wp_add_inline_script( ...$args ): bool {
-			$GLOBALS['_inline_scripts'][] = $args;
-			return true;
-		}
-	}
 	if ( ! \function_exists( 'wp_script_is' ) ) {
 		// Status-controllable stub: a test marks a handle "enqueued" by adding it
 		// to $GLOBALS['_wp_test_enqueued_handles'].

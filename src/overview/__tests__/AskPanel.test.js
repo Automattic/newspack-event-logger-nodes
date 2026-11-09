@@ -24,6 +24,15 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 	},
 } ) );
 
+// This plugin's "Close" translates; the substrate's would not, in this bundle.
+jest.mock( '@wordpress/i18n', () => ( {
+	...jest.requireActual( '@wordpress/i18n' ),
+	__: ( text, domain ) =>
+		'Close' === text && 'newspack-event-logger-nodes' === domain
+			? 'Cerrar'
+			: text,
+} ) );
+
 jest.mock( '@newspack-nodes/runtime', () => ( {
 	__esModule: true,
 	formatCommandArgs: ( args, options ) => [ ...args, options ?? {} ],
@@ -453,18 +462,54 @@ test( 'the Claude link also puts the brief on the clipboard', async () => {
 	expect( writeText.mock.calls[ 0 ][ 0 ] ).toContain( '## span' );
 } );
 
-test( 'closing the panel leaves the briefs alone but takes the dialog away', () => {
+test( 'the header icon is the panel’s one Close button', () => {
+	render();
+	pick();
+	answer( { result: BRIEF } );
+
+	const closes = Array.from( dialog().querySelectorAll( 'button' ) ).filter(
+		( b ) =>
+			[ 'Close', 'Cerrar' ].includes( b.textContent ) ||
+			[ 'Close', 'Cerrar' ].includes( b.getAttribute( 'aria-label' ) )
+	);
+	expect( closes ).toHaveLength( 1 );
+	expect( closes[ 0 ].closest( 'header' ) ).not.toBeNull();
+} );
+
+test( 'escape closes the open panel', () => {
 	render();
 	pick();
 	answer( { result: BRIEF } );
 
 	act( () => {
-		Array.from( view.container.querySelectorAll( 'button' ) )
-			.find( ( b ) => 'Close' === b.textContent )
-			.click();
+		document.dispatchEvent(
+			new window.KeyboardEvent( 'keydown', {
+				key: 'Escape',
+				bubbles: true,
+			} )
+		);
 	} );
 
-	expect( view.container.querySelector( '[role="dialog"]' ) ).toBeNull();
+	expect( dialog() ).toBeNull();
+} );
+
+test( 'the brief is headed by the shared header, whose close icon closes it', () => {
+	render();
+	pick();
+	answer( { result: BRIEF } );
+
+	const header = dialog().querySelector(
+		':scope > header.newspack-nodes-modal__header'
+	);
+	const title = header.querySelector( 'h2.newspack-nodes-modal__title' );
+	expect( title.textContent ).toBe( 'About this span' );
+	expect( dialog().hasAttribute( 'aria-label' ) ).toBe( false );
+	expect( dialog().getAttribute( 'aria-labelledby' ) ).toBe( title.id );
+	act( () => {
+		header.querySelector( 'button[aria-label="Cerrar"]' ).click();
+	} );
+
+	expect( dialog() ).toBeNull();
 } );
 
 /**

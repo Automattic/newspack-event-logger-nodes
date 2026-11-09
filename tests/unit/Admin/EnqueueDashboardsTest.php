@@ -9,28 +9,11 @@
  */
 
 namespace {
-	if ( ! \function_exists( 'wp_enqueue_style' ) ) {
-		function wp_enqueue_style( ...$args ): void {
-			$GLOBALS['_enqueued_styles'][] = $args;
-		}
-	}
-	if ( ! \function_exists( 'wp_add_inline_script' ) ) {
-		function wp_add_inline_script( ...$args ): bool {
-			$GLOBALS['_inline_scripts'][] = $args;
-			return true;
-		}
-	}
 	if ( ! \function_exists( 'wp_script_is' ) ) {
 		// Status-controllable stub: a test marks a handle "enqueued" by adding it
 		// to $GLOBALS['_wp_test_enqueued_handles'].
 		function wp_script_is( string $handle, string $list = 'enqueued' ): bool {
 			return ! empty( $GLOBALS['_wp_test_enqueued_handles'][ $handle ] );
-		}
-	}
-	if ( ! \function_exists( 'wp_style_add_data' ) ) {
-		function wp_style_add_data( string $handle, string $key, $value ): bool {
-			$GLOBALS['_style_data'][ $handle ][ $key ] = $value;
-			return true;
 		}
 	}
 }
