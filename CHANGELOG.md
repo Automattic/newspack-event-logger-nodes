@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Owner` names a plugin, mu-plugin or theme root that will not list**, with one `[EventLoggerNodes] Owner: dir <root> will not list` line, where it used to read the root as holding no links. It does not throw.
+- **this release needs newspack-nodes 2.150.0**, for `Core::dir_entries()` and `Dir_Unlistable`.
 - **Rule writes declare themselves writes.** The rules editor's `save`, `upsert`, `delete` and `reset`, and the Performance dashboard's inline `upsert` and `delete`, pass `sendsOnRemoval: true` to `useCommandOnce`, so a rule change still queued when the page unmounts or is left reaches the server. Every read, the stats slices, `ask` and `grep_requests` included, declares nothing and sends nothing then. Build against a newspack-nodes source carrying `sendsOnRemoval`: `useCommandOnce` refuses an option it does not know, so an older substrate source fails the mount by name.
 - **The MCP door derives its tools through the substrate's `Mcp_Door::declared_tools()`.** `MCP_Controller`'s hand table of eleven tools becomes two per-verb text tables, `PERFORMANCE` and `RULES`, and two except-lists, `list_hooks` and `set` for `performance` and `save` and `reset` for `rules`, so every other command either CI declares is a tool. `Performance_CI_Node` declares `dump_url` before `query` and `dump_request` before `grep_requests`, the order the tools list in, so `help performance` lists them in that order too. The listing an agent reads is byte-identical. Requires the substrate that carries `declared_tools()`.
 

@@ -431,6 +431,29 @@ class OwnerTest extends TestCase {
 		$this->assertSame( 'core', Owner::of_label( 'sql: [core] kea_7746_get_option' ) );
 	}
 
+	/**
+	 * A plugins root that will not list says so once, naming it, rather than
+	 * reading as a root that holds no links; the root's own files still classify.
+	 */
+	public function test_a_plugins_root_that_will_not_list_is_named(): void {
+		$base    = $this->make_temp_dir( 'eln-owner-unlisted-' );
+		$plugins = "{$base}/wp-content/plugins";
+		\mkdir( "{$plugins}/weka-4410", 0755, true );
+		self::own_files_under( [ 'plugins' => $plugins, 'content' => "{$base}/wp-content", 'abspath' => "{$base}/" ] + self::ROOTS );
+		$stderr = $this->capture_stderr();
+
+		\chmod( $plugins, 0311 );
+		try {
+			$owner = Owner::of( "{$plugins}/weka-4410/weka.php" );
+			Owner::of( "{$plugins}/weka-4410/other.php" );
+		} finally {
+			\chmod( $plugins, 0755 );
+		}
+
+		$this->assertSame( 'weka-4410', $owner );
+		$this->assertSame( [ "[EventLoggerNodes] Owner: dir {$plugins} will not list" ], self::stderr_lines( $stderr, 'will not list' ) );
+	}
+
 	/** A plugin-load span belongs to the plugin it names. */
 	public function test_a_plugin_load_span_is_its_plugins(): void {
 		$this->assertSame( 'kea-7746', Owner::of_label( 'kea-7746' . Flame_Tree::PLUGIN_LOAD_SUFFIX ) );

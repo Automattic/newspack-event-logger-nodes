@@ -10,6 +10,9 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Dir_Unlistable;
+
 \defined( 'ABSPATH' ) || exit;
 
 /**
@@ -285,15 +288,23 @@ final class Owner {
 	 * Each entry of a root that is a symlink, at its resolved target: a
 	 * directory slash-terminated, a file as itself, which matches only itself.
 	 * Its owner is the one a file inside the linked directory, or the linked
-	 * file itself, would have in the root.
+	 * file itself, would have in the root. A root that is not there holds no
+	 * links; one that will not list holds none either, and says so once,
+	 * because a throw here would cost the fatal or the label being classified.
 	 *
 	 * @param string $kind A `LINKABLE` kind.
 	 * @param string $root The root.
 	 * @return list<array{0:string,1:string,2:?string}>
 	 */
 	private static function linked( string $kind, string $root ): array {
+		try {
+			$entries = Core::dir_entries( \rtrim( $root, '/' ), '*' );
+		} catch ( Dir_Unlistable $e ) {
+			Core::print_less_often( '[EventLoggerNodes] Owner: ', Core::message_of( $e ) );
+			return [];
+		}
 		$dirs = [];
-		foreach ( \glob( \rtrim( $root, '/' ) . '/*', GLOB_NOSORT ) ?: [] as $entry ) {
+		foreach ( $entries as $entry ) {
 			$real = \is_link( $entry ) ? \realpath( $entry ) : false;
 			if ( false === $real ) {
 				continue;
