@@ -449,3 +449,17 @@ describe( 'useRulesGraph — teardown', () => {
 		}
 	} );
 } );
+
+describe( 'useRulesGraph — writes declared', () => {
+	test( 'declares save, upsert, delete and reset sent on removal', async () => {
+		installWire();
+		renderHook( () => useRulesGraph() );
+		await act( async () => {} );
+		expect(
+			[ 'save', 'upsert', 'delete', 'reset' ].map(
+				( verb ) =>
+					Core.node( `rules:${ verb }:fetch` ).sends_on_removal
+			)
+		).toEqual( [ true, true, true, true ] );
+	} );
+} );

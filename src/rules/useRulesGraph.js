@@ -164,6 +164,7 @@ export function useRulesGraph( opts = {} ) {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'save',
+		sendsOnRemoval: true,
 		subjectOf: () => null,
 		onDone: settle( 'save' ),
 	} );
@@ -171,6 +172,7 @@ export function useRulesGraph( opts = {} ) {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'upsert',
+		sendsOnRemoval: true,
 		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: settle( 'upsert' ),
 	} );
@@ -178,12 +180,14 @@ export function useRulesGraph( opts = {} ) {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'delete',
+		sendsOnRemoval: true,
 		onDone: settle( 'delete' ),
 	} );
 	const resetOnce = useCommandOnce( {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'reset',
+		sendsOnRemoval: true,
 		onDone: settle( 'reset' ),
 	} );
 

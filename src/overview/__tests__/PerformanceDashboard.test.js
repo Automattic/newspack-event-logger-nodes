@@ -467,6 +467,20 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	// @longform A write still queued when the dashboard unmounts must land; a
+	// read, retried or not, answers nobody then. `ask` and `grep_requests`
+	// decline retries and are reads all the same.
+	it( 'declares only its rule writes sent on removal', () => {
+		mockView = null;
+		const { unmount } = mountDash();
+		const declared = Object.entries( mockCommands )
+			.filter( ( [ , c ] ) => true === c.opts.sendsOnRemoval )
+			.map( ( [ key ] ) => key )
+			.sort();
+		expect( declared ).toEqual( [ 'rules:delete', 'rules:upsert' ] );
+		unmount();
+	} );
+
 	it( 'shows the loading spinner while the view model is null', () => {
 		mockView = null;
 		const { container, unmount } = mountDash();

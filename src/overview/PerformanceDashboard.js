@@ -1130,6 +1130,7 @@ export default function PerformanceDashboard( {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'upsert',
+		sendsOnRemoval: true,
 		// The rule DOCUMENT is the first token; the rule it names is the id.
 		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: ( { result, error } ) => {
@@ -1164,6 +1165,7 @@ export default function PerformanceDashboard( {
 		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'delete',
+		sendsOnRemoval: true,
 		onDone: ( { result, error } ) => {
 			setRuleDraft( null );
 			if ( result ) {
