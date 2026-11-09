@@ -18,6 +18,8 @@
 
 // The `import` below makes this a MODULE, so Window needs `declare global`.
 declare global {
+	/** The substrate alias base `createJestConfig()` hands every test. */
+	const NEWSPACK_NODES_SRC: string;
 	interface Window {
 		/** Printed by `Current_Request_Overlay`; carries `currentRequest`. */
 		NewspackEventLoggerNodes?: {

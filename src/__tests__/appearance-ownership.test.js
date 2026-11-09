@@ -1,8 +1,8 @@
 /* @jest-environment node */
 
+/* global NEWSPACK_NODES_SRC */
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
 import * as sass from 'sass';
 import postcss from 'postcss';
 // Jest's Babel toolchain supplies the parser used to inspect real JSX nodes.
@@ -10,8 +10,13 @@ import postcss from 'postcss';
 import { parse as parseJs } from '@babel/parser';
 
 const SRC = path.resolve( __dirname, '..' );
-const NODES_SHARED = path.resolve( SRC, '../../newspack-nodes/src/shared' );
-const SHARED_ALIAS = '@newspack-nodes/shared';
+// The aliases resolved against the base the jest config hands every test.
+const { esbuildAlias, sassImporter } = require(
+	path.join( NEWSPACK_NODES_SRC, 'build-kit/alias-map.cjs' )
+);
+const IMPORTER = sassImporter( NEWSPACK_NODES_SRC );
+const NODES_SHARED =
+	esbuildAlias( NEWSPACK_NODES_SRC )[ '@newspack-nodes/shared' ];
 const LEGACY_SHARED_CLASS =
 	/event-logger-(?:performance-loading|skeleton(?:--(?:text|card|circle))?|empty-state|no-selection|stats-grid|stat(?:-(?:value|label))?(?![a-z-])|card-link(?:-(?:name|count))?|error-banner)/g;
 const APPEARANCE_PROPERTY =
@@ -201,22 +206,7 @@ const styleFiles = () =>
 
 const compile = ( file ) =>
 	sass.compile( file, {
-		importers: [
-			{
-				findFileUrl( url ) {
-					if (
-						url !== SHARED_ALIAS &&
-						! url.startsWith( `${ SHARED_ALIAS }/` )
-					) {
-						return null;
-					}
-					const relative = url
-						.slice( SHARED_ALIAS.length )
-						.replace( /^\/+/, '' );
-					return pathToFileURL( path.join( NODES_SHARED, relative ) );
-				},
-			},
-		],
+		importers: [ IMPORTER ],
 	} ).css;
 
 const STYLE_APPEARANCE_ALLOWLIST = [

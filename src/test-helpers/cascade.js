@@ -8,17 +8,23 @@
  * shows up as the defect it is rather than as a green source-text match.
  */
 
+/* global NEWSPACK_NODES_SRC */
 import path from 'path';
-import { pathToFileURL } from 'url';
 import * as sass from 'sass';
 import postcss from 'postcss';
 
 const SRC = path.resolve( __dirname, '..' );
-const NODES_SHARED = path.resolve( SRC, '../../newspack-nodes/src/shared' );
-const SHARED_ALIAS = '@newspack-nodes/shared';
+
+// The aliases resolved against the base the jest config hands every test.
+const { esbuildAlias, sassImporter } = require(
+	path.join( NEWSPACK_NODES_SRC, 'build-kit/alias-map.cjs' )
+);
+const IMPORTER = sassImporter( NEWSPACK_NODES_SRC );
+const NODES_SHARED =
+	esbuildAlias( NEWSPACK_NODES_SRC )[ '@newspack-nodes/shared' ];
 
 /**
- * Compile one stylesheet, resolving the shared-source build alias.
+ * Compile one stylesheet, resolving the `@newspack-nodes/*` build aliases.
  *
  * @param {string} file Absolute path to a .scss entry point.
  * @return {import('postcss').Root} The parsed compiled stylesheet.
@@ -26,27 +32,7 @@ const SHARED_ALIAS = '@newspack-nodes/shared';
 export const compile = ( file ) =>
 	postcss.parse(
 		sass.compile( file, {
-			importers: [
-				{
-					findFileUrl( url ) {
-						if (
-							url !== SHARED_ALIAS &&
-							! url.startsWith( `${ SHARED_ALIAS }/` )
-						) {
-							return null;
-						}
-						const relative = url
-							.slice( SHARED_ALIAS.length )
-							.replace( /^\/+/, '' );
-						// Sass checks the global URL, which jsdom replaces.
-						return new URL(
-							pathToFileURL(
-								path.join( NODES_SHARED, relative )
-							).href
-						);
-					},
-				},
-			],
+			importers: [ IMPORTER ],
 		} ).css
 	);
 
