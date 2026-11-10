@@ -6,6 +6,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -634,6 +635,23 @@ class FlameTreeTest extends TestCase {
 			Hook_Categorizer::clear_cache();
 			\remove_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
 		}
+	}
+
+	/**
+	 * The request frame is the logger's own, never an event a rule picks: it
+	 * draws in its own colour whatever a registrar offers under its name.
+	 */
+	public function test_the_request_frame_draws_its_own_colour_and_is_no_custom_event(): void {
+		$custom = static fn ( array $colors ): array => [ Log_Manager::REQUEST_LABEL => '#123456', 'loop' => '#654321' ] + $colors;
+		\add_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
+		try {
+			$this->assertArrayNotHasKey( Log_Manager::REQUEST_LABEL, Config::get_custom_colors() );
+			$this->assertSame( '#654321', Config::get_custom_colors()['loop'] );
+			$this->assertSame( Log_Manager::REQUEST_COLOR, Config::span_colors()[ Log_Manager::REQUEST_LABEL ] );
+		} finally {
+			\remove_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
+		}
+		$this->assertSame( '#FF8C00', Config::span_colors()[ Log_Manager::REQUEST_LABEL ] );
 	}
 
 	/**

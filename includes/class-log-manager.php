@@ -57,6 +57,9 @@ class Log_Manager {
 	 */
 	public const REQUEST_LABEL = 'process';
 
+	/** The request frame's colour in every flame graph. */
+	public const REQUEST_COLOR = '#FF8C00';
+
 	/** Opens the record, and carries the `rule` that admitted the request. */
 	public const REQUEST_START = self::REQUEST_LABEL . ' (start)';
 

@@ -115,13 +115,14 @@ class Config {
 	 * The span colour map every page that draws a request profile prints as
 	 * `window.eventLoggerCustomColors`: the configured colours over
 	 * `Flame_Tree::platform_colors()`, so an operator's colour of the same name
-	 * outranks the platform's. The rule editor's picker takes
-	 * `get_custom_colors()` alone, which offers no platform span as an event.
+	 * outranks the platform's, and the request frame in its own colour. The
+	 * rule editor's picker takes `get_custom_colors()` alone, which offers no
+	 * platform span and no request frame as an event.
 	 *
 	 * @return array<string,mixed> Span name to color.
 	 */
 	public static function span_colors(): array {
-		return self::get_custom_colors() + Flame_Tree::platform_colors();
+		return self::get_custom_colors() + Flame_Tree::platform_colors() + [ Log_Manager::REQUEST_LABEL => Log_Manager::REQUEST_COLOR ];
 	}
 
 	/**
@@ -129,6 +130,7 @@ class Config {
 	 *
 	 * Applies the `newspack_event_logger_nodes_custom_colors` filter lazily, so
 	 * plugins that load after Event Logger can still register their events,
+	 * leaves out the request frame, which is the logger's own and no event,
 	 * then sorts the map for the picker.
 	 *
 	 * @return array<string,mixed> Event name to color, in case-insensitive
@@ -145,6 +147,7 @@ class Config {
 			$colors = Core::arr( $filtered );
 		}
 
+		unset( $colors[ Log_Manager::REQUEST_LABEL ] );
 		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );
 
 		return $colors;
