@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.162.1] - 2026-11-10
+
 ### Fixed
 
 - **The request frame, `process`, is no custom event.** The rule editor's custom-event picker listed every name a plugin gave a colour, and pyrobase and nuclear-gyrobase coloured `process`, the frame the logger opens around every request, so a rule could name it among its custom events and a request brief counted it there. `Config::get_custom_colors()`, which the picker reads, now leaves `Log_Manager::REQUEST_LABEL` out, and `Config::span_colors()` draws the frame in `Log_Manager::REQUEST_COLOR` (`#FF8C00`, the orange it had), whatever a plugin registers under its name.
