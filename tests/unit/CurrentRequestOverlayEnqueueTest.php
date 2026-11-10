@@ -140,7 +140,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 		/**
 		 * The tab draws `RequestProfile` on the station too, where the dashboards
 		 * do not print the colour map: it carries the dashboards' map itself, the
-		 * platform spans beneath the configured colours.
+		 * platform spans and the request frame beneath the configured colours.
 		 */
 		public function test_inline_data_carries_the_dashboards_span_colours(): void {
 			$GLOBALS['_wp_test_enqueued_handles'][ self::HANDLE ] = true;
@@ -152,7 +152,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			$this->assertMatchesRegularExpression( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script );
 			\preg_match( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script, $m );
 			$this->assertSame(
-				\Newspack_Event_Logger_Nodes\Config::get_custom_colors() + \Newspack_Event_Logger_Nodes\Flame_Tree::platform_colors(),
+				\Newspack_Event_Logger_Nodes\Config::span_colors(),
 				\json_decode( $m[1], true )
 			);
 			$this->assertSame( '#7A1F3D', \json_decode( $m[1], true )['stats sweep'], 'a configured colour wins' );
