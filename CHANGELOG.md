@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Needs newspack-nodes 2.153.0.** The Settings page loads the skins' fonts through the substrate's `newspack-nodes-fonts` handle (`Admin::FONTS_HANDLE`), new in 2.153.0; below it the plugin goes dormant behind an admin notice naming both versions.
 - **The dashboards take the shared page inset.** The Request Stream, Error Log and Gyroscope roots and the overlay's Request tab no longer pad themselves; `DashboardShell` and the overlay's tab pane carry the substrate's `newspack-nodes-page-inset` (16px 20px), and the Performance Overview, which had none, gains it.
 - **Log-row inks come from the shared sheet.** The duration inks are no longer copied into the Request Stream and Gyroscope sheets, and the Error Log's keyword cell carries `data-keyword` instead of an `entry-keyword--*` modifier; a fleet alert reads as the shared `newspack-nodes-status-badge is-error` chip.
 - **The settings page takes the console skin.** Its wrap carries `newspack-nodes-skin-root` beside the theme and UI roots, the settings bundle applies the stored skin to `<html>` as it loads, the rules editor paints the admin gutters from that wrap through the substrate's `useSkinGutters`, so the page carries one skin root, and the page loads the substrate's `newspack-nodes-fonts` handle beside the UI sheet, where the dashboards take it through the graph sheet. The form, the editor and the rule dialog it opens resolve the same `--paper`, `--ink` and faces the dashboards do.
