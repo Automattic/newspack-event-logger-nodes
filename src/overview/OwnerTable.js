@@ -78,7 +78,7 @@ export default function OwnerTable( { owners, perRequest = false, summary } ) {
 
 	return (
 		<div className="event-logger-request-profile">
-			<h3 id={ headingId }>
+			<h3 id={ headingId } className="newspack-nodes-section-heading">
 				{ __( 'Time By Owner', 'newspack-event-logger-nodes' ) }
 			</h3>
 			<ShareBar

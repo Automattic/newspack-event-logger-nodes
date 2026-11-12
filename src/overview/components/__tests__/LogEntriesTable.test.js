@@ -237,6 +237,32 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'rules its heading row 8px under the text, the heading keeping no margin inside it', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement(
+				'div',
+				{ className: 'newspack-nodes-ui' },
+				React.createElement( LogEntriesTable, {
+					entries: makeEntries(),
+				} )
+			)
+		);
+		const sheets = [
+			compileShared( 'styles/_components.scss' ),
+			compileLocal( 'overview/styles/charts.scss' ),
+		];
+		const heading = container.querySelector(
+			'.event-logger-heading-row.newspack-nodes-section-heading > h3'
+		);
+		expect( heading ).not.toBeNull();
+		expect( heading.parentElement.getAttribute( 'style' ) ).toBeNull();
+		expect( winning( heading, 'margin-bottom', sheets ) ).toBe( '0' );
+		expect(
+			winning( heading.parentElement, 'padding-block-end', sheets )
+		).toBe( '8px' );
+		unmount();
+	} );
+
 	it( 'sizes its machine-data cells from the stylesheet, not inline', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement(

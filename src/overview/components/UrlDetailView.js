@@ -439,15 +439,8 @@ export default function UrlDetailView( {
 			/>
 
 			<div className="event-logger-table event-logger-table--requests">
-				<div
-					style={ {
-						display: 'flex',
-						alignItems: 'center',
-						gap: '12px',
-						marginBottom: '8px',
-					} }
-				>
-					<h3 style={ { margin: 0 } }>
+				<div className="newspack-nodes-section-heading event-logger-heading-row">
+					<h3>
 						{ listing
 							? __(
 									'Recent Requests',

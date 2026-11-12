@@ -1412,13 +1412,7 @@ export default function LogEntriesTable( {
 
 	return (
 		<div className="event-logger-log-entries">
-			<div
-				style={ {
-					display: 'flex',
-					justifyContent: 'space-between',
-					alignItems: 'center',
-				} }
-			>
+			<div className="newspack-nodes-section-heading event-logger-heading-row">
 				<h3>
 					{ sprintf(
 						// translators: %d: number of log entries in the request.

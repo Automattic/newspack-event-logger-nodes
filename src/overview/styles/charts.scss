@@ -21,8 +21,22 @@
 .event-logger-table--requests,
 .event-logger-log-entries {
 	h3 {
-		margin: 0 0 12px;
-		font-size: 16px;
+		margin: 0 0 base.$space-md;
+		font-size: var(--np-text-s);
+	}
+}
+
+// A ruled row: a heading and its controls on one line, the shared rule
+// beneath both, so the heading keeps no margin inside it.
+.event-logger-heading-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: base.$space-md;
+	margin-bottom: base.$space-sm;
+
+	h3 {
+		margin: 0;
 	}
 }
 
@@ -32,7 +46,7 @@
 	padding: base.$space-lg base.$space-xl;
 }
 
-// The header sits on the body's top inset; no divider runs between them.
+// The header sits on the body's top inset; its heading's shared rule divides.
 .event-logger-card__header {
 	padding-bottom: 0;
 

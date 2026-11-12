@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Every performance section heading carries the shared rule.** The substrate's `newspack-nodes-section-heading` role now rules what it heads, in the newspack-nodes release after 2.153.0. Pages by Request Count, Findings and Request Trace already took the role; Time Breakdown, Time By Owner, Response Times, Recent Requests and Log Entries take it too, so every section of the Overview and its request and URL views reads alike. The Recent Requests and Log Entries rows take it whole, the heading at the start of the line and its controls at the end, Recent Requests' time field among them, 8px above the one rule; their layout comes from the stylesheet rather than inline styles.
+
 ## [0.163.0] - 2026-11-11
 
 ### Changed

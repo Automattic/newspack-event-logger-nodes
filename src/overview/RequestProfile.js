@@ -371,7 +371,11 @@ export default function RequestProfile( {
 
 	return (
 		<div className="event-logger-request-profile">
-			{ title && <h3 id={ headingId }>{ title }</h3> }
+			{ title && (
+				<h3 id={ headingId } className="newspack-nodes-section-heading">
+					{ title }
+				</h3>
+			) }
 
 			<ShareBar
 				segments={ sortedProfiles.flatMap( ( { state, time } ) => {
@@ -570,7 +574,11 @@ export function ProfileWithCaption( {
 	const headingId = useId();
 	return (
 		<div className="event-logger-request-profile">
-			{ heading && <h3 id={ headingId }>{ heading }</h3> }
+			{ heading && (
+				<h3 id={ headingId } className="newspack-nodes-section-heading">
+					{ heading }
+				</h3>
+			) }
 			<RequestProfile
 				profiles={ profiles }
 				totalMs={ totalMs }

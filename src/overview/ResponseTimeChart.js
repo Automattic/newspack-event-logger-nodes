@@ -297,7 +297,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 
 	return (
 		<div className="event-logger-response-chart">
-			<h3>
+			<h3 className="newspack-nodes-section-heading">
 				{ __(
 					'Response Times (Recent Requests)',
 					'newspack-event-logger-nodes'

@@ -85,6 +85,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 	// an error_status read their tone from it rather than spelling it.
 	'components/errorStatus.js': [ 'is-warning', 'is-error' ],
 	'overview/components/UrlDetailView.js': [
+		'newspack-nodes-section-heading event-logger-heading-row',
 		'newspack-nodes-table',
 		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
@@ -97,6 +98,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-status',
 	],
 	'overview/RequestProfile.js': [
+		'newspack-nodes-section-heading',
 		'newspack-nodes-table',
 		'newspack-nodes-table--undivided',
 		'newspack-nodes-table__terminal-data',
@@ -105,6 +107,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'button-link',
 	],
 	'overview/components/LogEntriesTable.js': [
+		'newspack-nodes-section-heading event-logger-heading-row',
 		'newspack-nodes-table',
 		'newspack-nodes-table--undivided',
 		'newspack-nodes-table__terminal-data',
@@ -123,6 +126,10 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'is-warning',
 	],
 	'requests/RequestStream.js': [ 'newspack-nodes-table__row' ],
+	// Every section heading beside a ruled one takes the same shared rule.
+	'overview/OwnerTable.js': [ 'newspack-nodes-section-heading' ],
+	'overview/ResponseTimeChart.js': [ 'newspack-nodes-section-heading' ],
+	'overview/components/RequestTrace.js': [ 'newspack-nodes-section-heading' ],
 	// The cell class belongs to the one table primitive the three log
 	// dashboards draw through; each still owns its own modifiers below.
 	'log-table/logTable.js': [

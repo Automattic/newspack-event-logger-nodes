@@ -81,6 +81,11 @@ import UrlDetailView from '../UrlDetailView';
 import { NO_DETAIL_CHART } from '../../hooks/usePerformanceGraph';
 import { SERIES_MEASURES } from '../../constants';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import {
+	compileLocal,
+	compileShared,
+	winning,
+} from '../../../test-helpers/cascade';
 import { rowsWire } from '../../../test-helpers/chartWire';
 
 /**
@@ -293,6 +298,27 @@ describe( 'UrlDetailView', () => {
 		expect( container.querySelector( 'h3' ).textContent ).toBe(
 			'Recent Requests'
 		);
+		unmount();
+	} );
+
+	it( 'rules the Recent Requests row 8px under its text, the heading keeping no margin inside it', () => {
+		const { container, unmount } = mount();
+		// The page root the shared roles scope under.
+		container.classList.add( 'newspack-nodes-ui' );
+		const sheets = [
+			compileShared( 'styles/_components.scss' ),
+			compileLocal( 'overview/styles/charts.scss' ),
+		];
+		const heading = container.querySelector(
+			'.event-logger-heading-row.newspack-nodes-section-heading > h3'
+		);
+		expect( heading.textContent ).toContain( 'Recent Requests' );
+		expect( heading.getAttribute( 'style' ) ).toBeNull();
+		expect( heading.parentElement.getAttribute( 'style' ) ).toBeNull();
+		expect( winning( heading, 'margin-bottom', sheets ) ).toBe( '0' );
+		expect(
+			winning( heading.parentElement, 'padding-block-end', sheets )
+		).toBe( '8px' );
 		unmount();
 	} );
 
