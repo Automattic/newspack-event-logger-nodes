@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.162.1\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.163.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-11-10T16:57:00+00:00\n"
+"POT-Creation-Date: 2026-11-12T05:18:31+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -46,58 +46,58 @@ msgstr ""
 msgid "You do not have permission to perform this action."
 msgstr ""
 
-#: includes/admin/class-admin.php:325
+#: includes/admin/class-admin.php:329
 msgid "You do not have permission to access this page."
 msgstr ""
 
-#: includes/admin/class-admin.php:332
-#: includes/admin/class-admin.php:382
+#: includes/admin/class-admin.php:336
+#: includes/admin/class-admin.php:386
 msgid "Event Logger Settings"
 msgstr ""
 
-#: includes/admin/class-admin.php:337
+#: includes/admin/class-admin.php:341
 msgid "Settings reset to defaults."
 msgstr ""
 
-#: includes/admin/class-admin.php:347
+#: includes/admin/class-admin.php:351
 msgid "Save Settings"
 msgstr ""
 
-#: includes/admin/class-admin.php:350
+#: includes/admin/class-admin.php:354
 msgid "Reset to Defaults"
 msgstr ""
 
-#: includes/admin/class-admin.php:351
+#: includes/admin/class-admin.php:355
 msgid "Are you sure you want to reset all settings to defaults? This cannot be undone."
 msgstr ""
 
-#: includes/admin/class-admin.php:383
+#: includes/admin/class-admin.php:387
 msgid "Event Logger"
 msgstr ""
 
-#: includes/admin/class-admin.php:421
+#: includes/admin/class-admin.php:425
 msgid "Enable or disable event logging."
 msgstr ""
 
-#: includes/admin/class-admin.php:434
+#: includes/admin/class-admin.php:438
 msgid "Logging Rules"
 msgstr ""
 
-#: includes/admin/class-admin.php:436
+#: includes/admin/class-admin.php:440
 msgid "Per-URL logging rules: which URLs to log or skip, and — for logged URLs — the hooks, custom events, significant events, and auto-tune thresholds."
 msgstr ""
 
-#: includes/admin/class-admin.php:462
+#: includes/admin/class-admin.php:466
 msgid "Maintenance"
 msgstr ""
 
 #. translators: %s: link to the Newspack Nodes settings page.
-#: includes/admin/class-admin.php:467
+#: includes/admin/class-admin.php:471
 #, php-format
 msgid "Flushing caches is a substrate-wide action: %s rotates this install's cache salt, orphaning every plugin's cached values at once."
 msgstr ""
 
-#: includes/admin/class-admin.php:468
+#: includes/admin/class-admin.php:472
 msgid "Newspack Nodes settings"
 msgstr ""
 
@@ -110,7 +110,7 @@ msgid "General"
 msgstr ""
 
 #. translators: 1: config key, 2: why its value was refused.
-#: newspack-event-logger-nodes.php:484
+#: newspack-event-logger-nodes.php:485
 #, php-format
 msgid "Newspack Event Logger Nodes published an empty %1$s list: %2$s"
 msgstr ""
@@ -201,7 +201,7 @@ msgid "Error timestamp"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:82
-#: src/overview/components/LogEntriesTable.js:1562
+#: src/overview/components/LogEntriesTable.js:1547
 msgid "Keyword"
 msgstr ""
 
@@ -210,7 +210,7 @@ msgid "Error/warning keyword"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:87
-#: src/overview/components/LogEntriesTable.js:1568
+#: src/overview/components/LogEntriesTable.js:1553
 msgid "Message"
 msgstr ""
 
@@ -219,7 +219,7 @@ msgid "Error message"
 msgstr ""
 
 #. translators: %d: number of rows the ring holds.
-#: src/error-log/ErrorLog.js:155
+#: src/error-log/ErrorLog.js:154
 #, js-format
 msgid "%d entry"
 msgid_plural "%d entries"
@@ -227,7 +227,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: 1: rows shown, 2: rows the ring holds.
-#: src/error-log/ErrorLog.js:162
+#: src/error-log/ErrorLog.js:161
 #, js-format
 msgid "%1$d / %2$d entry"
 msgid_plural "%1$d / %2$d entries"
@@ -235,16 +235,16 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: entries-per-second rate, formatted to one decimal place.
-#: src/error-log/ErrorLog.js:178
+#: src/error-log/ErrorLog.js:177
 #, js-format
 msgid "%s entries/s"
 msgstr ""
 
-#: src/error-log/ErrorLog.js:273
+#: src/error-log/ErrorLog.js:275
 msgid "Error log"
 msgstr ""
 
-#: src/error-log/ErrorLog.js:290
+#: src/error-log/ErrorLog.js:292
 msgid "Filter by URL, keyword, message, or request ID…"
 msgstr ""
 
@@ -354,15 +354,15 @@ msgstr ""
 #: src/log-table/logTable.js:36
 #: src/overview/CategoryTimeChart.js:69
 #: src/overview/components/BucketField.js:288
-#: src/overview/components/LogEntriesTable.js:1559
-#: src/overview/components/UrlDetailView.js:133
+#: src/overview/components/LogEntriesTable.js:1544
+#: src/overview/components/UrlDetailView.js:135
 #: src/overview/OwnerTable.js:74
 #: src/overview/RequestProfile.js:409
 msgid "Time"
 msgstr ""
 
 #: src/log-table/logTable.js:40
-#: src/overview/components/UrlDetailView.js:144
+#: src/overview/components/UrlDetailView.js:146
 msgid "Request ID"
 msgstr ""
 
@@ -371,7 +371,7 @@ msgid "Unique request identifier - click to view its full trace"
 msgstr ""
 
 #: src/log-table/logTable.js:48
-#: src/overview/UrlTable.js:179
+#: src/overview/UrlTable.js:181
 msgid "URL"
 msgstr ""
 
@@ -380,7 +380,7 @@ msgid "Request method and URL - click to view URL stats"
 msgstr ""
 
 #: src/log-table/logTable.js:56
-#: src/overview/components/UrlDetailView.js:153
+#: src/overview/components/UrlDetailView.js:154
 msgid "Status"
 msgstr ""
 
@@ -468,7 +468,7 @@ msgid "Events by Category"
 msgstr ""
 
 #: src/overview/CategoryTimeChart.js:74
-#: src/rules/RulesAdmin.js:364
+#: src/rules/RulesAdmin.js:316
 msgid "Events"
 msgstr ""
 
@@ -748,13 +748,13 @@ msgid "The last %s in five-minute buckets, the current one so far."
 msgstr ""
 
 #. translators: 1: file:line the fatal was raised at, 2: plugin slug.
-#: src/overview/components/LogEntriesTable.js:374
+#: src/overview/components/LogEntriesTable.js:358
 #, js-format
 msgid "%1$s (plugin %2$s)"
 msgstr ""
 
 #. translators: %d: rows a query selected, or a write touched.
-#: src/overview/components/LogEntriesTable.js:1161
+#: src/overview/components/LogEntriesTable.js:1146
 #, js-format
 msgid "%d row"
 msgid_plural "%d rows"
@@ -762,67 +762,67 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %d: number of nested log entries hidden inside this collapsed pair.
-#: src/overview/components/LogEntriesTable.js:1251
+#: src/overview/components/LogEntriesTable.js:1236
 #, js-format
 msgid "[%d entry]"
 msgid_plural "[%d entries]"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1355
+#: src/overview/components/LogEntriesTable.js:1340
 #: src/overview/RequestProfile.js:279
 msgid "Show less"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1356
+#: src/overview/components/LogEntriesTable.js:1341
 msgid "Show more"
 msgstr ""
 
 #. translators: %d: number of log entries in the request.
-#: src/overview/components/LogEntriesTable.js:1440
+#: src/overview/components/LogEntriesTable.js:1425
 #, js-format
 msgid "Log Entries (%d)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1451
+#: src/overview/components/LogEntriesTable.js:1436
 msgid "Fold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1458
+#: src/overview/components/LogEntriesTable.js:1443
 msgid "Unfold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1465
+#: src/overview/components/LogEntriesTable.js:1450
 msgid "Search entries"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1469
+#: src/overview/components/LogEntriesTable.js:1454
 msgid "Search entries…"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1500
+#: src/overview/components/LogEntriesTable.js:1485
 msgid "No matches"
 msgstr ""
 
 #. translators: %d: number of entries matching the search query.
 #. translators: %d: number of matching lines in the request.
-#: src/overview/components/LogEntriesTable.js:1513
-#: src/overview/components/OverviewSection.js:292
+#: src/overview/components/LogEntriesTable.js:1498
+#: src/overview/components/OverviewSection.js:287
 #, js-format
 msgid "%d match"
 msgid_plural "%d matches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1527
+#: src/overview/components/LogEntriesTable.js:1512
 msgid "Previous match (p)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1539
+#: src/overview/components/LogEntriesTable.js:1524
 msgid "Next match (n)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1621
+#: src/overview/components/LogEntriesTable.js:1606
 msgid "Click to highlight pair"
 msgstr ""
 
@@ -846,41 +846,41 @@ msgstr ""
 msgid "0"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:128
+#: src/overview/components/OverviewSection.js:123
 msgid "All Servers"
 msgstr ""
 
 #. translators: %s: the server name being filtered by.
-#: src/overview/components/OverviewSection.js:168
+#: src/overview/components/OverviewSection.js:163
 #, js-format
 msgid "Time Breakdown (%s)"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:171
+#: src/overview/components/OverviewSection.js:166
 msgid "Global Time Breakdown"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:194
+#: src/overview/components/OverviewSection.js:189
 msgid "Request ID or /url pattern"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:198
+#: src/overview/components/OverviewSection.js:193
 msgid "Request ID or /url pattern…"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:217
+#: src/overview/components/OverviewSection.js:212
 msgid "Searching…"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:247
+#: src/overview/components/OverviewSection.js:242
 msgid "Refresh:"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:267
+#: src/overview/components/OverviewSection.js:262
 msgid "Matches in recent traffic"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:307
+#: src/overview/components/OverviewSection.js:302
 msgid "Showing first results — narrow your search for more."
 msgstr ""
 
@@ -909,61 +909,61 @@ msgid "The flame lookup ran out of time, so the trace is not shown here; one may
 msgstr ""
 
 #. translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
-#: src/overview/components/UrlDetailView.js:97
+#: src/overview/components/UrlDetailView.js:99
 #, js-format
 msgid "The filters narrow the chart beneath them, the header and the list, which hold %s; the category charts and the profile describe every request to this URL."
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:103
+#: src/overview/components/UrlDetailView.js:105
 msgid "The filters narrow the chart beneath them, the header and the list; the category charts and the profile describe every request to this URL."
 msgstr ""
 
 #. translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
-#: src/overview/components/UrlDetailView.js:111
+#: src/overview/components/UrlDetailView.js:113
 #, js-format
 msgid "The charts and the profile describe every request to this URL; the header and the list below hold %s."
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:139
+#: src/overview/components/UrlDetailView.js:141
 #: src/overview/constants.js:116
 msgid "Method"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:170
+#: src/overview/components/UrlDetailView.js:171
 #: src/requests/RequestStream.js:97
 msgid "Duration"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:181
-#: src/overview/UrlTable.js:229
+#: src/overview/components/UrlDetailView.js:182
+#: src/overview/UrlTable.js:231
 msgid "Mem"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:424
+#: src/overview/components/UrlDetailView.js:425
 msgid "Aggregate Flame Graph"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:451
+#: src/overview/components/UrlDetailView.js:452
 msgid "Recent Requests"
 msgstr ""
 
 #. translators: %d: number of recent requests shown.
-#: src/overview/components/UrlDetailView.js:457
+#: src/overview/components/UrlDetailView.js:458
 #, js-format
 msgid "Recent Requests (%d)"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/components/UrlDetailView.js:474
+#: src/overview/components/UrlDetailView.js:475
 #, js-format
 msgid "Could not list requests: %s"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:510
+#: src/overview/components/UrlDetailView.js:511
 msgid "Loading requests…"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:514
+#: src/overview/components/UrlDetailView.js:515
 msgid "No requests to display"
 msgstr ""
 
@@ -1084,71 +1084,71 @@ msgstr ""
 msgid "Times and counts are per request."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:127
+#: src/overview/PerformanceDashboard.js:121
 msgid "Unknown URL"
 msgstr ""
 
 #. translators: %s: the request ID that was searched for.
-#: src/overview/PerformanceDashboard.js:883
+#: src/overview/PerformanceDashboard.js:877
 #, js-format
 msgid "Request \"%s\" not found — prefix with / to search recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:950
+#: src/overview/PerformanceDashboard.js:944
 msgid "No matches in recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1144
+#: src/overview/PerformanceDashboard.js:1138
 msgid "Could not save the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1177
+#: src/overview/PerformanceDashboard.js:1171
 msgid "Could not delete the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1229
+#: src/overview/PerformanceDashboard.js:1223
 msgid "Loading performance data…"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1310
+#: src/overview/PerformanceDashboard.js:1304
 msgid "Pages by Request Count"
 msgstr ""
 
 #. translators: %s: the request ID.
-#: src/overview/PerformanceDashboard.js:1355
+#: src/overview/PerformanceDashboard.js:1349
 #, js-format
 msgid "Request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1380
+#: src/overview/PerformanceDashboard.js:1374
 msgid "Back to URL details"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1427
+#: src/overview/PerformanceDashboard.js:1421
 msgid "Edit logging rule"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1431
+#: src/overview/PerformanceDashboard.js:1425
 msgid "Log this URL"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1456
+#: src/overview/PerformanceDashboard.js:1450
 #, js-format
 msgid "Could not load this URL: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1462
+#: src/overview/PerformanceDashboard.js:1456
 msgid "Loading URL…"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1514
+#: src/overview/PerformanceDashboard.js:1508
 #, js-format
 msgid "Could not load this request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1520
+#: src/overview/PerformanceDashboard.js:1514
 msgid "Loading request…"
 msgstr ""
 
@@ -1205,95 +1205,95 @@ msgid "Response Time"
 msgstr ""
 
 #. translators: %s: average response time, e.g. 68ms or 130s.
-#: src/overview/ResponseTimeChart.js:224
+#: src/overview/ResponseTimeChart.js:230
 #, js-format
 msgid "avg: %s"
 msgstr ""
 
 #. translators: %s: HTTP status code.
-#: src/overview/ResponseTimeChart.js:263
+#: src/overview/ResponseTimeChart.js:269
 #, js-format
 msgid "Status: %s"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:265
+#: src/overview/ResponseTimeChart.js:271
 msgid "N/A"
 msgstr ""
 
 #. translators: %d: duration in milliseconds.
-#: src/overview/ResponseTimeChart.js:269
+#: src/overview/ResponseTimeChart.js:275
 #, js-format
 msgid "Duration: %dms"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:275
+#: src/overview/ResponseTimeChart.js:281
 msgid "Click to view details"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:295
+#: src/overview/ResponseTimeChart.js:301
 msgid "Response Times (Recent Requests)"
 msgstr ""
 
-#: src/overview/UrlTable.js:173
+#: src/overview/UrlTable.js:175
 msgid "Reqs"
 msgstr ""
 
-#: src/overview/UrlTable.js:213
+#: src/overview/UrlTable.js:215
 msgid "Avg"
 msgstr ""
 
-#: src/overview/UrlTable.js:218
+#: src/overview/UrlTable.js:220
 msgid "Min"
 msgstr ""
 
-#: src/overview/UrlTable.js:223
+#: src/overview/UrlTable.js:225
 msgid "Max"
 msgstr ""
 
-#: src/overview/UrlTable.js:236
+#: src/overview/UrlTable.js:238
 msgid "Last seen"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/UrlTable.js:361
-#: src/overview/UrlTable.js:604
+#: src/overview/UrlTable.js:363
+#: src/overview/UrlTable.js:606
 #, js-format
 msgid "Could not load URLs: %s"
 msgstr ""
 
-#: src/overview/UrlTable.js:366
-#: src/overview/UrlTable.js:607
+#: src/overview/UrlTable.js:368
+#: src/overview/UrlTable.js:609
 msgid "Loading URLs…"
 msgstr ""
 
 #. translators: %s: the URL search term.
-#: src/overview/UrlTable.js:371
+#: src/overview/UrlTable.js:373
 #, js-format
 msgid "No URLs match \"%s\""
 msgstr ""
 
-#: src/overview/UrlTable.js:374
+#: src/overview/UrlTable.js:376
 msgid "No URLs to display"
 msgstr ""
 
-#: src/overview/UrlTable.js:865
+#: src/overview/UrlTable.js:867
 msgid "Search by whole URL word"
 msgstr ""
 
-#: src/overview/UrlTable.js:869
+#: src/overview/UrlTable.js:871
 msgid "Search by whole URL word…"
 msgstr ""
 
-#: src/overview/UrlTable.js:888
+#: src/overview/UrlTable.js:890
 msgid "Showing Workers"
 msgstr ""
 
-#: src/overview/UrlTable.js:889
+#: src/overview/UrlTable.js:891
 msgid "Include Workers"
 msgstr ""
 
 #. translators: 1: how many URLs the page holds past those listed, 2: how many the server lists under one page.
-#: src/overview/UrlTable.js:967
+#: src/overview/UrlTable.js:969
 #, js-format
 msgid "%1$s more URL, past the first %2$s the server lists"
 msgid_plural "%1$s more URLs, past the first %2$s the server lists"
@@ -1301,30 +1301,30 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: 1: first row number on the page, 2: last row number on the page, 3: total number of pages listed.
-#: src/overview/UrlTable.js:1005
+#: src/overview/UrlTable.js:1007
 #, js-format
 msgid "%1$s–%2$s of %3$s pages"
 msgstr ""
 
 #. translators: %s: number of pages in the table.
-#: src/overview/UrlTable.js:1019
+#: src/overview/UrlTable.js:1021
 #, js-format
 msgid "%s page"
 msgid_plural "%s pages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/UrlTable.js:1036
+#: src/overview/UrlTable.js:1038
 msgid "Prev"
 msgstr ""
 
 #. translators: 1: current page number, 2: total number of pages.
-#: src/overview/UrlTable.js:1041
+#: src/overview/UrlTable.js:1043
 #, js-format
 msgid "Page %1$d of %2$d"
 msgstr ""
 
-#: src/overview/UrlTable.js:1055
+#: src/overview/UrlTable.js:1057
 msgid "Next"
 msgstr ""
 
@@ -1401,17 +1401,17 @@ msgid "Lists every path under this prefix under the prefix's page, as though the
 msgstr ""
 
 #: src/rules/RuleEditModal.js:347
-#: src/rules/RulesAdmin.js:358
+#: src/rules/RulesAdmin.js:310
 msgid "Action"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:352
-#: src/rules/RulesAdmin.js:142
+#: src/rules/RulesAdmin.js:94
 msgid "Log"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:359
-#: src/rules/RulesAdmin.js:143
+#: src/rules/RulesAdmin.js:95
 msgid "Skip"
 msgstr ""
 
@@ -1424,7 +1424,7 @@ msgid "The share of matching requests this rule logs, from 0 to 1. 0.1 logs abou
 msgstr ""
 
 #: src/rules/RuleEditModal.js:393
-#: src/rules/RulesAdmin.js:361
+#: src/rules/RulesAdmin.js:313
 msgid "Hooks"
 msgstr ""
 
@@ -1435,7 +1435,7 @@ msgstr ""
 #. translators: %d: number of selected hooks.
 #. translators: %d: number of hooks on the rule.
 #: src/rules/RuleEditModal.js:411
-#: src/rules/RulesAdmin.js:171
+#: src/rules/RulesAdmin.js:123
 #, js-format
 msgid "%d hook"
 msgid_plural "%d hooks"
@@ -1453,7 +1453,7 @@ msgstr ""
 #. translators: %d: number of selected custom events.
 #. translators: %d: number of custom events on the rule.
 #: src/rules/RuleEditModal.js:444
-#: src/rules/RulesAdmin.js:185
+#: src/rules/RulesAdmin.js:137
 #, js-format
 msgid "%d event"
 msgid_plural "%d events"
@@ -1590,12 +1590,13 @@ msgid "Confirm delete"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:729
-#: src/rules/RulesAdmin.js:387
+#: src/rules/RulesAdmin.js:339
 msgid "Delete rule"
 msgstr ""
 
 #: src/rules/RuleEditModal.js:740
-#: src/rules/RulesAdmin.js:100
+#: src/rules/RulesAdmin.js:349
+#: src/rules/RulesAdmin.js:363
 msgid "Cancel"
 msgstr ""
 
@@ -1604,80 +1605,80 @@ msgid "Save rule"
 msgstr ""
 
 #. translators: %d: auto-disable occurrence count.
-#: src/rules/RulesAdmin.js:47
+#: src/rules/RulesAdmin.js:48
 #, js-format
 msgid "disable @%d"
 msgstr ""
 
 #. translators: %s: auto-protect time threshold in ms.
-#: src/rules/RulesAdmin.js:56
+#: src/rules/RulesAdmin.js:57
 #, js-format
 msgid "protect @%sms"
 msgstr ""
 
 #. translators: %s: the share of matching requests logged, as a percentage.
-#: src/rules/RulesAdmin.js:149
+#: src/rules/RulesAdmin.js:101
 #, js-format
 msgid "%s sampled"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:159
+#: src/rules/RulesAdmin.js:111
 msgid "groups paths"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:202
+#: src/rules/RulesAdmin.js:154
 msgid "Edit"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:209
-#: src/rules/RulesAdmin.js:396
+#: src/rules/RulesAdmin.js:161
+#: src/rules/RulesAdmin.js:348
 msgid "Delete"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:285
+#: src/rules/RulesAdmin.js:237
 msgid "Loading rules…"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:308
+#: src/rules/RulesAdmin.js:260
 msgid "No rules configured."
 msgstr ""
 
-#: src/rules/RulesAdmin.js:331
+#: src/rules/RulesAdmin.js:283
 msgid "+ Add Rule"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:337
-#: src/rules/RulesAdmin.js:341
+#: src/rules/RulesAdmin.js:289
+#: src/rules/RulesAdmin.js:293
 msgid "Reset rules to defaults"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:355
+#: src/rules/RulesAdmin.js:307
 msgid "Pattern"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:367
+#: src/rules/RulesAdmin.js:319
 msgid "Auto-tune"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:370
+#: src/rules/RulesAdmin.js:322
 msgid "Actions"
 msgstr ""
 
 #. translators: %s: the rule's URL pattern.
-#: src/rules/RulesAdmin.js:390
+#: src/rules/RulesAdmin.js:342
 #, js-format
 msgid "Are you sure you want to delete the rule for %s?"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:407
+#: src/rules/RulesAdmin.js:357
 msgid "Reset rules"
 msgstr ""
 
-#: src/rules/RulesAdmin.js:408
+#: src/rules/RulesAdmin.js:358
 msgid "Are you sure you want to discard every rule you have configured and go back to the shipped defaults? This cannot be undone."
 msgstr ""
 
-#: src/rules/RulesAdmin.js:412
+#: src/rules/RulesAdmin.js:362
 msgid "Reset"
 msgstr ""
 

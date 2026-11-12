@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.163.0] - 2026-11-11
+
 ### Changed
 
 - **Needs newspack-nodes 2.153.0.** The Settings page loads the skins' fonts through the substrate's `newspack-nodes-fonts` handle (`Admin::FONTS_HANDLE`), new in 2.153.0; below it the plugin goes dormant behind an admin notice naming both versions.
