@@ -40,7 +40,7 @@ jest.mock( '../LogEntriesTable', () => ( {
 import * as React from 'react';
 import RequestDetailView from '../RequestDetailView';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
-import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
+import { compileLocal, resolved } from '../../../test-helpers/cascade';
 
 const baseRequest = {
 	request_method: 'GET',
@@ -463,13 +463,15 @@ describe( 'RequestDetailView', () => {
 			expect( child.style.marginBottom ).toBe( '' );
 		}
 		const sheet = compileLocal( 'overview/styles/base.scss' );
-		const won = resolveCascade( stack, [ sheet ] );
+		const won = resolved( stack, [ sheet ] );
 		expect( won.display ).toBe( 'flex' );
 		expect( won[ 'flex-direction' ] ).toBe( 'column' );
 		expect( won.gap ).toBe( '32px' );
-		expect( resolveCascade( owner, [ sheet ] )[ 'margin-block' ] ).toBe(
-			'0'
-		);
+		const ownerWon = resolved( owner, [ sheet ] );
+		expect( [
+			ownerWon[ 'margin-top' ],
+			ownerWon[ 'margin-bottom' ],
+		] ).toEqual( [ '0', '0' ] );
 		unmount();
 	} );
 

@@ -44,7 +44,7 @@ import {
 } from '../../constants';
 import { act, renderComponent } from '../../../test-helpers/renderHook';
 import { rowsWire, slotsEndingAt } from '../../../test-helpers/chartWire';
-import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
+import { compileLocal, resolved } from '../../../test-helpers/cascade';
 
 /**
  * A `query` answer for the chart: one row per bucket and value of `dim`.
@@ -449,10 +449,8 @@ describe( 'BreakdownControls', () => {
 			];
 			const box = container.querySelector( '.event-logger-chip-filter' );
 			const input = box.querySelector( 'input' );
-			expect( resolveCascade( box, sheets ).flex ).toBe( '1 1 22em' );
-			expect( resolveCascade( input, sheets )[ 'min-width' ] ).toBe(
-				'14em'
-			);
+			expect( resolved( box, sheets ).flex ).toBe( '1 1 22em' );
+			expect( resolved( input, sheets )[ 'min-width' ] ).toBe( '14em' );
 			unmount();
 		} );
 

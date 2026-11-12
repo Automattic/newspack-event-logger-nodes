@@ -1098,7 +1098,6 @@ export default function LogEntriesTable( {
 				<span
 					className="newspack-nodes-status is-info"
 					style={ {
-						fontSize: '10px',
 						marginRight: '4px',
 					} }
 				>
@@ -1615,7 +1614,6 @@ export default function LogEntriesTable( {
 									<td
 										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontSize: '11px',
 											whiteSpace: 'nowrap',
 										} }
 									>
@@ -1626,7 +1624,6 @@ export default function LogEntriesTable( {
 									<td
 										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontSize: '12px',
 											whiteSpace: 'nowrap',
 											paddingLeft: `${
 												8 + entry.indent * 16
@@ -1638,7 +1635,6 @@ export default function LogEntriesTable( {
 									<td
 										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontSize: '11px',
 											whiteSpace: 'pre-wrap',
 											wordBreak: 'break-all',
 											paddingLeft: `${

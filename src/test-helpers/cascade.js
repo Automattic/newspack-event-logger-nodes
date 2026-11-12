@@ -3,9 +3,12 @@
  *
  * Two questions a stylesheet test wants answered, and neither is visible from
  * the SCSS source: what a selector compiles to, and which declaration WINS on
- * an element that several stylesheets reach. `resolveCascade` answers the
- * second against a real rendered element, so a tie broken by import order
- * shows up as the defect it is rather than as a green source-text match.
+ * an element that several stylesheets reach. The substrate's one cascade
+ * reader answers the second against a real rendered element: `winning()` for
+ * one longhand, every shorthand that sets it competing, `computed()` for that
+ * value with the custom properties it reads resolved, and `resolved()` for
+ * every property, so a tie broken by import order shows up as the defect it is
+ * rather than as a green source-text match.
  */
 
 /* global NEWSPACK_NODES_SRC */
@@ -55,6 +58,14 @@ export const compileShared = ( relative ) =>
 	compile( path.join( NODES_SHARED, relative ) );
 
 /**
+ * The substrate's theme sheet, which sets the product tokens on its root.
+ *
+ * @return {import('postcss').Root} The parsed compiled stylesheet.
+ */
+export const compileTheme = () =>
+	compile( path.join( NEWSPACK_NODES_SRC, 'theme/newspack-theme.scss' ) );
+
+/**
  * A shared design token's compiled value, read from `_tokens.scss` itself.
  *
  * @param {string} name The token without its `$`, e.g. 'control-height'.
@@ -74,98 +85,11 @@ export const sharedToken = ( name ) => {
 	return value;
 };
 
-/**
- * Selector specificity as [ids, classes, elements], counting `:where()` as 0.
- *
- * @param {string} selector A compiled CSS selector.
- * @return {number[]} The three specificity components.
- */
-export const specificity = ( selector ) => {
-	const withoutWhere = selector.replace( /:where\([^)]*\)/g, '' );
-	const all = ( pattern ) =>
-		/** @type {string[]} */ ( withoutWhere.match( pattern ) || [] );
-	const functionalPseudos = new Set( [ 'has', 'is', 'not' ] );
-	const pseudoClasses = all( /:(?!:)[\w-]+/g ).filter(
-		( pseudo ) => ! functionalPseudos.has( pseudo.slice( 1 ) )
-	).length;
-
-	return [
-		all( /#[\w-]+/g ).length,
-		all( /\.[\w-]+/g ).length + all( /\[[^\]]+\]/g ).length + pseudoClasses,
-		0,
-	];
-};
-
-/**
- * Compare two specificity triples.
- *
- * @param {number[]} left  First specificity.
- * @param {number[]} right Second specificity.
- * @return {number} Negative, zero or positive, sort-comparator style.
- */
-export const compareSpecificity = ( left, right ) => {
-	for ( let index = 0; index < left.length; index++ ) {
-		if ( left[ index ] !== right[ index ] ) {
-			return left[ index ] - right[ index ];
-		}
-	}
-	return 0;
-};
-
-const declarationsOf = ( rule ) =>
-	Object.fromEntries(
-		rule.nodes
-			.filter( ( node ) => 'decl' === node.type )
-			.map( ( declaration ) => [ declaration.prop, declaration.value ] )
-	);
-
-/**
- * Resolve what an element actually gets from stylesheets emitted in order.
- *
- * Media-query blocks are skipped: jsdom reports no viewport, so honouring them
- * would invent a win that browsers do not agree with.
- *
- * @param {Element}                  element     The rendered element.
- * @param {import('postcss').Root[]} stylesheets Compiled sheets, in bundle emission order.
- * @return {Object<string, string>} The winning declarations, property to value.
- */
-export const resolveCascade = ( element, stylesheets ) => {
-	const matches = [];
-	stylesheets.forEach( ( stylesheet, sheetIndex ) => {
-		let ruleIndex = 0;
-		stylesheet.walkRules( ( rule ) => {
-			ruleIndex++;
-			if ( 'root' !== rule.parent.type ) {
-				return;
-			}
-			const winner = ( rule.selectors || [ rule.selector ] )
-				.filter( ( selector ) => element.matches( selector ) )
-				.sort( ( left, right ) =>
-					compareSpecificity(
-						specificity( left ),
-						specificity( right )
-					)
-				)
-				.pop();
-			if ( winner ) {
-				matches.push( {
-					order: [ sheetIndex, ruleIndex ],
-					weight: specificity( winner ),
-					declarations: declarationsOf( rule ),
-				} );
-			}
-		} );
-	} );
-
-	return matches
-		.sort(
-			( left, right ) =>
-				compareSpecificity( left.weight, right.weight ) ||
-				compareSpecificity( left.order, right.order )
-		)
-		.reduce(
-			( resolved, match ) =>
-				Object.assign( resolved, match.declarations ),
-			{}
-		);
-};
+// The substrate's cascade reader, which every plugin's style tests share.
+export const {
+	specificity,
+	compareSpecificity,
+	winning,
+	computed,
+	resolved,
+} = require( path.join( NEWSPACK_NODES_SRC, 'build-kit/css-reader.cjs' ) );

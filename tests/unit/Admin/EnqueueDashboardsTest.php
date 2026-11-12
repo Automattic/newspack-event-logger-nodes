@@ -225,11 +225,12 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->assertNotNull( $this->enqueued_script_for( $handle ), 'settings dashboard script must enqueue' );
 			$style = $this->enqueued_style_for( $handle );
 			$this->assertNotNull( $style, 'settings dashboard style must enqueue' );
-			// The skinned wrap needs the skins' faces, which the graph sheet imports.
+			// The UI sheet, and the skins' faces as a handle of their own.
 			$this->assertSame(
-				[ 'wp-components', 'newspack-nodes-graph' ],
+				[ 'wp-components', 'newspack-nodes-ui', \Newspack_Nodes\Admin\Admin::FONTS_HANDLE ],
 				$style[2] ?? null
 			);
+			$this->assertNotContains( 'newspack-nodes-graph', $style[2] ?? [] );
 
 			// Per-tree inline-script extras are preserved (eventLoggerDashboards
 			// + newspackNodesRecommendedHooks blocks anchored on the handle).

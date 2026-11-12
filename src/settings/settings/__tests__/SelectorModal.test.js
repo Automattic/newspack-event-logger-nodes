@@ -8,7 +8,7 @@
 import React from 'react';
 import SelectorModal from '../SelectorModal';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
-import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
+import { compileLocal, resolved } from '../../../test-helpers/cascade';
 
 /**
  * Every stylesheet a bundle rendering a picker emits, in import order:
@@ -87,12 +87,12 @@ describe( 'SelectorModal', () => {
 	// settings page opens them bare. One component, one dialog geometry.
 	it( 'resolves one header geometry whether or not the caller adds the skin', () => {
 		const header = () =>
-			resolveCascade(
+			resolved(
 				document.querySelector( '.components-modal__header' ),
 				PICKER_STYLESHEETS
 			);
 		const heading = () =>
-			resolveCascade(
+			resolved(
 				document.querySelector( '.components-modal__header-heading' ),
 				PICKER_STYLESHEETS
 			);
@@ -106,7 +106,12 @@ describe( 'SelectorModal', () => {
 				'event-logger-theremin-modal newspack-nodes-skin-root theme-brass',
 		} );
 		expect( { header: header(), heading: heading() } ).toEqual( bare );
-		expect( bare.header.padding ).toBe( '16px 20px' );
+		expect( [
+			bare.header[ 'padding-top' ],
+			bare.header[ 'padding-right' ],
+			bare.header[ 'padding-bottom' ],
+			bare.header[ 'padding-left' ],
+		] ).toEqual( [ '16px', '20px', '16px', '20px' ] );
 		expect( bare.header.height ).toBeUndefined();
 		expect( bare.heading[ 'font-size' ] ).toBe( '15px' );
 	} );

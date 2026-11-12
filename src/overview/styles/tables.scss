@@ -71,7 +71,7 @@
 	}
 
 	&--status {
-		font-size: 11px;
+		font-size: var(--np-text-2xs);
 	}
 
 	&--mono {
@@ -192,11 +192,16 @@
 	}
 
 	table {
-		font-size: 12px;
+		font-size: var(--np-text-2xs);
 
 		td {
 			vertical-align: top;
 		}
+	}
+
+	// Outweighs the shared table's 13px cell; a cell's badges inherit it.
+	td.newspack-nodes-table__terminal-data {
+		font-size: var(--np-text-2xs);
 	}
 
 	// A row cannot carry an inset ring, so each cell draws its share of it.
@@ -249,7 +254,7 @@
 .newspack-nodes-ui .button.button-small.log-entries-search__nav {
 	min-height: 0;
 	padding: 2px 5px;
-	font-size: 10px;
+	font-size: var(--np-text-2xs);
 	line-height: 1;
 	white-space: nowrap;
 	margin-bottom: 0;
@@ -290,7 +295,7 @@
 
 .event-logger-search-result-method {
 	flex: 0 0 auto;
-	font-size: 11px;
+	font-size: var(--np-text-2xs);
 }
 
 .event-logger-search-result-url {
@@ -303,15 +308,15 @@
 
 .event-logger-search-result-count {
 	flex: 0 0 auto;
-	font-size: 11px;
+	font-size: var(--np-text-2xs);
 }
 
 .event-logger-search-results-caption {
 	margin: 0 0 base.$space-xs;
-	font-size: 11px;
+	font-size: var(--np-text-2xs);
 }
 
 .event-logger-search-results-note {
 	margin: base.$space-xs 0 0;
-	font-size: 11px;
+	font-size: var(--np-text-2xs);
 }

@@ -20,7 +20,7 @@
 	// Type and ink come from `newspack-nodes-status is-muted`, which every
 	// other small label in this view already wears.
 	&__title {
-		font-size: 11px;
+		font-size: var(--np-text-2xs);
 	}
 
 	&__plot {
@@ -57,7 +57,7 @@
 	&__ymin {
 		position: absolute;
 		left: 0;
-		font-size: 10px;
+		font-size: var(--np-text-2xs);
 		padding: 0 3px;
 		pointer-events: none;
 	}

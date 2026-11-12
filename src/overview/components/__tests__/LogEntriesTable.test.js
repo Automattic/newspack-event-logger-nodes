@@ -20,6 +20,12 @@ import {
 	formatFullTimestamp,
 } from '../../utils/logEntryUtils';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import postcss from 'postcss';
+import {
+	compileLocal,
+	compileShared,
+	winning,
+} from '../../../test-helpers/cascade';
 import {
 	ASK_PICKED_ATTR,
 	useAskPicker,
@@ -228,6 +234,47 @@ describe( 'LogEntriesTable', () => {
 		expect( disclosure.classList.contains( 'is-info' ) ).toBe( true );
 		// expandedSet empty by default: child pairs folded; process shows.
 		expect( container.textContent ).toContain( 'process (start)' );
+		unmount();
+	} );
+
+	it( 'sizes its machine-data cells from the stylesheet, not inline', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement(
+				'div',
+				{ className: 'newspack-nodes-ui' },
+				React.createElement( LogEntriesTable, {
+					entries: makeEntries(),
+				} )
+			)
+		);
+		const sheets = [
+			compileShared( 'styles/_components.scss' ),
+			compileLocal( 'overview/styles/tables.scss' ),
+		];
+		const cells = container.querySelectorAll(
+			'td.newspack-nodes-table__terminal-data'
+		);
+		expect( cells.length ).toBeGreaterThan( 0 );
+		for ( const cell of cells ) {
+			expect( cell.style.fontSize ).toBe( '' );
+			expect( winning( cell, 'font-size', sheets ) ).toBe(
+				'var(--np-text-2xs)'
+			);
+		}
+		// A font shorthand resizing the cells still shows.
+		expect(
+			winning( cells[ 0 ], 'font-size', [
+				...sheets,
+				postcss.parse(
+					'.event-logger-log-entries table td.newspack-nodes-table__terminal-data { font: 400 13px/1.5 var(--font-mono); }'
+				),
+			] )
+		).toBe( '13px' );
+		for ( const badge of container.querySelectorAll(
+			'.newspack-nodes-status'
+		) ) {
+			expect( badge.style.fontSize ).toBe( '' );
+		}
 		unmount();
 	} );
 

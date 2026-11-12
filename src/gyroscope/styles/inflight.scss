@@ -28,7 +28,7 @@
 .event-logger-state-badge {
 	display: inline-block;
 	padding: 2px 6px;
-	font-size: 10px;
+	font-size: var(--np-text-2xs);
 	max-width: 90px;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -39,7 +39,7 @@
 .event-logger-inflight-legend {
 	display: flex;
 	gap: 8px;
-	font-size: 11px;
+	font-size: var(--np-text-2xs);
 
 	@media (max-width: 1200px) {
 		display: none;
@@ -76,7 +76,7 @@ $stream-padding-x: 12px;
 	}
 
 	.newspack-nodes-log-header__th {
-		font-size: 11px;
+		font-size: var(--np-text-2xs);
 	}
 }
 

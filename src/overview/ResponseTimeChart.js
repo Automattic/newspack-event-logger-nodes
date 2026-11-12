@@ -219,7 +219,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'x', innerW - 5 )
 				.attr( 'y', y( avgDuration ) - 5 )
 				.attr( 'text-anchor', 'end' )
-				.style( 'font-size', '11px' )
+				.style( 'font-size', 'var(--np-text-2xs)' )
 				.style(
 					'fill',
 					phosphorColor( MEAN_PLACE, 'var(--oxide-text)' )

@@ -17,7 +17,7 @@ const WORDPRESS_BUTTON_GEOMETRY = [
 		declarations: {
 			'min-height': '24px',
 			padding: '0 8px',
-			'font-size': '11px',
+			'font-size': 'var(--np-text-2xs)',
 			'line-height': '2',
 			'white-space': 'nowrap',
 			'margin-bottom': '0',
@@ -399,7 +399,7 @@ describe( 'Event Logger layout cascade', () => {
 			{
 				'min-height': '0',
 				padding: '2px 5px',
-				'font-size': '10px',
+				'font-size': 'var(--np-text-2xs)',
 				'line-height': '1',
 				'white-space': 'nowrap',
 				'margin-bottom': '0',

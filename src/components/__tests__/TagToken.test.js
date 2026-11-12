@@ -12,7 +12,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 import {
 	compileLocal,
 	compileShared,
-	resolveCascade,
+	resolved,
 } from '../../test-helpers/cascade';
 
 /**
@@ -91,15 +91,15 @@ describe( 'TagToken', () => {
 			compileLocal( 'components/TagToken.scss' ),
 		];
 
-		expect( resolveCascade( remove, sheets ).color ).toBe(
+		expect( resolved( remove, sheets ).color ).toBe(
 			'var(--wp-components-color-foreground, #1e1e1e)'
 		);
 		expect(
-			resolveCascade( skin, sheets )[ '--wp-components-color-foreground' ]
+			resolved( skin, sheets )[ '--wp-components-color-foreground' ]
 		).toBe( 'var(--ink, var(--np-text))' );
-		expect(
-			resolveCascade( remove.querySelector( 'svg' ), sheets ).fill
-		).toBe( 'currentColor' );
+		expect( resolved( remove.querySelector( 'svg' ), sheets ).fill ).toBe(
+			'currentColor'
+		);
 		unmount();
 	} );
 } );

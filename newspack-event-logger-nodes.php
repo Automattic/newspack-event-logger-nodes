@@ -367,9 +367,10 @@ function newspack_event_logger_nodes_register_admin_menu(): void {
  * Enqueue the React tree for whichever Event Logger page is rendering.
  *
  * `$page_to_tree` maps the admin page slug to its `build/{tree}` bundle and
- * doubles as the page gate: an unlisted slug enqueues nothing. Every tree,
- * the settings page included, styles against the substrate's graph sheet,
- * which carries the UI sheet and the web fonts the skins name.
+ * doubles as the page gate: an unlisted slug enqueues nothing. The four
+ * dashboards style against the substrate's graph sheet; the settings tree needs
+ * only the base UI sheet and the skins' web fonts, which the graph sheet
+ * carries for the dashboards.
  *
  * The substrate's `enqueue_react_page()` performs the mechanics — bundle
  * manifest, CSS sidecar, `NewspackNodesData` localize — and returns the script
@@ -397,8 +398,10 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 		return;
 	}
 	$tree = $page_to_tree[ $page ];
-	// The graph sheet imports the skins' web fonts every skinned page draws in.
-	$style_deps = [ 'wp-components', 'newspack-nodes-graph' ];
+	// The graph sheet brings the skins' fonts; the settings tree names them.
+	$style_deps = 'settings' === $tree
+		? [ 'wp-components', 'newspack-nodes-ui', \Newspack_Nodes\Admin\Admin::FONTS_HANDLE ]
+		: [ 'wp-components', 'newspack-nodes-graph' ];
 	if ( 'settings' === $tree ) {
 		// The per-field reset toggle rides the settings form alone.
 		\Newspack_Nodes\Config_System\Field_Reset_Assets::enqueue();

@@ -8,6 +8,12 @@
 import * as React from 'react';
 import TagInputField from '../TagInputField';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import postcss from 'postcss';
+import {
+	compileShared,
+	compileTheme,
+	computed,
+} from '../../../test-helpers/cascade';
 
 /**
  * Set a controlled-input's value AND dispatch a React-friendly change.
@@ -366,6 +372,46 @@ describe( 'TagInputField', () => {
 		expect( container.ownerDocument.activeElement ).toBe(
 			frame.querySelector( 'input' )
 		);
+		unmount();
+	} );
+
+	it( 'edges its frame in oxide while the box holds a refused value', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement(
+				'div',
+				{ className: 'newspack-nodes-theme newspack-nodes-ui' },
+				React.createElement( TagInputField, {
+					initialValues: [],
+					validate: ( draft ) =>
+						draft.startsWith( '/' ) ? null : 'Begin with a slash',
+				} )
+			)
+		);
+		// The theme sets the product tokens the field tokens fall back to.
+		const sheets = [
+			compileTheme(),
+			compileShared( 'styles/_controls.scss' ),
+		];
+		const frame = container.querySelector( '.newspack-nodes-token-field' );
+		const input = frame.querySelector( 'input' );
+		const edge = ( on = sheets ) =>
+			computed( frame, 'border-top-color', on );
+		expect( edge() ).toBe( '#ccc' );
+
+		act( () => setControlledValue( input, 'kea-7731' ) );
+		pressKey( input, 'Enter' );
+
+		expect( input.getAttribute( 'aria-invalid' ) ).toBe( 'true' );
+		expect( edge() ).toBe( '#b32d2e' );
+		// A border shorthand repainting the invalid frame still shows.
+		expect(
+			edge( [
+				...sheets,
+				postcss.parse(
+					'.newspack-nodes-ui .newspack-nodes-token-field.newspack-nodes-token-field:has([aria-invalid]) { border: 1px solid #4a7c59; }'
+				),
+			] )
+		).toBe( '#4a7c59' );
 		unmount();
 	} );
 } );

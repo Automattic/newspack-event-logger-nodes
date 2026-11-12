@@ -13,7 +13,7 @@ import { slotsEndingAt } from '../../../test-helpers/chartWire';
 import {
 	compileLocal,
 	compileShared,
-	resolveCascade,
+	resolved,
 	sharedToken,
 } from '../../../test-helpers/cascade';
 
@@ -155,7 +155,7 @@ describe( 'BucketField', () => {
 		const row = field.container.querySelector(
 			'.event-logger-tag-container'
 		);
-		const won = resolveCascade( row, [
+		const won = resolved( row, [
 			compileLocal( 'settings/styles/tag-input.scss' ),
 		] );
 
@@ -169,7 +169,7 @@ describe( 'BucketField', () => {
 		const token = field.container.querySelector(
 			'.event-logger-tag-token'
 		);
-		const won = resolveCascade( token, [
+		const won = resolved( token, [
 			compileShared( 'styles/_components.scss' ),
 			compileLocal( 'components/TagToken.scss' ),
 			compileLocal( 'settings/styles/tag-input.scss' ),

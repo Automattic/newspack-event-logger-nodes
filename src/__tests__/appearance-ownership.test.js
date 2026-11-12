@@ -434,8 +434,8 @@ describe( 'canonical appearance ownership', () => {
 		expect( actual ).toEqual( {
 			2: 'var(--sage-text, var(--np-text))',
 			3: 'var(--brass-text, var(--np-text))',
-			4: 'var(--oxide-text, var(--np-text))',
-			5: 'var(--oxide-text, var(--np-text))',
+			4: 'var(--oxide-text, var(--np-error-text))',
+			5: 'var(--oxide-text, var(--np-error-text))',
 		} );
 	} );
 
@@ -1064,6 +1064,34 @@ describe( 'canonical appearance ownership', () => {
 			source.includes( `.${ selector }` )
 		);
 
+		expect( offenders ).toEqual( [] );
+	} );
+} );
+
+describe( 'the type scale floor', () => {
+	const { stylesheetOffenders, scriptOffenders } = require(
+		path.join( NEWSPACK_NODES_SRC, 'build-kit/type-scale-floor.cjs' )
+	);
+
+	it( 'sets no UI type below --np-text-2xs in a stylesheet', () => {
+		const offenders = styleFiles()
+			.filter( ( file ) => ! path.basename( file ).startsWith( '_' ) )
+			.flatMap( ( file ) =>
+				stylesheetOffenders(
+					postcss.parse( compile( file ), { from: file } ),
+					path.relative( SRC, file )
+				)
+			);
+		expect( offenders ).toEqual( [] );
+	} );
+
+	it( 'sets no UI type below --np-text-2xs from a script', () => {
+		const offenders = sourceFiles( '.js' ).flatMap( ( file ) =>
+			scriptOffenders(
+				fs.readFileSync( file, 'utf8' ),
+				path.relative( SRC, file )
+			)
+		);
 		expect( offenders ).toEqual( [] );
 	} );
 } );
