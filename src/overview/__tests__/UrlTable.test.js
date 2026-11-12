@@ -949,14 +949,23 @@ describe( 'UrlTable', () => {
 				totalRows: 21,
 				metric,
 			} );
-			const bars = Array.from(
+			const cells = Array.from(
 				container.querySelectorAll(
 					'.event-logger-table__list [data-field="url"]'
 				)
-			).map( ( cell ) => cell.getAttribute( 'style' ) ?? '' );
+			);
+			const bars = cells.map( ( cell ) =>
+				cell.style.getPropertyValue( '--bar-pct' )
+			);
 
 			expect( bars.slice( 0, 20 ) ).toEqual( Array( 20 ).fill( '' ) );
-			expect( bars[ 20 ] ).toContain( '100%' );
+			expect( bars[ 20 ] ).toBe( '100%' );
+			expect(
+				cells.map( ( cell ) =>
+					cell.classList.contains( 'event-logger-table__cell--bar' )
+				)
+			).toEqual( [ ...Array( 20 ).fill( false ), true ] );
+			expect( cells[ 20 ].style.background ).toBe( '' );
 			unmount();
 		}
 	);

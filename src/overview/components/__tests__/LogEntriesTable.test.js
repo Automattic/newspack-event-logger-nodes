@@ -920,11 +920,13 @@ describe( 'LogEntriesTable', () => {
 			container.querySelectorAll( 'tbody tr' )
 		).find( ( r ) => r.textContent.includes( 'db (start)' ) );
 		const swatch = dbStartRow.querySelector( 'td:first-of-type' );
-		expect( () => {
-			act( () => swatch.click() );
-			// Click again to toggle off.
-			act( () => swatch.click() );
-		} ).not.toThrow();
+		act( () => swatch.click() );
+		expect( dbStartRow.style.backgroundColor ).toMatch(
+			/^color-mix\(in srgb, var\(--cyan, var\(--np-primary\)\) (?:25|15)%, transparent\)$/
+		);
+		// Click again to toggle off.
+		act( () => swatch.click() );
+		expect( dbStartRow.style.backgroundColor ).not.toContain( '--cyan' );
 		unmount();
 	} );
 
@@ -1005,7 +1007,7 @@ describe( 'LogEntriesTable', () => {
 		// the key the path misses and falls to the base key, whose lookup is
 		// first-wins — so a miss lands on `SELECT wp_users`, not the clicked.
 		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
-			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			( tr ) => tr.classList.contains( 'is-flash' )
 		);
 		expect( lit?.dataset.pairId ).toBe( '3' );
 		unmount();
@@ -1057,8 +1059,8 @@ describe( 'LogEntriesTable', () => {
 		act( () => {
 			jest.advanceTimersByTime( 20 );
 		} );
-		return Array.from( container.querySelectorAll( 'tr' ) ).find(
-			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		return Array.from( container.querySelectorAll( 'tr' ) ).find( ( tr ) =>
+			tr.classList.contains( 'is-flash' )
 		);
 	};
 
@@ -1125,7 +1127,7 @@ describe( 'LogEntriesTable', () => {
 		} );
 
 		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
-			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			( tr ) => tr.classList.contains( 'is-flash' )
 		);
 		expect( lit?.dataset.pairId ).toBe( '3' );
 		unmount();
@@ -1164,7 +1166,7 @@ describe( 'LogEntriesTable', () => {
 			jest.advanceTimersByTime( 20 );
 		} );
 		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
-			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			( tr ) => tr.classList.contains( 'is-flash' )
 		);
 		unmount();
 		return lit?.dataset.pairId;
@@ -1214,7 +1216,7 @@ describe( 'LogEntriesTable', () => {
 		} );
 
 		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
-			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			( tr ) => tr.classList.contains( 'is-flash' )
 		);
 		expect( lit?.dataset.pairId ).toBe( '3' );
 		unmount();
@@ -1316,8 +1318,8 @@ describe( 'LogEntriesTable', () => {
 			React.createElement( LogEntriesTable, { entries, revealRef } )
 		);
 		const lit = () =>
-			Array.from( container.querySelectorAll( 'tr' ) ).find(
-				( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			Array.from( container.querySelectorAll( 'tr' ) ).find( ( tr ) =>
+				tr.classList.contains( 'is-flash' )
 			)?.dataset.pairId;
 
 		act( () =>
@@ -1341,6 +1343,12 @@ describe( 'LogEntriesTable', () => {
 			jest.advanceTimersByTime( 20 );
 		} );
 		expect( lit() ).toBe( '2' );
+		// Only the latest row holds the flash, and two seconds put it out.
+		expect( container.querySelectorAll( 'tr.is-flash' ).length ).toBe( 1 );
+		act( () => {
+			jest.advanceTimersByTime( 2000 );
+		} );
+		expect( lit() ).toBeUndefined();
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -2787,8 +2795,9 @@ describe( 'recentering after a row shrinks', () => {
 		} );
 		expect( calls[ 0 ].text ).toContain( 'line-5' );
 		expect( calls[ 0 ].text ).not.toContain( 'line-12' );
+		expect( row.classList ).toContain( 'is-flash' );
 		for ( const td of row.querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toContain( 'inset' );
+			expect( td.style.boxShadow ).toBe( '' );
 		}
 		unmount();
 	} );
@@ -2800,9 +2809,7 @@ describe( 'recentering after a row shrinks', () => {
 		act( () => toggle().click() );
 
 		expect( calls ).toEqual( [] );
-		for ( const td of toggle().closest( 'tr' ).querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toContain( 'inset' );
-		}
+		expect( toggle().closest( 'tr' ).classList ).toContain( 'is-flash' );
 		unmount();
 	} );
 
@@ -2846,9 +2853,7 @@ describe( 'recentering after a row shrinks', () => {
 		expect( calls[ 0 ].row ).toBe( rowOf( 'db' ) );
 		expect( calls[ 0 ].text ).not.toContain( 'logged value' );
 		expect( calls[ 0 ].options.block ).toBe( 'center' );
-		for ( const td of rowOf( 'db' ).querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toContain( 'inset' );
-		}
+		expect( rowOf( 'db' ).classList ).toContain( 'is-flash' );
 		unmount();
 	} );
 
@@ -2860,9 +2865,7 @@ describe( 'recentering after a row shrinks', () => {
 
 		expect( rowOf( 'db (complete)' ) ).toBeUndefined();
 		expect( calls ).toEqual( [] );
-		for ( const td of rowOf( 'db' ).querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toContain( 'inset' );
-		}
+		expect( rowOf( 'db' ).classList ).toContain( 'is-flash' );
 		unmount();
 	} );
 

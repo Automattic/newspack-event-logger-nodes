@@ -39,13 +39,7 @@ import {
 	useCallback,
 	useRef,
 } from '@wordpress/element';
-import {
-	Spinner,
-	Card,
-	CardBody,
-	CardHeader,
-	Modal,
-} from '@wordpress/components';
+import { Spinner, Modal } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeField, formatCommandArgs } from '@newspack-nodes/runtime';
@@ -1304,16 +1298,16 @@ export default function PerformanceDashboard( {
 			<div className="event-logger-performance-content">
 				{ /* URL List */ }
 				<div className="event-logger-performance-urls">
-					<Card>
-						<CardHeader>
-							<h2>
+					<div className="newspack-nodes-card event-logger-card">
+						<div className="event-logger-card__header">
+							<h2 className="newspack-nodes-section-heading">
 								{ __(
 									'Pages by Request Count',
 									'newspack-event-logger-nodes'
 								) }
 							</h2>
-						</CardHeader>
-						<CardBody>
+						</div>
+						<div className="event-logger-card__body">
 							<UrlTable
 								urls={ urls }
 								selectedSubject={ selectedSubject }
@@ -1334,8 +1328,8 @@ export default function PerformanceDashboard( {
 								error={ urlsSlice?.error ?? null }
 								loading={ !! urlsSlice?.loading }
 							/>
-						</CardBody>
-					</Card>
+						</div>
+					</div>
 				</div>
 			</div>
 

@@ -133,24 +133,22 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
 };
 
 /**
- * Active highlight state — the currently highlighted cells and the timer that
- * clears them, so navigating to a new match drops the old highlight at once.
+ * Active highlight state — the currently flashed row and the timer that
+ * clears it, so navigating to a new match drops the old highlight at once.
  * Module-scoped, so exactly one highlight exists across every mounted table.
  *
- * @type {{cells: HTMLElement[], timer: ?ReturnType<typeof setTimeout>}}
+ * @type {{row: ?Element, timer: ?ReturnType<typeof setTimeout>}}
  */
-let activeHighlight = { cells: [], timer: null };
+let activeHighlight = { row: null, timer: null };
 
 /**
- * Drop every highlighted cell's flash and cancel the timer that would have
+ * Drop the flashed row's `is-flash` and cancel the timer that would have
  * dropped it, so a new highlight never inherits the old one's countdown.
  */
 const clearHighlight = () => {
-	for ( const td of activeHighlight.cells ) {
-		td.style.boxShadow = '';
-	}
+	activeHighlight.row?.classList.remove( 'is-flash' );
 	clearTimeout( activeHighlight.timer );
-	activeHighlight = { cells: [], timer: null };
+	activeHighlight = { row: null, timer: null };
 };
 
 /**
@@ -207,30 +205,16 @@ const topOutOfView = ( row ) => {
 };
 
 /**
- * Flash-highlight a row, dropping any highlight before it. Highlights
- * individual <td> cells since <tr> doesn't support box-shadow reliably.
- * The highlight clears itself after two seconds, or sooner if another
- * call preempts it.
+ * Flash-highlight a row, dropping any highlight before it: `is-flash` on the
+ * row, which `tables.scss` rings cell by cell. The highlight clears itself
+ * after two seconds, or sooner if another call preempts it.
  *
  * @param {Element} row The table row.
  */
 const highlightRow = ( row ) => {
 	clearHighlight();
-	const cells = row.querySelectorAll( 'td' );
-	const highlighted = [];
-	for ( const td of cells ) {
-		td.style.boxShadow =
-			'inset 0 2px 0 0 rgba(79, 195, 247, 0.8), inset 0 -2px 0 0 rgba(79, 195, 247, 0.8)';
-		highlighted.push( td );
-	}
-	// Add left edge to first cell and right edge to last.
-	if ( cells.length > 0 ) {
-		cells[ 0 ].style.boxShadow +=
-			', inset 2px 0 0 0 rgba(79, 195, 247, 0.8)';
-		cells[ cells.length - 1 ].style.boxShadow +=
-			', inset -2px 0 0 0 rgba(79, 195, 247, 0.8)';
-	}
-	activeHighlight.cells = highlighted;
+	row.classList.add( 'is-flash' );
+	activeHighlight.row = row;
 	activeHighlight.timer = setTimeout( () => {
 		clearHighlight();
 	}, 2000 );
@@ -1030,7 +1014,9 @@ export default function LogEntriesTable( {
 			const baseOpacity = idx % 2 === 0 ? 0.15 : 0.08;
 
 			const backgroundColor = isHighlighted
-				? `rgba(79, 195, 247, ${ idx % 2 === 0 ? 0.25 : 0.15 })`
+				? `color-mix(in srgb, var(--cyan, var(--np-primary)) ${
+						idx % 2 === 0 ? 25 : 15
+				  }%, transparent)`
 				: hexToRgba( eventColor, baseOpacity );
 
 			return {

@@ -5,11 +5,15 @@ import fs from 'fs';
 import path from 'path';
 import * as sass from 'sass';
 import postcss from 'postcss';
-// Jest's Babel toolchain supplies the parser used to inspect real JSX nodes.
-// eslint-disable-next-line import/no-extraneous-dependencies
-import { parse as parseJs } from '@babel/parser';
+import {
+	SRC,
+	parseSource,
+	readSource,
+	relativeSource,
+	sourceFiles,
+	visit,
+} from '../test-helpers/sourceAst';
 
-const SRC = path.resolve( __dirname, '..' );
 // The aliases resolved against the base the jest config hands every test.
 const { esbuildAlias, sassImporter } = require(
 	path.join( NEWSPACK_NODES_SRC, 'build-kit/alias-map.cjs' )
@@ -53,10 +57,13 @@ const CANONICAL_CLASS_CONTRACTS = {
 	],
 	'overview/PerformanceDashboard.js': [
 		'newspack-nodes-performance-loading',
+		'newspack-nodes-card',
+		'newspack-nodes-section-heading',
 		'newspack-nodes-modal',
 		'newspack-nodes-status',
 		'is-error',
 	],
+	'overview/components/OverviewSection.js': [ 'newspack-nodes-card' ],
 	'overview/components/HeadlineStats.js': [
 		'newspack-nodes-stats-grid',
 		'newspack-nodes-stat',
@@ -127,12 +134,16 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'entry-ip',
 		'entry-ua',
 	],
-	'error-log/ErrorLog.js': [ 'newspack-nodes-table__row', 'entry-keyword' ],
+	'error-log/ErrorLog.js': [
+		'newspack-nodes-table__row',
+		'entry-keyword',
+		'newspack-nodes-status-badge is-error',
+	],
 	'overview/FlameGraph.js': [ 'newspack-nodes-empty-state' ],
 	'rules/RulesAdmin.js': [
 		'newspack-nodes-table',
 		'newspack-nodes-table--undivided',
-		'newspack-nodes-badge',
+		'newspack-nodes-status-badge is-pill',
 	],
 	// The frame class rides with the shared chrome; each picker keeps the
 	// canonical roles of what IT renders.
@@ -153,14 +164,10 @@ const CANONICAL_CLASS_CONTRACTS = {
 const INLINE_APPEARANCE_PROPERTY =
 	/\b(?:appearance|background(?:[A-Z]\w*)?|border(?:[A-Z]\w*)?|boxShadow|color|cursor|filter|fontFamily|fontWeight|opacity|outline|textDecoration|textTransform|letterSpacing)\s*:/;
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
-	[ 'overview/UrlTable.js', [ /linear-gradient\(to right/ ] ],
-	// A `query` answer's echoed `filters.filter`: field values, not a style.
-	[ 'test-helpers/chartWire.js', [ /filter: \{\},/ ] ],
 	// @longform The `filter` tokens a URL modal's chips ask `ask` and the
 	// facts block under, as the `url:` brief names them: not a style.
 	[ 'overview/PerformanceDashboard.js', [ /filter: detailChart\.chips,/ ] ],
 	[ 'overview/pageFacts.js', [ /filter: detailChips,/ ] ],
-	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.
 	[
@@ -192,17 +199,7 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	],
 ] );
 
-const walkSource = ( root ) =>
-	fs.readdirSync( root, { withFileTypes: true } ).flatMap( ( entry ) => {
-		const absolute = path.join( root, entry.name );
-		if ( entry.isDirectory() ) {
-			return '__tests__' === entry.name ? [] : walkSource( absolute );
-		}
-		return /\.(?:js|scss)$/.test( entry.name ) ? [ absolute ] : [];
-	} );
-
-const styleFiles = () =>
-	walkSource( SRC ).filter( ( file ) => file.endsWith( '.scss' ) );
+const styleFiles = () => sourceFiles( '.scss' );
 
 const compile = ( file ) =>
 	sass.compile( file, {
@@ -210,21 +207,6 @@ const compile = ( file ) =>
 	} ).css;
 
 const STYLE_APPEARANCE_ALLOWLIST = [
-	{
-		file: 'error-log/styles/error-log.scss',
-		selector: /^\.entry-keyword--(?:error|warning|alert|stderr|info)$/,
-		properties: [ 'background', 'color', 'border-radius', 'font-weight' ],
-	},
-	{
-		file: 'gyroscope/styles/inflight.scss',
-		selector: /^\.entry-duration--[\w-]+$/,
-		properties: [ 'color' ],
-	},
-	{
-		file: 'requests/styles/request-stream.scss',
-		selector: /^\.entry-duration--[\w-]+$/,
-		properties: [ 'color' ],
-	},
 	{
 		file: 'overview/styles/request-profile.scss',
 		selector: /^\.event-logger-profile-bar$/,
@@ -244,6 +226,19 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 		file: 'overview/styles/tables.scss',
 		selector: /^\.event-logger-table__row$/,
 		properties: [ 'cursor' ],
+	},
+	// A row's share of the longest one: data drawn in the accent, not chrome.
+	{
+		file: 'overview/styles/tables.scss',
+		selector: /^\.event-logger-table__cell--bar$/,
+		properties: [ 'background' ],
+	},
+	// The row a reveal lands on, ringed for two seconds.
+	{
+		file: 'overview/styles/tables.scss',
+		selector:
+			/^\.event-logger-log-entries tr\.is-flash > td(?::(?:first|last)-child)?$/,
+		properties: [ 'box-shadow' ],
 	},
 	{
 		file: 'settings/styles/custom-event-selector.scss',
@@ -265,21 +260,78 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 		selector: /\.hook-selector-(?:category-header|hook)$/,
 		properties: [ 'cursor' ],
 	},
-	{
-		file: 'settings/styles/rules-editor.scss',
-		selector: /\.rules-admin__badge--(?:log|skip)$/,
-		properties: [ 'background', 'color' ],
-	},
-	{
-		file: 'settings/styles/rules-editor.scss',
-		selector: /^\.rules-admin__confirm-backdrop$/,
-		properties: [ 'background' ],
-	},
 ];
 const IMPORTANT_ALLOWLIST = {
 	file: 'overview/styles/flame-graph.scss',
 	selector: /^\.d3-flame-graph-tip$/,
 	properties: [ 'z-index', 'white-space', 'word-wrap', 'overflow-wrap' ],
+};
+
+// Declarations whose literal paint is justified; each must still match.
+const LITERAL_ALLOWLIST = [];
+
+const isAllowedLiteral = ( file, selector, property ) =>
+	LITERAL_ALLOWLIST.some(
+		( allowed ) =>
+			file.endsWith( allowed.file ) &&
+			allowed.selector.test( selector ) &&
+			allowed.properties.includes( property )
+	);
+
+// Every named CSS colour, matched as a whole word in a paint value.
+const NAMED_COLOURS = new RegExp(
+	`(?<![\\w-])(?:${ [
+		'aliceblue antiquewhite aqua aquamarine azure beige bisque black',
+		'blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse',
+		'chocolate coral cornflowerblue cornsilk crimson cyan darkblue',
+		'darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki',
+		'darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon',
+		'darkseagreen darkslateblue darkslategray darkslategrey darkturquoise',
+		'darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick',
+		'floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod',
+		'gray green greenyellow grey honeydew hotpink indianred indigo ivory',
+		'khaki lavender lavenderblush lawngreen lemonchiffon lightblue',
+		'lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen',
+		'lightgrey lightpink lightsalmon lightseagreen lightskyblue',
+		'lightslategray lightslategrey lightsteelblue lightyellow lime',
+		'limegreen linen magenta maroon mediumaquamarine mediumblue',
+		'mediumorchid mediumpurple mediumseagreen mediumslateblue',
+		'mediumspringgreen mediumturquoise mediumvioletred midnightblue',
+		'mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab',
+		'orange orangered orchid palegoldenrod palegreen paleturquoise',
+		'palevioletred papayawhip peachpuff peru pink plum powderblue purple',
+		'rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown',
+		'seagreen seashell sienna silver skyblue slateblue slategray slategrey',
+		'snow springgreen steelblue tan teal thistle tomato turquoise violet',
+		'wheat white whitesmoke yellow yellowgreen',
+	]
+		.join( ' ' )
+		.split( ' ' )
+		.join( '|' ) })(?![\\w-])`,
+	'i'
+);
+const COLOUR_LITERAL =
+	/#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/i;
+const PAINT_PROPERTY =
+	/^(?:color|background(?:-color|-image)?|border(?:-(?:top|right|bottom|left|block|inline)(?:-start|-end)?)?(?:-color)?|outline(?:-color)?|box-shadow|text-shadow|fill|stroke|caret-color|accent-color|column-rule(?:-color)?|text-decoration(?:-color)?|-webkit-text-fill-color)$/;
+
+/**
+ * Whether a compiled declaration paints a literal: any `*radius` not opening
+ * on `var(`, or a paint property whose value names a colour outright.
+ *
+ * @param {string} prop  Property.
+ * @param {string} value Compiled value.
+ * @return {boolean} True when the value is a literal, not a token.
+ */
+const literalPaint = ( prop, value ) => {
+	if ( /radius$/.test( prop ) ) {
+		return ! value.trim().startsWith( 'var(' );
+	}
+	if ( ! PAINT_PROPERTY.test( prop ) ) {
+		return false;
+	}
+	const bare = value.replace( /var\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '' );
+	return COLOUR_LITERAL.test( bare ) || NAMED_COLOURS.test( bare );
 };
 
 const isAllowedSemanticAppearance = ( file, selector, property ) =>
@@ -289,20 +341,6 @@ const isAllowedSemanticAppearance = ( file, selector, property ) =>
 			allowed.selector.test( selector ) &&
 			allowed.properties.includes( property )
 	);
-
-const visit = ( node, callback ) => {
-	if ( ! node || 'object' !== typeof node ) {
-		return;
-	}
-	callback( node );
-	for ( const value of Object.values( node ) ) {
-		if ( Array.isArray( value ) ) {
-			value.forEach( ( child ) => visit( child, callback ) );
-		} else if ( value && 'object' === typeof value && value.type ) {
-			visit( value, callback );
-		}
-	}
-};
 
 const jsxName = ( node ) =>
 	'JSXIdentifier' === node.name.type ? node.name.name : '';
@@ -357,10 +395,23 @@ describe( 'canonical appearance ownership', () => {
 		'requests/styles/request-stream.scss',
 		'gyroscope/styles/inflight.scss',
 	] )( 'leaves HTTP status paint to shared CSS in %s', ( relative ) => {
-		const source = fs.readFileSync( path.join( SRC, relative ), 'utf8' );
+		const source = readSource( relative );
 		expect( source ).not.toMatch( /\.entry-status\s*\{/ );
 		expect( source ).not.toMatch( /\bentry-status--/ );
 	} );
+
+	it.each( [
+		'requests/styles/request-stream.scss',
+		'gyroscope/styles/inflight.scss',
+		'error-log/styles/error-log.scss',
+	] )(
+		'leaves duration and keyword inks to shared CSS in %s',
+		( relative ) => {
+			const source = readSource( relative );
+			expect( source ).not.toMatch( /\.entry-duration\s*\{/ );
+			expect( source ).not.toMatch( /\.entry-keyword\s*\{/ );
+		}
+	);
 
 	it( 'uses the shared data-attribute status taxonomy', () => {
 		const file = path.join( NODES_SHARED, 'styles/_components.scss' );
@@ -391,14 +442,14 @@ describe( 'canonical appearance ownership', () => {
 	it( 'contains no Event Logger copy of a shared primitive class', () => {
 		const offenders = [];
 
-		for ( const file of walkSource( SRC ) ) {
-			const source = fs.readFileSync( file, 'utf8' );
+		for ( const file of sourceFiles() ) {
+			const source = readSource( file );
 			for ( const match of source.matchAll( LEGACY_SHARED_CLASS ) ) {
 				const line = source
 					.slice( 0, match.index )
 					.split( '\n' ).length;
 				offenders.push(
-					`${ path.relative( SRC, file ) }:${ line }:${ match[ 0 ] }`
+					`${ relativeSource( file ) }:${ line }:${ match[ 0 ] }`
 				);
 			}
 		}
@@ -426,7 +477,7 @@ describe( 'canonical appearance ownership', () => {
 		for ( const [ file, classes ] of Object.entries(
 			CANONICAL_CLASS_CONTRACTS
 		) ) {
-			const source = fs.readFileSync( path.join( SRC, file ), 'utf8' );
+			const source = readSource( file );
 			for ( const className of classes ) {
 				if ( ! source.includes( className ) ) {
 					missing.push( `${ file }:${ className }` );
@@ -437,11 +488,196 @@ describe( 'canonical appearance ownership', () => {
 		expect( missing ).toEqual( [] );
 	} );
 
+	it( 'draws the share bar and the flash ring from the stylesheet, in the accent', () => {
+		const paint = {};
+		const file = path.join( SRC, 'overview/styles/tables.scss' );
+		postcss
+			.parse( compile( file ), { from: file } )
+			.walkDecls( ( decl ) => {
+				if ( /cell--bar|is-flash/.test( decl.parent.selector ) ) {
+					paint[ `${ decl.parent.selector } ${ decl.prop }` ] =
+						decl.value;
+				}
+			} );
+		expect( paint ).toEqual( {
+			'.event-logger-table__cell--bar background':
+				'linear-gradient(to right, color-mix(in srgb, var(--cyan, var(--np-primary)) 15%, transparent) var(--bar-pct), transparent var(--bar-pct))',
+			'.event-logger-log-entries tr.is-flash > td box-shadow':
+				'inset 0 2px 0 0 var(--cyan, var(--np-primary)), inset 0 -2px 0 0 var(--cyan, var(--np-primary))',
+			'.event-logger-log-entries tr.is-flash > td:first-child box-shadow':
+				'inset 0 2px 0 0 var(--cyan, var(--np-primary)), inset 0 -2px 0 0 var(--cyan, var(--np-primary)), inset 2px 0 0 0 var(--cyan, var(--np-primary))',
+			'.event-logger-log-entries tr.is-flash > td:last-child box-shadow':
+				'inset 0 2px 0 0 var(--cyan, var(--np-primary)), inset 0 -2px 0 0 var(--cyan, var(--np-primary)), inset -2px 0 0 0 var(--cyan, var(--np-primary))',
+		} );
+	} );
+
+	it( 'draws the profile bar track on the lightest rung, above page and modal', () => {
+		const file = path.join( SRC, 'overview/styles/request-profile.scss' );
+		const backgrounds = [];
+		postcss
+			.parse( compile( file ), { from: file } )
+			.walkRules( /^\.event-logger-profile-bar$/, ( rule ) =>
+				rule.walkDecls( 'background', ( decl ) =>
+					backgrounds.push( decl.value )
+				)
+			);
+		expect( backgrounds ).toEqual( [ 'var(--paper, var(--np-surface))' ] );
+	} );
+
+	it( 'spells every compiled radius and colour as a token, never a literal', () => {
+		const offenders = [];
+
+		for ( const file of styleFiles() ) {
+			const relative = relativeSource( file );
+			postcss
+				.parse( compile( file ), { from: file } )
+				.walkDecls( ( decl ) => {
+					const parent = decl.parent;
+					const selector = parent.selector ?? parent.params ?? '';
+					if (
+						! literalPaint( decl.prop, decl.value ) ||
+						isAllowedLiteral( relative, selector, decl.prop )
+					) {
+						return;
+					}
+					offenders.push(
+						`${ relative }:${ selector }:${ decl.prop }: ${ decl.value }`
+					);
+				} );
+		}
+
+		expect( offenders ).toEqual( [] );
+	} );
+
+	it.each( [
+		[ 'border-top-left-radius', '4px' ],
+		[ 'border-radius', '0 0 3px 3px' ],
+		[ 'color', 'white' ],
+		[ 'background', 'hsl(200 50% 50%)' ],
+		[ 'box-shadow', 'inset 0 0 0 1px rgba(0, 0, 0, 0.1)' ],
+		[ 'border', '1px solid #ccc' ],
+		[ 'fill', 'rebeccapurple' ],
+	] )( 'reads %s: %s as a literal', ( prop, value ) => {
+		expect( literalPaint( prop, value ) ).toBe( true );
+	} );
+
+	it.each( [
+		[ 'border-radius', 'var(--np-radius-sm)' ],
+		[ 'color', 'var(--ink, var(--np-text))' ],
+		[ 'background', 'transparent' ],
+		[ 'box-shadow', 'inset 0 0 0 1px var(--paper-shadow)' ],
+		[ 'border', '1px solid currentcolor' ],
+		[ 'grid-area', 'feed-list' ],
+		[ 'content', '"see #123"' ],
+	] )( 'reads %s: %s as token or geometry', ( prop, value ) => {
+		expect( literalPaint( prop, value ) ).toBe( false );
+	} );
+
+	it( 'lets every allowlist entry excuse at least one compiled declaration', () => {
+		const used = new Set();
+		const lists = [
+			...STYLE_APPEARANCE_ALLOWLIST,
+			IMPORTANT_ALLOWLIST,
+			...LITERAL_ALLOWLIST,
+		];
+
+		for ( const file of styleFiles() ) {
+			postcss
+				.parse( compile( file ), { from: file } )
+				.walkDecls( ( decl ) => {
+					const selector = decl.parent.selector ?? '';
+					lists.forEach( ( entry ) => {
+						if (
+							file.endsWith( entry.file ) &&
+							entry.selector.test( selector ) &&
+							entry.properties.includes( decl.prop )
+						) {
+							used.add( entry );
+						}
+					} );
+				} );
+		}
+
+		const unused = lists
+			.filter( ( entry ) => ! used.has( entry ) )
+			.map( ( entry ) => `${ entry.file }:${ entry.selector }` );
+		expect( unused ).toEqual( [] );
+	} );
+
+	it( 'spells no colour literal in markup outside the data colours', () => {
+		// Data colours: a state swatch, the PHP event default, the flame label inks.
+		const allowed = {
+			'gyroscope/Inflight.js': [ '#9e9e9e' ],
+			'settings/settings/CustomEventSelectorModal.js': [ '#ffa726' ],
+			'overview/flameColors.js': [ '#0b140d', '#eafff1' ],
+		};
+		const offenders = [];
+
+		for ( const file of sourceFiles().filter( ( candidate ) =>
+			candidate.endsWith( '.js' )
+		) ) {
+			const relative = relativeSource( file );
+			const ast = parseSource( file );
+			visit( ast, ( node ) => {
+				const literals = {
+					StringLiteral: () => node.value,
+					TemplateElement: () => node.value.cooked,
+				};
+				if ( ! literals[ node.type ] ) {
+					return;
+				}
+				const text = literals[ node.type ]();
+				// A literal that a token falls back to belongs to that token.
+				const bare = text.replace(
+					/var\(--[\w-]+,\s*#[0-9a-fA-F]+\)/g,
+					''
+				);
+				for ( const match of bare.matchAll(
+					/#[0-9a-fA-F]{3,8}\b|\brgba?\(/g
+				) ) {
+					if ( ! allowed[ relative ]?.includes( match[ 0 ] ) ) {
+						offenders.push(
+							`${ relative }:${ node.loc.start.line }:${ match[ 0 ] }`
+						);
+					}
+				}
+			} );
+		}
+
+		expect( offenders ).toEqual( [] );
+	} );
+
+	it( 'draws every card on the shared card role, never a WordPress Card', () => {
+		const offenders = [];
+
+		for ( const file of sourceFiles().filter( ( candidate ) =>
+			candidate.endsWith( '.js' )
+		) ) {
+			const ast = parseSource( file );
+			for ( const statement of ast.program.body ) {
+				if (
+					'ImportDeclaration' !== statement.type ||
+					'@wordpress/components' !== statement.source.value
+				) {
+					continue;
+				}
+				for ( const spec of statement.specifiers ) {
+					if ( /^Card/.test( spec.imported?.name ?? '' ) ) {
+						offenders.push(
+							`${ relativeSource( file ) }:${
+								spec.imported.name
+							}`
+						);
+					}
+				}
+			}
+		}
+
+		expect( offenders ).toEqual( [] );
+	} );
+
 	it( 'uses WordPress labels for every rule field it labels itself', () => {
-		const source = fs.readFileSync(
-			path.join( SRC, 'rules/RuleEditModal.js' ),
-			'utf8'
-		);
+		const source = readSource( 'rules/RuleEditModal.js' );
 
 		// The three selector rows take a visual label; the tag box, a BaseControl label.
 		expect(
@@ -497,13 +733,11 @@ describe( 'canonical appearance ownership', () => {
 	} );
 
 	it( 'uses the shared interactive-row role on both hook rows and custom events', () => {
-		const hookSource = fs.readFileSync(
-			path.join( SRC, 'settings/settings/HookSelectorModal.js' ),
-			'utf8'
+		const hookSource = readSource(
+			'settings/settings/HookSelectorModal.js'
 		);
-		const customEventSource = fs.readFileSync(
-			path.join( SRC, 'settings/settings/CustomEventSelectorModal.js' ),
-			'utf8'
+		const customEventSource = readSource(
+			'settings/settings/CustomEventSelectorModal.js'
 		);
 
 		expect(
@@ -518,14 +752,11 @@ describe( 'canonical appearance ownership', () => {
 	it( 'gives every native button the canonical button role', () => {
 		const offenders = [];
 
-		for ( const file of walkSource( SRC ).filter( ( candidate ) =>
+		for ( const file of sourceFiles().filter( ( candidate ) =>
 			candidate.endsWith( '.js' )
 		) ) {
-			const source = fs.readFileSync( file, 'utf8' );
-			const ast = parseJs( source, {
-				sourceType: 'module',
-				plugins: [ 'jsx' ],
-			} );
+			const source = readSource( file );
+			const ast = parseSource( file );
 			visit( ast, ( node ) => {
 				if (
 					'JSXOpeningElement' !== node.type ||
@@ -553,7 +784,7 @@ describe( 'canonical appearance ownership', () => {
 					return;
 				}
 				offenders.push(
-					`${ path.relative( SRC, file ) }:${ node.loc.start.line }`
+					`${ relativeSource( file ) }:${ node.loc.start.line }`
 				);
 			} );
 		}
@@ -607,14 +838,11 @@ describe( 'canonical appearance ownership', () => {
 	it( 'keeps component-specific interactive selectors geometry-only', () => {
 		const interactiveClasses = new Set();
 
-		for ( const file of walkSource( SRC ).filter( ( candidate ) =>
+		for ( const file of sourceFiles().filter( ( candidate ) =>
 			candidate.endsWith( '.js' )
 		) ) {
-			const source = fs.readFileSync( file, 'utf8' );
-			const ast = parseJs( source, {
-				sourceType: 'module',
-				plugins: [ 'jsx' ],
-			} );
+			const source = readSource( file );
+			const ast = parseSource( file );
 			visit( ast, ( node ) => {
 				if (
 					'JSXOpeningElement' === node.type &&
@@ -651,7 +879,7 @@ describe( 'canonical appearance ownership', () => {
 						continue;
 					}
 					offenders.push(
-						`${ path.relative( SRC, file ) }:${
+						`${ relativeSource( file ) }:${
 							node.source.start.line
 						}:${ rule.selector }:${ node.prop }`
 					);
@@ -677,7 +905,7 @@ describe( 'canonical appearance ownership', () => {
 				}
 				rule.walkDecls( /^(?:fill|stroke)$/, ( decl ) => {
 					offenders.push(
-						`${ path.relative( SRC, file ) }:${ rule.selector }:${
+						`${ relativeSource( file ) }:${ rule.selector }:${
 							decl.prop
 						}`
 					);
@@ -707,7 +935,7 @@ describe( 'canonical appearance ownership', () => {
 						continue;
 					}
 					offenders.push(
-						`${ path.relative( SRC, file ) }:${
+						`${ relativeSource( file ) }:${
 							node.source.start.line
 						}:${ rule.selector }:${ node.prop }`
 					);
@@ -733,7 +961,7 @@ describe( 'canonical appearance ownership', () => {
 						FOCUS_PROPERTY.test( node.prop )
 					) {
 						offenders.push(
-							`${ path.relative( SRC, file ) }:${
+							`${ relativeSource( file ) }:${
 								node.source.start.line
 							}:${ rule.selector }:${ node.prop }`
 						);
@@ -762,7 +990,7 @@ describe( 'canonical appearance ownership', () => {
 					IMPORTANT_ALLOWLIST.properties.includes( declaration.prop );
 				if ( ! allowed ) {
 					offenders.push(
-						`${ path.relative( SRC, file ) }:${
+						`${ relativeSource( file ) }:${
 							declaration.source.start.line
 						}:${ declaration.parent.selector }:${
 							declaration.prop
@@ -788,15 +1016,31 @@ describe( 'canonical appearance ownership', () => {
 		expect( opacities ).toContain( '.theme-crt .d3-flame-graph rect 1' );
 	} );
 
+	it( 'lets every inline allowlist pattern excuse a line it still names', () => {
+		const unused = [];
+		for ( const [ file, patterns ] of INLINE_SEMANTIC_ALLOWLIST ) {
+			const lines = readSource( file ).split( '\n' );
+			for ( const pattern of patterns ) {
+				const used = lines.some( ( _line, index ) =>
+					pattern.test( lines.slice( index, index + 3 ).join( ' ' ) )
+				);
+				if ( ! used ) {
+					unused.push( `${ file }:${ pattern }` );
+				}
+			}
+		}
+		expect( unused ).toEqual( [] );
+	} );
+
 	it( 'contains no hardcoded inline shared appearance', () => {
 		const offenders = [];
 
-		for ( const file of walkSource( SRC ).filter( ( candidate ) =>
+		for ( const file of sourceFiles().filter( ( candidate ) =>
 			candidate.endsWith( '.js' )
 		) ) {
-			const relative = path.relative( SRC, file );
+			const relative = relativeSource( file );
 			const allowlist = INLINE_SEMANTIC_ALLOWLIST.get( relative ) || [];
-			const lines = fs.readFileSync( file, 'utf8' ).split( '\n' );
+			const lines = readSource( file ).split( '\n' );
 			lines.forEach( ( line, index ) => {
 				const declaration = lines.slice( index, index + 3 ).join( ' ' );
 				if (
@@ -814,7 +1058,7 @@ describe( 'canonical appearance ownership', () => {
 
 	it( 'contains no dead appearance-only selector', () => {
 		const source = styleFiles()
-			.map( ( file ) => fs.readFileSync( file, 'utf8' ) )
+			.map( ( file ) => readSource( file ) )
 			.join( '\n' );
 		const offenders = DEAD_SELECTOR_NAMES.filter( ( selector ) =>
 			source.includes( `.${ selector }` )

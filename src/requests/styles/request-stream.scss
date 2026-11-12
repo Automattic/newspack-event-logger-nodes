@@ -5,7 +5,7 @@
  * empty state, and the row striping/hover/height are the shared substrate
  * classes (`newspack-nodes-log-rows` / `-log-header` / `-log-row` from
  * LogRowList.scss); this file keeps the page layout, the COLUMN-grid override
- * for the shared rows, and the duration/timing cell accents.
+ * for the shared rows.
  */
 
 @use "base";
@@ -18,24 +18,5 @@
 	.event-logger-request-stream .newspack-nodes-log-row {
 		gap: 8px;
 		padding: 0 10px;
-	}
-}
-
-// =============================================================================
-// Duration color classes (matches formatUtils getDurationColor thresholds)
-// =============================================================================
-
-// Duration/timing inks sit on the log-pane rows and remain skin-adaptive.
-.entry-duration {
-	&--fast {
-		color: base.$status-2xx; // < 1000ms
-	}
-
-	&--slow {
-		color: base.$warning-color; // 1000-5000ms
-	}
-
-	&--critical {
-		color: base.$error-text; // > 5000ms
 	}
 }

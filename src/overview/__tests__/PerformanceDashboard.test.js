@@ -286,18 +286,6 @@ jest.mock( '@wordpress/components', () => ( {
 		const React = require( 'react' );
 		return React.createElement( 'div', { 'data-testid': 'spinner' } );
 	},
-	Card: ( { children } ) => {
-		const React = require( 'react' );
-		return React.createElement( 'div', null, children );
-	},
-	CardBody: ( { children } ) => {
-		const React = require( 'react' );
-		return React.createElement( 'div', null, children );
-	},
-	CardHeader: ( { children } ) => {
-		const React = require( 'react' );
-		return React.createElement( 'div', null, children );
-	},
 	Button: ( { children, onClick, disabled, className } ) => {
 		const React = require( 'react' );
 		return React.createElement(

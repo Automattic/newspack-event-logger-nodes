@@ -351,7 +351,7 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'Settings reset to defaults.', $html );
 	}
 
-	public function test_render_settings_page_wrap_has_exact_standalone_product_root_classes(): void {
+	public function test_render_settings_page_wrap_wears_the_skinned_dashboard_roots(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
@@ -364,7 +364,7 @@ class AdminTest extends TestCase {
 			\preg_match( '/<div class="([^"]*event-logger-settings-wrap[^"]*)">/', $html, $matches )
 		);
 		$this->assertSame(
-			'wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui',
+			'wrap event-logger-settings-wrap newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui',
 			$matches[1]
 		);
 	}

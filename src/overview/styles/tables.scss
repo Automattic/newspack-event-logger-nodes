@@ -79,6 +79,16 @@
 	}
 }
 
+// A cell's share of its table's longest bar, set inline as `--bar-pct`.
+.event-logger-table__cell--bar {
+	background: linear-gradient(
+		to right,
+		color-mix(in srgb, var(--cyan, var(--np-primary)) 15%, transparent)
+			var(--bar-pct),
+		transparent var(--bar-pct)
+	);
+}
+
 .event-logger-table__empty {
 	display: flex;
 	align-items: center;
@@ -187,6 +197,27 @@
 		td {
 			vertical-align: top;
 		}
+	}
+
+	// A row cannot carry an inset ring, so each cell draws its share of it.
+	tr.is-flash > td {
+		box-shadow:
+			inset 0 2px 0 0 var(--cyan, var(--np-primary)),
+			inset 0 -2px 0 0 var(--cyan, var(--np-primary));
+	}
+
+	tr.is-flash > td:first-child {
+		box-shadow:
+			inset 0 2px 0 0 var(--cyan, var(--np-primary)),
+			inset 0 -2px 0 0 var(--cyan, var(--np-primary)),
+			inset 2px 0 0 0 var(--cyan, var(--np-primary));
+	}
+
+	tr.is-flash > td:last-child {
+		box-shadow:
+			inset 0 2px 0 0 var(--cyan, var(--np-primary)),
+			inset 0 -2px 0 0 var(--cyan, var(--np-primary)),
+			inset -2px 0 0 0 var(--cyan, var(--np-primary));
 	}
 
 	.log-entries-search {

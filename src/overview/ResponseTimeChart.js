@@ -188,7 +188,10 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				g.append( 'path' )
 					.datum( chartData )
 					.attr( 'fill', 'none' )
-					.style( 'stroke', phosphorColor( TREND_PLACE, '#4a90d9' ) )
+					.style(
+						'stroke',
+						phosphorColor( TREND_PLACE, 'var(--chart-1)' )
+					)
 					.attr( 'stroke-width', 1.5 )
 					.attr( 'stroke-opacity', 0.5 )
 					// Hit tests stroke the curve; the dots own the pointer.
@@ -209,7 +212,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'x2', innerW )
 				.attr( 'y1', y( avgDuration ) )
 				.attr( 'y2', y( avgDuration ) )
-				.style( 'stroke', phosphorColor( MEAN_PLACE, '#e57373' ) )
+				.style( 'stroke', phosphorColor( MEAN_PLACE, 'var(--oxide)' ) )
 				.attr( 'stroke-width', 1 )
 				.attr( 'stroke-dasharray', '5,5' );
 			g.append( 'text' )
@@ -217,7 +220,10 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'y', y( avgDuration ) - 5 )
 				.attr( 'text-anchor', 'end' )
 				.style( 'font-size', '11px' )
-				.style( 'fill', phosphorColor( MEAN_PLACE, '#e57373' ) )
+				.style(
+					'fill',
+					phosphorColor( MEAN_PLACE, 'var(--oxide-text)' )
+				)
 				.text(
 					sprintf(
 						// translators: %s: average response time, e.g. 68ms or 130s.

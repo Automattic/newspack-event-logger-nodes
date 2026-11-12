@@ -17,12 +17,7 @@
 import { useMemo } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import {
-	Card,
-	CardBody,
-	SearchControl,
-	SelectControl,
-} from '@wordpress/components';
+import { SearchControl, SelectControl } from '@wordpress/components';
 
 import {
 	DASHBOARD_REFRESH_OPTIONS,
@@ -172,7 +167,7 @@ export default function OverviewSection( {
 
 	return (
 		<div className="event-logger-performance-overview">
-			<Card>
+			<div className="newspack-nodes-card event-logger-card">
 				<HeaderSlot slot={ headerControlsSlot }>
 					<div
 						style={ {
@@ -313,7 +308,7 @@ export default function OverviewSection( {
 						</div>
 					) }
 				<UnparseableLinesNotice count={ searchUnparseableLines } />
-				<CardBody className="event-logger-sections">
+				<div className="event-logger-card__body event-logger-sections">
 					<HeadlineStats totals={ urlTotals } slots={ chartAxis } />
 
 					{ /* Unconditional: the Metric, Breakdown and Server
@@ -360,8 +355,8 @@ export default function OverviewSection( {
 						heading={ breakdownHeading }
 						serverName={ serverFilter }
 					/>
-				</CardBody>
-			</Card>
+				</div>
+			</div>
 		</div>
 	);
 }

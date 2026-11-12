@@ -415,17 +415,17 @@ describe( 'ResponseTimeChart', () => {
 
 		const trend = container.querySelector( 'path[stroke-width="1.5"]' );
 		expect( trend.style.getPropertyValue( 'stroke' ) ).toBe(
-			'var(--phosphor-5, #4a90d9)'
+			'var(--phosphor-5, var(--chart-1))'
 		);
 		const mean = container.querySelector( 'line[stroke-dasharray="5,5"]' );
 		expect( mean.style.getPropertyValue( 'stroke' ) ).toBe(
-			'var(--phosphor-4, #e57373)'
+			'var(--phosphor-4, var(--oxide))'
 		);
 		const label = [ ...container.querySelectorAll( 'svg text' ) ].find(
 			( node ) => node.textContent.startsWith( 'avg:' )
 		);
 		expect( label.style.getPropertyValue( 'fill' ) ).toBe(
-			'var(--phosphor-4, #e57373)'
+			'var(--phosphor-4, var(--oxide-text))'
 		);
 		expect(
 			dots( container )[ 0 ].style.getPropertyValue( 'stroke' )

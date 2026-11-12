@@ -474,11 +474,17 @@ describe( 'UrlDetailView', () => {
 			row( rid ).querySelectorAll( '.event-logger-table__cell' );
 
 		expect( cells( 'tout-864' )[ 4 ].textContent ).toBe( '—' );
-		expect( cells( 'tout-864' )[ 2 ].style.background ).toContain( ' 0%' );
+		expect(
+			cells( 'tout-864' )[ 2 ].style.getPropertyValue( '--bar-pct' )
+		).toBe( '0%' );
 		expect( cells( 'fatal-2417' )[ 4 ].textContent ).toBe( '2417ms' );
-		expect( cells( 'fatal-2417' )[ 2 ].style.background ).toContain(
-			' 100%'
+		expect(
+			cells( 'fatal-2417' )[ 2 ].style.getPropertyValue( '--bar-pct' )
+		).toBe( '100%' );
+		expect( cells( 'fatal-2417' )[ 2 ].classList ).toContain(
+			'event-logger-table__cell--bar'
 		);
+		expect( cells( 'fatal-2417' )[ 2 ].style.background ).toBe( '' );
 		unmount();
 	} );
 
@@ -908,12 +914,12 @@ describe( 'UrlDetailView', () => {
 		const bar = ( rid ) =>
 			[ ...container.querySelectorAll( '.event-logger-table__row' ) ]
 				.find( ( r ) => r.querySelector( 'code' ).textContent === rid )
-				.querySelectorAll( '.event-logger-table__cell' )[ 2 ].style
-				.background;
+				.querySelectorAll( '.event-logger-table__cell' )[ 2 ]
+				.style.getPropertyValue( '--bar-pct' );
 
 		expect( metric.value ).toBe( 'memory' );
 		// Peak memory bars the row: 37 of 74 MB, where duration bars it full.
-		expect( bar( 'lean-37' ) ).toContain( ' 50%' );
+		expect( bar( 'lean-37' ) ).toBe( '50%' );
 
 		selectOption( metric, 'avg' );
 		expect(

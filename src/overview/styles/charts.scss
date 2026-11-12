@@ -26,10 +26,20 @@
 	}
 }
 
-// Card header h2 style
-.event-logger-performance-dashboard .components-card__header h2 {
-	margin: 0;
-	font-size: 18px;
+// A card's inset; the shared card role paints it.
+.event-logger-card__header,
+.event-logger-card__body {
+	padding: base.$space-lg base.$space-xl;
+}
+
+// The header sits on the body's top inset; no divider runs between them.
+.event-logger-card__header {
+	padding-bottom: 0;
+
+	h2 {
+		margin: 0;
+		font-size: 18px;
+	}
 }
 
 .event-logger-request-detail-empty {

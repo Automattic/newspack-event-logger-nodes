@@ -266,7 +266,8 @@ describe( 'ErrorLog', () => {
 			'r-cells'
 		);
 		expect(
-			el.querySelector( '.entry-keyword--warning' ).textContent
+			el.querySelector( '.entry-keyword[data-keyword="warning"]' )
+				.textContent
 		).toBe( 'something (warning)' );
 		expect( el.querySelector( '.entry-message' ).textContent ).toBe(
 			'warn text'
@@ -278,26 +279,40 @@ describe( 'ErrorLog', () => {
 		);
 	} );
 
-	it( 'classifies error/alert/stderr/info keywords via CSS class', () => {
+	it( 'classifies error/alert/stderr/info keywords by data-keyword', () => {
 		registerViewFixture();
 		mount();
-		const cls = ( k ) => {
-			const { container } = renderComponent(
+		const cell = ( k ) =>
+			renderComponent(
 				logRowListProps.renderRow( row( { id: 2, k } ) )
-			);
-			return container.querySelector( '.entry-keyword' ).className;
-		};
-		expect( cls( 'error' ) ).toContain( 'entry-keyword--error' );
-		expect( cls( 'alert' ) ).toContain( 'entry-keyword--alert' );
-		expect( cls( 'stderr' ) ).toContain( 'entry-keyword--stderr' );
-		expect( cls( 'notice' ) ).toContain( 'entry-keyword--info' );
-		// An alert must NOT fall through to the generic info accent.
-		expect( cls( 'alert' ) ).not.toContain( 'entry-keyword--info' );
+			).container.querySelector( '.entry-keyword' );
+		const kind = ( k ) => cell( k ).dataset.keyword;
+		expect( kind( 'error' ) ).toBe( 'error' );
+		expect( kind( 'alert' ) ).toBe( 'alert' );
+		expect( kind( 'stderr' ) ).toBe( 'stderr' );
+		expect( kind( 'notice' ) ).toBe( 'info' );
 		// PSR-3's levels above error accent as errors, not the fleet journal.
-		expect( cls( 'qm (critical)' ) ).toContain( 'entry-keyword--error' );
-		expect( cls( 'qm (alert)' ) ).toContain( 'entry-keyword--error' );
-		expect( cls( 'qm (emergency)' ) ).toContain( 'entry-keyword--error' );
-		expect( cls( 'qm (warning)' ) ).toContain( 'entry-keyword--warning' );
+		expect( kind( 'qm (critical)' ) ).toBe( 'error' );
+		expect( kind( 'qm (alert)' ) ).toBe( 'error' );
+		expect( kind( 'qm (emergency)' ) ).toBe( 'error' );
+		expect( kind( 'qm (warning)' ) ).toBe( 'warning' );
+		expect( cell( 'error' ).className ).not.toMatch( /entry-keyword--/ );
+	} );
+
+	it( 'chips a fleet alert as the shared error badge, and only an alert', () => {
+		registerViewFixture();
+		mount();
+		const chip = ( k ) =>
+			renderComponent(
+				logRowListProps.renderRow( row( { id: 3, k } ) )
+			).container.querySelector(
+				'.entry-keyword .newspack-nodes-status-badge'
+			);
+		expect( chip( 'alert' ).className ).toBe(
+			'newspack-nodes-status-badge is-error'
+		);
+		expect( chip( 'alert' ).textContent ).toBe( 'alert' );
+		expect( chip( 'qm (alert)' ) ).toBeNull();
 	} );
 
 	it( 'renders the fixed column headers via the shared LogListHeader', () => {

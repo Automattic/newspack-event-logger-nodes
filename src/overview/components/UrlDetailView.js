@@ -26,9 +26,11 @@
 import { useRef, memo, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import {
+	BAR_CELL,
 	CELL_BASE,
 	SCOPED_BREAKDOWN_OPTIONS,
 	SUBJECT_CHIP_OPTIONS,
+	barStyle,
 	cellClass,
 } from '../constants';
 import { subjectDescriptor } from '../detailSubject';
@@ -144,9 +146,8 @@ const REQUEST_COLUMNS = [
 		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
 		kind: 'mono',
 		render: ( req ) => <code>{ req.rid }</code>,
-		style: ( req, { barPct } ) => ( {
-			background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-		} ),
+		tone: () => BAR_CELL,
+		style: ( req, { barPct } ) => barStyle( barPct ),
 	},
 	{
 		field: 'status_code',

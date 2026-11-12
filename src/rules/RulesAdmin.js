@@ -4,8 +4,9 @@
  * `useRulesGraph` owns the data and the CRUD transport, so this file is the
  * view alone: a `wp-list-table` of Pattern, Action, Hooks, Events and
  * Auto-tune, an "+ Add Rule" button, per-row Edit and Delete, and the
- * confirmation each destructive path raises. Add and Edit both open
- * `RuleEditModal`, Add seeding it with `BLANK_RULE`. Save sends the ONE edited
+ * shared `Confirm` each destructive path raises, its Cancel focused so a
+ * reflexive Enter keeps the rules. Add and Edit both open `RuleEditModal`,
+ * Add seeding it with `BLANK_RULE`. Save sends the ONE edited
  * rule through the `rules` CI's `upsert` rather than the whole list through its
  * `save`, so an edit never republishes the snapshot the table was listed from.
  * Every mutation re-lists, and the table repaints from that reply rather than
@@ -18,10 +19,10 @@
  * defer a mark to.
  */
 
-import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
+import { useCallback, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import Modal from '@newspack-nodes/shared/components/Modal';
+import { Confirm } from '@newspack-nodes/shared/components/Modal';
 import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
 import { BLANK_RULE } from './constants';
@@ -62,57 +63,6 @@ function autoTuneSummary( rule ) {
 }
 
 /**
- * Confirm a destructive action — deleting one rule, or resetting the whole set.
- *
- * The confirm button takes focus on mount, so the keyboard answer is the one
- * being asked about. The shared `Modal` adds ESC and a press outside the box
- * as dismissals, keeps Tab inside it, and hands focus back on close.
- *
- * @param {Object}     props              Component props.
- * @param {string}     props.label        Accessible name for the dialog.
- * @param {string}     props.question     The question put to the operator.
- * @param {string}     props.confirmLabel Text of the destructive button.
- * @param {() => void} props.onCancel     Dismiss handler (Cancel, ESC, or the backdrop).
- * @param {() => void} props.onConfirm    Called when the operator confirms.
- * @return {import('react').ReactElement} The dialog.
- */
-function ConfirmModal( {
-	label,
-	question,
-	confirmLabel,
-	onCancel,
-	onConfirm,
-} ) {
-	const confirmRef = useRef( null );
-	useEffect( () => {
-		confirmRef.current?.focus();
-	}, [] );
-
-	return (
-		<Modal
-			ariaLabel={ label }
-			onClose={ onCancel }
-			className="rules-admin__confirm"
-		>
-			<p>{ question }</p>
-			<div className="rules-admin__confirm-actions">
-				<button type="button" className="button" onClick={ onCancel }>
-					{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
-				</button>
-				<button
-					ref={ confirmRef }
-					type="button"
-					className="button button-link-delete"
-					onClick={ onConfirm }
-				>
-					{ confirmLabel }
-				</button>
-			</div>
-		</Modal>
-	);
-}
-
-/**
  * One rule as a table row: pattern, action, the two counts, the auto-tune
  * summary and the Edit / Delete buttons.
  *
@@ -136,7 +86,9 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 			<td>
 				<div className="rules-admin__action">
 					<span
-						className={ `rules-admin__badge newspack-nodes-badge rules-admin__badge--${ rule.action }` }
+						className={ `newspack-nodes-status-badge is-pill ${
+							'log' === rule.action ? 'is-info' : 'is-neutral'
+						}` }
 					>
 						{ 'log' === rule.action
 							? __( 'Log', 'newspack-event-logger-nodes' )
@@ -383,9 +335,9 @@ export default function RulesAdmin() {
 			) }
 
 			{ deleting && (
-				<ConfirmModal
-					label={ __( 'Delete rule', 'newspack-event-logger-nodes' ) }
-					question={ sprintf(
+				<Confirm
+					title={ __( 'Delete rule', 'newspack-event-logger-nodes' ) }
+					body={ sprintf(
 						// translators: %s: the rule's URL pattern.
 						__(
 							'Are you sure you want to delete the rule for %s?',
@@ -393,28 +345,24 @@ export default function RulesAdmin() {
 						),
 						deleting.pattern
 					) }
-					confirmLabel={ __(
-						'Delete',
-						'newspack-event-logger-nodes'
-					) }
-					onCancel={ () => setDeleting( null ) }
-					onConfirm={ confirmDelete }
+					yes={ __( 'Delete', 'newspack-event-logger-nodes' ) }
+					no={ __( 'Cancel', 'newspack-event-logger-nodes' ) }
+					onNo={ () => setDeleting( null ) }
+					onYes={ confirmDelete }
 				/>
 			) }
 
 			{ resetting && (
-				<ConfirmModal
-					label={ __( 'Reset rules', 'newspack-event-logger-nodes' ) }
-					question={ __(
+				<Confirm
+					title={ __( 'Reset rules', 'newspack-event-logger-nodes' ) }
+					body={ __(
 						'Are you sure you want to discard every rule you have configured and go back to the shipped defaults? This cannot be undone.',
 						'newspack-event-logger-nodes'
 					) }
-					confirmLabel={ __(
-						'Reset',
-						'newspack-event-logger-nodes'
-					) }
-					onCancel={ () => setResetting( false ) }
-					onConfirm={ confirmReset }
+					yes={ __( 'Reset', 'newspack-event-logger-nodes' ) }
+					no={ __( 'Cancel', 'newspack-event-logger-nodes' ) }
+					onNo={ () => setResetting( false ) }
+					onYes={ confirmReset }
 				/>
 			) }
 		</div>

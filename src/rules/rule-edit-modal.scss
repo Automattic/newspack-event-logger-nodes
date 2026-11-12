@@ -117,12 +117,6 @@
 			margin-right: auto;
 		}
 	}
-
-	&.components-modal__frame {
-		min-width: 560px;
-		width: 640px;
-		max-width: calc(100% - 32px);
-	}
 }
 
 .newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame {
@@ -130,6 +124,7 @@
 	flex-direction: column;
 	grid-template: none;
 	gap: 0;
+	min-width: 560px;
 	width: 600px;
 	max-width: calc(100% - 32px);
 	height: auto;

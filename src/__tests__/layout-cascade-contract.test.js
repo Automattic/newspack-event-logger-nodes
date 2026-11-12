@@ -187,17 +187,35 @@ describe( 'Event Logger layout cascade', () => {
 		}
 	);
 
+	it.each( [
+		[
+			'requests/styles/request-stream.scss',
+			'.event-logger-request-stream',
+		],
+		[ 'error-log/styles/error-log.scss', '.event-logger-error-log' ],
+		[ 'gyroscope/styles/inflight.scss', '.event-logger-inflight' ],
+	] )( 'leaves the page inset to the shell in %s', ( file, selector ) => {
+		const root = declarations( findRule( local( file ), selector ) );
+		expect( root ).toMatchObject( {
+			flex: '1 1 auto',
+			'min-height': '0',
+		} );
+		expect( root.padding ).toBeUndefined();
+	} );
+
 	it( 'keeps the current-request panel and title compact', () => {
 		const stylesheet = local( 'current-request/current-request.scss' );
-		expect(
-			declarations( findRule( stylesheet, '.eln-current-request' ) )
-		).toMatchObject( {
+		const panel = declarations(
+			findRule( stylesheet, '.eln-current-request' )
+		);
+		expect( panel ).toMatchObject( {
 			display: 'flex',
 			gap: '16px',
-			padding: '16px',
 			'font-size': '13px',
 			'line-height': '1.5',
 		} );
+		// The overlay's tab pane carries the shared page inset.
+		expect( panel.padding ).toBeUndefined();
 		expect(
 			declarations(
 				findRule( stylesheet, '.eln-current-request__title' )
@@ -298,26 +316,25 @@ describe( 'Event Logger layout cascade', () => {
 		} );
 	} );
 
-	it( 'preserves standalone and embedded modal frame geometry', () => {
+	it( 'sizes the always-skinned modal frame in one rule', () => {
 		const stylesheet = local( 'rules/rule-edit-modal.scss' );
-		expect(
-			declarations(
-				findRule(
-					stylesheet,
-					'.event-logger-rule-edit-modal.components-modal__frame'
-				)
-			)
-		).toMatchObject( {
-			'min-width': '560px',
-			width: '640px',
-			'max-width': 'calc(100% - 32px)',
+		const widths = [];
+		stylesheet.walkDecls( 'width', ( decl ) => {
+			if ( /components-modal__frame$/.test( decl.parent.selector ) ) {
+				widths.push( `${ decl.parent.selector } ${ decl.value }` );
+			}
 		} );
+		expect( widths ).toEqual( [
+			'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame 600px',
+		] );
 		expect(
 			cascadeDeclarations(
 				stylesheet,
 				'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame'
 			)
 		).toMatchObject( {
+			'min-width': '560px',
+			'max-width': 'calc(100% - 32px)',
 			display: 'flex',
 			'flex-direction': 'column',
 			'grid-template': 'none',

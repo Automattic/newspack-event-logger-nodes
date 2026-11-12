@@ -316,6 +316,10 @@ class Admin {
 	 * form posting to `options.php`, the hidden reset form the "Reset to
 	 * Defaults" button submits, and then the `settings_after_form` panels.
 	 *
+	 * The wrap wears the three roots every dashboard does, so the skin the
+	 * `settings` bundle applies to `<html>` reaches the printed form as well
+	 * as the React editor and the dialogs it opens.
+	 *
 	 * Permission is re-checked here rather than trusting the menu-registration
 	 * gate alone, since `add_options_page` enforces the bare capability while
 	 * `Capabilities::can()` also honors the operator's `allowed_users` list.
@@ -328,7 +332,7 @@ class Admin {
 			? \admin_url( 'admin-post.php' )
 			: '/wp-admin/admin-post.php';
 		?>
-		<div class="wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui">
+		<div class="wrap event-logger-settings-wrap newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui">
 			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
 			<?php
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.

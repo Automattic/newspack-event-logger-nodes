@@ -8,7 +8,6 @@
 
 // Inflight requests (Gyroscope-style live view)
 .event-logger-inflight {
-	padding: 16px;
 	// Grows into what the shell's header leaves; see log-stream-page().
 	flex: 1 1 auto;
 	min-height: 0;
@@ -117,24 +116,5 @@ $stream-padding-x: 12px;
 		gap: 8px;
 		padding-right: 10px;
 		padding-left: 10px;
-	}
-}
-
-// =============================================================================
-// Duration color classes (matches formatUtils getDurationColor thresholds)
-// =============================================================================
-
-// Duration/timing inks sit on the log-pane rows and remain skin-adaptive.
-.entry-duration {
-	&--fast {
-		color: base.$status-2xx; // < 1000ms
-	}
-
-	&--slow {
-		color: base.$warning-color; // 1000-5000ms
-	}
-
-	&--critical {
-		color: base.$error-text; // > 5000ms
 	}
 }

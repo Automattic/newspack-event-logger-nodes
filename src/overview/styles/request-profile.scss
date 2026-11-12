@@ -13,7 +13,7 @@
 	height: 24px;
 	overflow: hidden;
 	margin-bottom: 16px;
-	background: var(--paper-3);
+	background: var(--paper, var(--np-surface));
 	border-radius: var(--button-radius);
 }
 
@@ -29,7 +29,7 @@
 	width: 12px;
 	height: 12px;
 	margin-right: 8px;
-	border-radius: 2px;
+	border-radius: var(--np-radius-sm);
 	vertical-align: middle;
 }
 

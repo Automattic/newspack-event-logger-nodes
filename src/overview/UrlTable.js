@@ -60,8 +60,10 @@ import {
 import { sameSubject, subjectDescriptor, subjectOfRow } from './detailSubject';
 import { requestedUrl } from '../log-table/urlIdentity';
 import {
+	BAR_CELL,
 	DEFAULT_CHART_METRIC,
 	NO_PAGE_KEYS,
+	barStyle,
 	SHAPES_PER_ASK,
 	SORT_ORDERS,
 	cellClass,
@@ -452,13 +454,9 @@ const UrlRow = memo(
 	} ) {
 		// A URL without a timed request is unmeasured, and draws no bar.
 		const barValue = url[ barField ];
-		let barStyle;
-		if ( Number.isFinite( barValue ) ) {
-			const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
-			barStyle = {
-				background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-			};
-		}
+		const bar = Number.isFinite( barValue )
+			? barStyle( maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0 )
+			: null;
 		const expandable = null !== expandKey;
 		const select = () => onSelect( url );
 		const selectKey = onActivationKey( select );
@@ -501,8 +499,12 @@ const UrlRow = memo(
 						key={ col.field }
 						data-field={ col.field }
 						data-status={ col.status }
-						className={ cellClass( col ) }
-						style={ 'code' === col.kind ? barStyle : undefined }
+						className={
+							bar && 'code' === col.kind
+								? `${ cellClass( col ) } ${ BAR_CELL }`
+								: cellClass( col )
+						}
+						style={ 'code' === col.kind && bar ? bar : undefined }
 					>
 						{ 'code' === col.kind &&
 							! shape &&

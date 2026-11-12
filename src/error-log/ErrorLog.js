@@ -109,7 +109,7 @@ const GRID_TEMPLATE = gridTemplate( COLUMNS, DEFAULT_COLUMNS );
 const ERROR_SUFFIXES = [ '(error)', '(critical)', '(alert)', '(emergency)' ];
 
 /**
- * Get keyword severity class.
+ * A keyword's severity.
  *
  * `Request_Builder_Node` routes `error`, `warning`, `stderr` and the
  * `(error)`, `(warning)`, `(critical)`, `(alert)` and `(emergency)` suffixes
@@ -117,10 +117,9 @@ const ERROR_SUFFIXES = [ '(error)', '(critical)', '(alert)', '(emergency)' ];
  * dashboard does not tail. The three suffixes above `(error)` accent as it.
  *
  * @param {string} keyword Log keyword.
- * @return {string} Suffix of the `entry-keyword--` accent class in
- *                  `styles/error-log.scss`.
+ * @return {string} The cell's `data-keyword`, which the shared sheet inks.
  */
-const getKeywordClass = ( keyword ) => {
+const keywordKind = ( keyword ) => {
 	if (
 		keyword === 'error' ||
 		ERROR_SUFFIXES.some( ( suffix ) => keyword.endsWith( suffix ) )
@@ -194,6 +193,7 @@ const ErrorRow = memo(
 	 * @return {import('react').ReactElement} The rendered row.
 	 */
 	function ErrorRow( { row } ) {
+		const kind = keywordKind( row.k );
 		return (
 			<div
 				role="row"
@@ -205,12 +205,14 @@ const ErrorRow = memo(
 				{ timeCell( row.ts ) }
 				{ ridCell( row.rid ) }
 				{ urlCell( row.method, row.url, row.urlHash ) }
-				<Cell
-					mod={ `entry-keyword entry-keyword--${ getKeywordClass(
+				<Cell mod="entry-keyword" data-keyword={ kind }>
+					{ 'alert' === kind ? (
+						<span className="newspack-nodes-status-badge is-error">
+							{ row.k }
+						</span>
+					) : (
 						row.k
-					) }` }
-				>
-					{ row.k }
+					) }
 				</Cell>
 				<Cell mod="entry-message" title={ row.m }>
 					{ row.m }

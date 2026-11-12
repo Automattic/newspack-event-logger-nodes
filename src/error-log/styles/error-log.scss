@@ -5,44 +5,13 @@
  * scrollbar, the header-bar look, the empty state, and the row striping/hover/
  * height are the shared substrate classes (`newspack-nodes-log-rows` /
  * `-log-header` / `-log-row` from LogRowList.scss); this file keeps the page
- * layout, the COLUMN-grid override for the shared rows, and the keyword +
- * message cell accents.
+ * layout, the COLUMN-grid override for the shared rows, and the message
+ * cell.
  */
 
 @use "base";
 
 @include base.log-stream-page("event-logger-error-log");
-
-.entry-keyword {
-	&--error {
-		color: base.$error-text;
-		font-weight: 600;
-	}
-
-	&--warning {
-		color: base.$warning-color;
-		font-weight: 600;
-	}
-
-	// Fleet alert: louder than a plain error — an oxide chip on the error surface.
-	&--alert {
-		color: base.$error-text;
-		font-weight: 700;
-		background: base.$error-surface;
-		padding: 1px base.$space-xs;
-		border-radius: base.$border-radius-sm;
-	}
-
-	// Substrate stderr diagnostic: muted, low-priority.
-	&--stderr {
-		color: var(--ink-3);
-		font-style: italic;
-	}
-
-	&--info {
-		color: var(--ink-3);
-	}
-}
 
 .entry-message {
 	overflow: hidden;

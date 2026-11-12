@@ -83,6 +83,9 @@ function click( el ) {
 	} );
 }
 
+// The shared Confirm's box; the mocked editor is a bare role=dialog div.
+const CONFIRM = '.newspack-nodes-modal[role="dialog"]';
+
 function dialogButton( testid ) {
 	return document.querySelector( `[data-testid="${ testid }"]` );
 }
@@ -214,6 +217,26 @@ describe( 'RulesAdmin', () => {
 		expect( row.textContent.toLowerCase() ).toContain( 'log' );
 		// r1 has 2 hooks.
 		expect( row.textContent ).toContain( '2' );
+	} );
+
+	test( 'tones the action pill info for a log rule and neutral for a skip', () => {
+		setGraph( {
+			rules: [
+				{ ...SAMPLE_RULES[ 0 ], id: 'p1', action: 'log' },
+				{ ...SAMPLE_RULES[ 0 ], id: 'p2', action: 'skip' },
+			],
+		} );
+		const { container } = mount();
+		const pill = ( id ) =>
+			container.querySelector(
+				`tr[data-rule-id="${ id }"] .rules-admin__action`
+			).firstElementChild;
+		expect( pill( 'p1' ).className ).toBe(
+			'newspack-nodes-status-badge is-pill is-info'
+		);
+		expect( pill( 'p2' ).className ).toBe(
+			'newspack-nodes-status-badge is-pill is-neutral'
+		);
 	} );
 
 	test( 'a sampled log rule shows its rate beside its action', () => {
@@ -381,9 +404,7 @@ describe( 'RulesAdmin', () => {
 		);
 		click( del );
 		const confirm = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
@@ -403,9 +424,7 @@ describe( 'RulesAdmin', () => {
 		);
 		click( del );
 		const confirm = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
@@ -416,9 +435,7 @@ describe( 'RulesAdmin', () => {
 		expect(
 			container.querySelector( '.notice-error' ).getAttribute( 'role' )
 		).toBe( 'alert' );
-		expect(
-			document.querySelector( '.rules-admin__confirm' )
-		).not.toBeNull();
+		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
 	} );
 
 	test( 'Tab stays inside the confirm dialog', () => {
@@ -429,7 +446,7 @@ describe( 'RulesAdmin', () => {
 				( b ) => b.textContent.trim() === 'Delete'
 			)
 		);
-		const dialog = document.querySelector( '.rules-admin__confirm' );
+		const dialog = document.querySelector( CONFIRM );
 		const last = Array.from( dialog.querySelectorAll( 'button' ) ).pop();
 		last.focus();
 
@@ -464,13 +481,11 @@ describe( 'RulesAdmin', () => {
 				);
 			} );
 
-		down( document.querySelector( '.rules-admin__confirm' ) );
-		expect(
-			document.querySelector( '.rules-admin__confirm' )
-		).not.toBeNull();
+		down( document.querySelector( CONFIRM ) );
+		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
 
 		down( backdrop );
-		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 		expect( remove ).not.toHaveBeenCalled();
 	} );
 
@@ -484,9 +499,7 @@ describe( 'RulesAdmin', () => {
 			)
 		);
 		const confirm = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
@@ -538,13 +551,11 @@ describe( 'RulesAdmin', () => {
 		);
 		click( del );
 		const cancel = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Cancel' );
 		click( cancel );
 		expect( remove ).not.toHaveBeenCalled();
-		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 
 	test( 'the Add Rule button is a stock primary button that keeps its layout class', () => {
@@ -585,7 +596,7 @@ describe( 'RulesAdmin', () => {
 			( b ) => b.textContent.trim() === 'Delete'
 		);
 		click( del );
-		const confirm = document.querySelector( '.rules-admin__confirm' );
+		const confirm = document.querySelector( CONFIRM );
 		const cancel = Array.from( confirm.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent.trim() === 'Cancel'
 		);
@@ -594,10 +605,40 @@ describe( 'RulesAdmin', () => {
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
 		expect( cancel.classList.contains( 'button' ) ).toBe( true );
 		expect( confirmDel.classList.contains( 'button' ) ).toBe( true );
-		expect( confirmDel.classList.contains( 'button-link-delete' ) ).toBe(
-			true
-		);
+		expect( confirmDel.classList.contains( 'is-danger' ) ).toBe( true );
 	} );
+
+	test.each( [
+		[ 'delete', 'Delete', 'Delete rule' ],
+		[ 'reset', 'Reset', 'Reset rules' ],
+	] )(
+		'the %s confirm focuses Cancel, so Enter by reflex keeps the rules',
+		( _path, yes, title ) => {
+			const { container } = mount();
+			click(
+				'reset' === _path
+					? container.querySelector( '.rules-admin__reset' )
+					: Array.from(
+							container
+								.querySelector( 'tr[data-rule-id="r1"]' )
+								.querySelectorAll( 'button' )
+					  ).find( ( b ) => b.textContent.trim() === 'Delete' )
+			);
+			const dialog = document.querySelector( CONFIRM );
+			expect(
+				dialog.querySelector( '.newspack-nodes-modal__title' )
+					.textContent
+			).toBe( title );
+			expect( document.activeElement.textContent.trim() ).toBe(
+				'Cancel'
+			);
+			expect(
+				Array.from( dialog.querySelectorAll( 'button' ) ).some(
+					( b ) => b.textContent.trim() === yes
+				)
+			).toBe( true );
+		}
+	);
 
 	// The section-level ↺: same glyph and stock secondary button as the per-field
 	// reset toggle on every other setting, but it applies at once — the ruleset
@@ -634,25 +675,21 @@ describe( 'RulesAdmin', () => {
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
 		const confirm = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Reset' );
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
 		} );
 		expect( reset ).toHaveBeenCalledTimes( 1 );
 		await answer( 'reset' );
-		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 
 	test( 'a failed reset reports it and keeps the confirm open', async () => {
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
 		const confirm = Array.from(
-			document
-				.querySelector( '.rules-admin__confirm' )
-				.querySelectorAll( 'button' )
+			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Reset' );
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
@@ -660,9 +697,7 @@ describe( 'RulesAdmin', () => {
 		await answer( 'reset', 'option locked' );
 
 		expect( container.textContent ).toContain( 'option locked' );
-		expect(
-			document.querySelector( '.rules-admin__confirm' )
-		).not.toBeNull();
+		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
 	} );
 
 	test( 'cancelling the reset confirm does not reset', () => {
@@ -670,24 +705,10 @@ describe( 'RulesAdmin', () => {
 		click( container.querySelector( '.rules-admin__reset' ) );
 		click(
 			Array.from(
-				document
-					.querySelector( '.rules-admin__confirm' )
-					.querySelectorAll( 'button' )
+				document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 			).find( ( b ) => b.textContent.trim() === 'Cancel' )
 		);
 		expect( reset ).not.toHaveBeenCalled();
-		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
-	} );
-
-	test( 'the inline confirm dialog adds only the canonical modal appearance class', () => {
-		const { container } = mount();
-		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
-		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.trim() === 'Delete'
-		);
-		click( del );
-		expect(
-			document.querySelector( '.rules-admin__confirm' ).className
-		).toBe( 'newspack-nodes-modal rules-admin__confirm' );
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 } );

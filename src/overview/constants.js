@@ -238,6 +238,17 @@ const CELL_CLASS = {
 export const cellClass = ( col ) =>
 	`${ CELL_BASE }${ CELL_CLASS[ col.kind ] ?? '' }`;
 
+/** The class a cell drawing its row's share bar adds; `tables.scss` paints it. */
+export const BAR_CELL = 'event-logger-table__cell--bar';
+
+/**
+ * The inline style a `BAR_CELL` reads its filled share from.
+ *
+ * @param {number} pct The filled share, 0 to 100.
+ * @return {Object} The `--bar-pct` custom property.
+ */
+export const barStyle = ( pct ) => ( { '--bar-pct': `${ pct }%` } );
+
 /** The two sort directions, and so every `?order=`-style whitelist. */
 export const SORT_ORDERS = [ 'asc', 'desc' ];
 

@@ -1,5 +1,5 @@
 /**
- * Rules editor layout and semantic action accents.
+ * Rules editor layout; the shared status pill paints each action.
  */
 
 .rules-admin {
@@ -14,33 +14,5 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 4px 8px;
-	}
-
-	.rules-admin__badge {
-		display: inline-block;
-		padding: 2px 8px;
-		font-size: 11px;
-	}
-
-	.rules-admin__badge--log {
-		background: var(--np-primary-subtle);
-		color: var(--np-primary);
-	}
-
-	.rules-admin__badge--skip {
-		background: var(--np-surface-muted);
-		color: var(--np-text-secondary);
-	}
-}
-
-.rules-admin__confirm {
-	max-width: 420px;
-	padding: 20px 24px;
-
-	.rules-admin__confirm-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-		margin-top: 16px;
 	}
 }

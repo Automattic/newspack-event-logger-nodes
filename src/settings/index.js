@@ -12,7 +12,11 @@
  *
  * The one React mount is the per-URL logging-ruleset editor, `RulesAdmin`,
  * which fills the `#event-logger-rules-editor` div that page's "Logging Rules"
- * section renders.
+ * section renders. The PHP-printed `.wrap` is the page's one skin root. The
+ * bundle applies the stored skin to `<html>` as it loads, before React mounts
+ * anything, and the editor paints the admin gutters from that wrap through
+ * `useSkinGutters`. No editor control opens a popover, so the page needs no
+ * Popover slot inside the skin.
  *
  * Importing `../rules/nodes/register` for its side effect merges `RulesView`
  * into the runtime's `includeNodes` map, the name surface the console palette
@@ -23,6 +27,8 @@
  */
 
 import { createRoot } from '@wordpress/element';
+import useSkinGutters from '@newspack-nodes/shared/hooks/useSkinGutters';
+import { initSkin } from '@newspack-nodes/shared/theme';
 
 import '../rules/nodes/register';
 import RulesAdmin from '../rules/RulesAdmin';
@@ -32,12 +38,27 @@ import './styles/hook-selector.scss';
 import './styles/custom-event-selector.scss';
 import './styles/rules-editor.scss';
 
+// The printed form paints before React mounts, and the hook runs after that.
+initSkin();
+
 /**
  * Id of the mount point `Admin::render_rules_editor_section()` prints.
  *
  * @type {string}
  */
 const RULES_CONTAINER_ID = 'event-logger-rules-editor';
+
+/**
+ * The rules editor, painting the admin gutters from the printed skin root.
+ *
+ * @param {Object}              props         Component props.
+ * @param {{current: ?Element}} props.wrapRef The settings page's `.wrap`.
+ * @return {import('react').ReactElement} The editor.
+ */
+function RulesEditor( { wrapRef } ) {
+	useSkinGutters( wrapRef );
+	return <RulesAdmin />;
+}
 
 /**
  * Mount the `RulesAdmin` React root into the rules-editor container.
@@ -54,7 +75,10 @@ export function mountRulesEditor() {
 	if ( ! container ) {
 		return;
 	}
-	createRoot( container ).render( <RulesAdmin /> );
+	const wrapRef = {
+		current: container.closest( '.event-logger-settings-wrap' ),
+	};
+	createRoot( container ).render( <RulesEditor wrapRef={ wrapRef } /> );
 }
 
 // Enqueued in the footer, so this listener still beats the parser finishing.
