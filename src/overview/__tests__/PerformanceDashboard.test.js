@@ -1054,8 +1054,9 @@ describe( 'PerformanceDashboard', () => {
 					] )
 				);
 				expect( chips() ).toEqual( [ 'status_class=5xx', UA ] );
+				// The chart asks what a reload of this bar would.
 				expect( mockGraphOpts.chartChips ).toEqual( [
-					'status_class=5xx',
+					'status_class=5',
 					UA,
 				] );
 
