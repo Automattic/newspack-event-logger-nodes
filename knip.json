@@ -2,7 +2,8 @@
 	"$schema": "https://unpkg.com/knip@6/schema.json",
 	"entry": [
 		"src/*/index.js",
-		"src/error-log/ErrorLog.js",
+		"src/log-pages/LogPage.js",
+		"src/log-pages/layout-editor.js",
 		"src/overview/PerformancePage.js",
 		"src/overview/layout-editor.js",
 		"src/overview/FlameGraph.js",

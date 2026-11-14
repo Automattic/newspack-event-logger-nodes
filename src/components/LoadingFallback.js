@@ -1,7 +1,7 @@
 /**
  * Loading fallback: a centered spinner above a message, painted while a
  * `lazy()` module resolves. Every `<Suspense>` boundary in the plugin uses it —
- * the overview and error-log page shells, and the flame graph inside
+ * the overview and log pages' shells, and the flame graph inside
  * `RequestTrace` — so pending work always looks the same.
  *
  * `newspack-nodes-performance-loading` is the canonical loading-container

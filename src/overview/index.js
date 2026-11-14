@@ -7,8 +7,8 @@
  * harmless. The page's sources, page state and blocks are declared in
  * `./sources`, which the lazy page imports.
  *
- * esbuild builds this as its own bundle; the error-log, gyroscope, requests,
- * settings and current-request trees are separate entries. The
+ * esbuild builds this as its own bundle; the log-pages, settings and
+ * current-request trees are separate entries. The
  * `styles/base.scss` import below is what makes the kit emit
  * `build/overview/index.css`, the stylesheet `enqueue_react_page()` pairs with
  * the script; without it the page loses its scoped reset and overview layout.

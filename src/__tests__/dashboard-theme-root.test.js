@@ -1,9 +1,9 @@
 /**
- * Tests that the dashboard page roots (overview's AdminApp + the error log's
- * ErrorLogPage) sit below one exact skinned non-graph provider. Child roots
- * must not repeat token-provider classes.
+ * Tests that the overview's page root, AdminApp, sits below one exact skinned
+ * non-graph provider. Child roots must not repeat token-provider classes; the
+ * log pages' shell holds the same in `page-wrappers.test.js`.
  *
- * Both roots render a lazy-loaded child; the assertion is on the
+ * The root renders a lazy-loaded child; the assertion is on the
  * synchronously-rendered wrapper, then we flush the pending lazy resolution
  * inside act() (before unmount) so its Suspense settle doesn't trip the
  * "not wrapped in act" warning the shared jest.setup escalates to a failure.
@@ -13,14 +13,9 @@ jest.mock( '../overview/PerformancePage', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );
-jest.mock( '../error-log/ErrorLog', () => ( {
-	__esModule: true,
-	default: () => 'ERROR_LOG',
-} ) );
 
 import * as React from 'react';
 import { AdminApp } from '../overview';
-import { ErrorLogPage } from '../error-log';
 import { renderComponent, act } from '../test-helpers/renderHook';
 
 const flushLazy = async () =>
@@ -50,20 +45,6 @@ describe( 'overview theme root', () => {
 		expect( provider.className ).toBe(
 			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
-		expectNoTokenRoot( provider.firstElementChild );
-		await flushLazy();
-		unmount();
-	} );
-
-	it( 'ErrorLogPage has one exact skinned provider and no repeated child provider', async () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( ErrorLogPage )
-		);
-		const provider = container.firstElementChild;
-		expect( provider.className ).toBe(
-			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
-		);
-		expect( provider.style.display ).toBe( 'contents' );
 		expectNoTokenRoot( provider.firstElementChild );
 		await flushLazy();
 		unmount();

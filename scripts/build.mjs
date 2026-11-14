@@ -88,9 +88,10 @@ for ( const dep of Object.keys(
 }
 
 /**
- * One bundle per screen: five admin pages that `enqueue_react_page()` mounts by
- * directory name, the Performance page's layout editor, which an edit load
- * adds, plus the front-end `current-request` overlay. Into each
+ * One bundle per screen: three trees that `enqueue_react_page()` mounts by
+ * directory name, the log pages' one tree serving the Request Log, Error Log
+ * and Gyroscope screens, each composed page's layout editor, which an edit
+ * load adds, plus the front-end `current-request` overlay. Into each
  * `outDir` the kit emits `index.js` and the `index.asset.php` manifest PHP
  * reads dependencies and version from, plus `index.css` and its RTL companion
  * whenever the entry imports styles.
@@ -101,24 +102,20 @@ const ENTRIES = [
 		outDir: path.resolve( ROOT, 'build/overview' ),
 	},
 	{
-		entry: 'src/error-log/index.js',
-		outDir: path.resolve( ROOT, 'build/error-log' ),
+		entry: 'src/log-pages/index.js',
+		outDir: path.resolve( ROOT, 'build/log-pages' ),
 	},
 	{
 		entry: 'src/settings/index.js',
 		outDir: path.resolve( ROOT, 'build/settings' ),
 	},
 	{
-		entry: 'src/gyroscope/index.js',
-		outDir: path.resolve( ROOT, 'build/gyroscope' ),
-	},
-	{
-		entry: 'src/requests/index.js',
-		outDir: path.resolve( ROOT, 'build/requests' ),
-	},
-	{
 		entry: 'src/overview/layout-editor.js',
 		outDir: path.resolve( ROOT, 'build/overview-editor' ),
+	},
+	{
+		entry: 'src/log-pages/layout-editor.js',
+		outDir: path.resolve( ROOT, 'build/log-pages-editor' ),
 	},
 	{
 		entry: 'src/current-request/index.js',

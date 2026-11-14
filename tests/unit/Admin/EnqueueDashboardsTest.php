@@ -20,6 +20,8 @@ namespace {
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
+	use Newspack_Event_Logger_Nodes\Admin\Compositions;
+	use Newspack_Event_Logger_Nodes\Admin\Log_Pages;
 	use Newspack_Event_Logger_Nodes\Admin\Performance_Page;
 	use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
 	use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -49,11 +51,11 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 		protected function setUp(): void {
 			parent::setUp();
-			// The page a Performance load sets reads the declared context.
+			// The page data a dashboard load sets reads the declared contexts.
 			$this->compositions = $GLOBALS['_wp_actions'][ Composition::FILTER ] ?? [];
 			$GLOBALS['_wp_actions'][ Composition::FILTER ] = [
 				[ Composition::class, 'declare_substrate_blocks' ],
-				[ Performance_Page::class, 'declare' ],
+				[ Compositions::class, 'declare' ],
 			];
 			( new \ReflectionProperty( Composition::class, 'declarations' ) )->setValue( null, null );
 			$GLOBALS['_enqueued_scripts']  = [];
@@ -118,9 +120,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		public static function graph_dashboard_pages(): array {
 			return [
 				'overview'  => [ 'event-logger-overview', 'overview' ],
-				'error log' => [ 'event-logger-errors', 'error-log' ],
-				'gyroscope' => [ 'event-logger-gyroscope', 'gyroscope' ],
-				'requests'  => [ 'event-logger-requests', 'requests' ],
+				'error log' => [ 'event-logger-errors', 'log-pages' ],
+				'gyroscope' => [ 'event-logger-gyroscope', 'log-pages' ],
+				'requests'  => [ 'event-logger-requests', 'log-pages' ],
 			];
 		}
 
@@ -209,6 +211,30 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->dispatch( 'nodes_page_event-logger-errors' );
 			$printed = \implode( "\n", \array_column( $GLOBALS['_inline_scripts'], 1 ) );
 			$this->assertStringNotContainsString( Performance_Page::GLOBAL, $printed );
+		}
+
+		/**
+		 * Each log page's load sets the data naming its page before the one
+		 * bundle the three share.
+		 */
+		#[DataProvider( 'log_pages' )]
+		public function test_a_log_page_load_sets_its_page_data( string $page, string $named ): void {
+			$GLOBALS['_current_user_can'] = true;
+			$_GET                         = [ 'page' => $page ];
+			$this->dispatch( "nodes_page_{$page}" );
+			$data = $this->window_json( 'newspack-nodes-log-pages', Log_Pages::GLOBAL );
+			$this->assertSame( [ 'page', 'canTune', 'canManage', 'compositions' ], \array_keys( $data ) );
+			$this->assertSame( $named, $data['page'] );
+			$this->assertArrayHasKey( "newspack-event-logger-nodes/{$named}", $data['compositions'] );
+		}
+
+		/** @return array<string,array{string,string}> Each log page's slug and the page it names. */
+		public static function log_pages(): array {
+			return [
+				'requests'  => [ 'event-logger-requests', 'request-log' ],
+				'error log' => [ 'event-logger-errors', 'error-log' ],
+				'gyroscope' => [ 'event-logger-gyroscope', 'gyroscope' ],
+			];
 		}
 
 		/**
@@ -406,9 +432,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		/** @return array<string,array{string,string}> Dashboard page and tree pairs. */
 		public static function trees_without_pickers(): array {
 			return [
-				'error log' => [ 'event-logger-errors', 'error-log' ],
-				'gyroscope' => [ 'event-logger-gyroscope', 'gyroscope' ],
-				'requests'  => [ 'event-logger-requests', 'requests' ],
+				'error log' => [ 'event-logger-errors', 'log-pages' ],
+				'gyroscope' => [ 'event-logger-gyroscope', 'log-pages' ],
+				'requests'  => [ 'event-logger-requests', 'log-pages' ],
 			];
 		}
 

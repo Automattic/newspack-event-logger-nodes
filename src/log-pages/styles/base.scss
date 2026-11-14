@@ -1,0 +1,68 @@
+/**
+ * The log pages' base: the shared token and mixin API, this page's scoped
+ * border-box reset, and its own chrome. The layout fills what the shell's
+ * header leaves, so its log-stream block grows to the page's height; the
+ * Gyroscope's legend and state badges; and the message cell's clip.
+ */
+@forward "../../styles/base";
+@use "../../styles/base" as base;
+
+@include base.scoped-reset("#event-logger-log-page");
+
+#event-logger-log-page {
+	// Grows into what the shell's header leaves, as one log stream fills it.
+	.newspack-nodes-composed-layout {
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+
+	.newspack-nodes-composed-layout > .newspack-nodes-log-stream-block {
+		flex: 1 1 auto;
+		height: auto;
+	}
+}
+
+// Claims the header's slack, so the readout beside it widens into the gap
+// rather than pushing the whole legend along as a count crosses a digit.
+.topology-header__controls .event-logger-inflight-legend {
+	margin-right: auto;
+}
+
+.event-logger-state-badge {
+	display: inline-block;
+	padding: 2px 6px;
+	font-size: var(--np-text-2xs);
+	max-width: 90px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: middle;
+}
+
+.event-logger-inflight-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	font-size: var(--np-text-2xs);
+
+	// A legend chip names a category, so it keeps its whole label.
+	.event-logger-state-badge {
+		max-width: none;
+	}
+
+	@media (max-width: 1200px) {
+		display: none;
+	}
+
+	span {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+}
+
+.entry-message {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

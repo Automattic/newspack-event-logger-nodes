@@ -4,22 +4,6 @@
  * even a `module-shape` check is enough to count as covered.
  */
 
-describe( 'gyroscope/constants', () => {
-	let mod;
-	beforeAll( () => {
-		mod = require( '../gyroscope/constants' );
-	} );
-
-	it( 'exposes INFLIGHT_REFRESH_OPTIONS as a non-empty array of {value (number), label}', () => {
-		expect( Array.isArray( mod.INFLIGHT_REFRESH_OPTIONS ) ).toBe( true );
-		expect( mod.INFLIGHT_REFRESH_OPTIONS.length ).toBeGreaterThan( 0 );
-		mod.INFLIGHT_REFRESH_OPTIONS.forEach( ( opt ) => {
-			expect( typeof opt.label ).toBe( 'string' );
-			expect( typeof opt.value ).toBe( 'number' );
-		} );
-	} );
-} );
-
 describe( 'overview/constants', () => {
 	let mod;
 	beforeAll( () => {

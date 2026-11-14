@@ -31,21 +31,8 @@ class Current_Request_Overlay {
 	/** Script handle for the tab bundle; also its style and inline-data anchor. */
 	private const HANDLE = 'newspack-eln-current-request';
 
-	/**
-	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
-	 * the tab bundle themselves. The substrate's `station_tab_bundles` filter
-	 * covers the station and nothing else. Four of ELN's five dashboard
-	 * trees render the overlay — overview, error-log, gyroscope and requests;
-	 * the settings tree renders none, so its page is absent here.
-	 *
-	 * @var string[]
-	 */
-	private const OVERLAY_PAGES = [
-		'event-logger-overview',
-		'event-logger-errors',
-		'event-logger-gyroscope',
-		'event-logger-requests',
-	];
+	/** The Performance page, the one dashboard outside the log pages. */
+	private const PERFORMANCE_PAGE = 'event-logger-overview';
 
 	/**
 	 * Enqueue the tab bundle on an overlay page this plugin is responsible for —
@@ -103,7 +90,7 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * The overlay-page set: ELN's own {@see OVERLAY_PAGES} merged with the slugs
+	 * The overlay-page set: ELN's own (`own_pages()`) merged with the slugs
 	 * other plugins contribute via the substrate's `overlay_pages`
 	 * registry.
 	 *
@@ -111,7 +98,7 @@ class Current_Request_Overlay {
 	 */
 	private static function overlay_pages(): array {
 		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::overlay_pages() : [];
-		return \array_values( \array_unique( \array_merge( self::OVERLAY_PAGES, $extra ) ) );
+		return \array_values( \array_unique( \array_merge( self::own_pages(), $extra ) ) );
 	}
 
 	/**
@@ -121,7 +108,7 @@ class Current_Request_Overlay {
 	 * A page that never loaded the bundle gets no global and no inline script.
 	 *
 	 * The span palette, `Config::span_palette_js()`, rides along everywhere
-	 * but {@see OVERLAY_PAGES}: each of those is an ELN dashboard whose own
+	 * but `own_pages()`: each of those is an ELN dashboard whose own
 	 * bundle prints it, and a page carries each global once.
 	 *
 	 * `Log_Manager` leaves the request id empty when the request went unlogged —
@@ -138,10 +125,23 @@ class Current_Request_Overlay {
 		$rid      = $log->get_request_id();
 		$perf_url = \admin_url( 'admin.php?page=event-logger-overview' );
 		$js       = self::inline_data_js( $rid, $perf_url );
-		if ( ! \in_array( self::current_page(), self::OVERLAY_PAGES, true ) ) {
+		if ( ! \in_array( self::current_page(), self::own_pages(), true ) ) {
 			$js .= Config::span_palette_js();
 		}
 		\wp_add_inline_script( self::HANDLE, $js, 'before' );
+	}
+
+	/**
+	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
+	 * the tab bundle themselves: the Performance page and every log page
+	 * (`Log_Pages::menu()`). The substrate's `station_tab_bundles` filter
+	 * covers the station and nothing else, and the settings tree renders no
+	 * overlay, so its page is absent here.
+	 *
+	 * @return string[]
+	 */
+	private static function own_pages(): array {
+		return [ self::PERFORMANCE_PAGE, ...\array_keys( Admin\Log_Pages::menu() ) ];
 	}
 
 	/**

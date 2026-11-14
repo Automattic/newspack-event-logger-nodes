@@ -42,7 +42,15 @@ function HeaderControls( {
 		writes: true,
 	} );
 	return (
-		<div style={ { display: 'flex', alignItems: 'center', gap: '16px' } }>
+		<div
+			style={ {
+				display: 'flex',
+				flexWrap: 'wrap',
+				justifyContent: 'flex-end',
+				alignItems: 'center',
+				gap: '16px',
+			} }
+		>
 			<AskButton ask={ ask } />
 			<div
 				style={ { display: 'flex', alignItems: 'center', gap: '8px' } }

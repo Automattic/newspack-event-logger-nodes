@@ -13,6 +13,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin;
 
+use Newspack_Event_Logger_Nodes\Admin\Compositions;
 use Newspack_Event_Logger_Nodes\Admin\Performance_Page;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Composition;
@@ -41,7 +42,7 @@ final class PerformancePageTest extends TestCase {
 		$this->filters = $GLOBALS['_wp_actions'][ Composition::FILTER ] ?? [];
 		$GLOBALS['_wp_actions'][ Composition::FILTER ] = [
 			[ Composition::class, 'declare_substrate_blocks' ],
-			[ Performance_Page::class, 'declare' ],
+			[ Compositions::class, 'declare' ],
 		];
 		$this->forget_declarations();
 		$GLOBALS['_inline_scripts']   = [];

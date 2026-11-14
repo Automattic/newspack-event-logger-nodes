@@ -1,24 +1,30 @@
 /**
  * Tests for the dashboard mount-entry points — each one looks up a
  * DOM container by id and conditionally renders its top-level page.
+ *
+ * Every test here asserts the mount alone, so the shell, the pages and the
+ * log pages' view modules are mocked: `DashboardShell` hands its children no
+ * header slot and mounts no debug overlay, which under a loaded suite outran
+ * a test's time. The shell's own rendering is held in `page-wrappers.test.js`
+ * and `dashboard-theme-root.test.js`, which render the real one.
  */
 
-jest.mock( '../gyroscope/GyroscopePage', () => ( {
-	__esModule: true,
-	default: () => 'GYROSCOPE_PAGE',
-} ) );
-jest.mock( '../requests/RequestStreamPage', () => ( {
-	__esModule: true,
-	default: () => 'REQUEST_STREAM_PAGE',
-} ) );
-// overview mounts the lazy PerformancePage; error-log is its own entry.
+// overview mounts the lazy PerformancePage; log-pages its lazy LogPage.
 jest.mock( '../overview/PerformancePage', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );
-jest.mock( '../error-log/ErrorLog', () => ( {
+jest.mock( '../log-pages/LogPage', () => ( {
 	__esModule: true,
-	default: () => 'ERROR_LOG',
+	default: ( { page } ) => `LOG_PAGE[${ page }]`,
+} ) );
+// The mount is tested here, not the runtime's views or the shell's overlay.
+jest.mock( '../log-pages/nodes/request-log-view-node', () => ( {} ) );
+jest.mock( '../log-pages/nodes/perf-errors-view-node', () => ( {} ) );
+jest.mock( '../log-pages/nodes/gyroscope-view-node', () => ( {} ) );
+jest.mock( '@newspack-nodes/shared/components/DashboardShell', () => ( {
+	__esModule: true,
+	default: ( { children } ) => children( undefined ),
 } ) );
 
 describe( 'dashboard mount-entry points', () => {
@@ -37,24 +43,27 @@ describe( 'dashboard mount-entry points', () => {
 		return el;
 	}
 
-	it( 'gyroscope/index.js mounts when #event-logger-gyroscope exists', () => {
-		mountContainer( 'event-logger-gyroscope' );
-		expect( () => require( '../gyroscope' ) ).not.toThrow();
+	it( 'log-pages/index.js mounts the page its data names into #event-logger-log-page', async () => {
+		const el = mountContainer( 'event-logger-log-page' );
+		window.NewspackEventLoggerLogPage = { page: 'gyroscope' };
+		// The registry was reset, so act comes from the page's own React.
+		const was = global.IS_REACT_ACT_ENVIRONMENT;
+		global.IS_REACT_ACT_ENVIRONMENT = true;
+		const { act } = require( 'react' );
+		try {
+			await act( async () => {
+				require( '../log-pages' );
+			} );
+			await act( async () => {} );
+			expect( el.textContent ).toContain( 'LOG_PAGE[gyroscope]' );
+		} finally {
+			global.IS_REACT_ACT_ENVIRONMENT = was;
+		}
 	} );
 
-	it( 'gyroscope/index.js is a no-op without the container', () => {
-		expect( () => require( '../gyroscope' ) ).not.toThrow();
-	} );
-
-	it( 'requests/index.js mounts when #event-logger-stream exists', () => {
-		// Container id is `event-logger-stream` (must match production lookup).
-		const el = mountContainer( 'event-logger-stream' );
-		expect( () => require( '../requests' ) ).not.toThrow();
-		expect( el.parentNode ).toBe( document.body );
-	} );
-
-	it( 'requests/index.js is a no-op without the container', () => {
-		expect( () => require( '../requests' ) ).not.toThrow();
+	it( 'log-pages/index.js is a no-op without the container', () => {
+		delete window.NewspackEventLoggerLogPage;
+		expect( () => require( '../log-pages' ) ).not.toThrow();
 	} );
 
 	it( 'overview/index.js mounts the dashboard container', () => {
@@ -68,20 +77,6 @@ describe( 'dashboard mount-entry points', () => {
 	it( 'overview/index.js is a no-op without the container', () => {
 		expect( () => {
 			require( '../overview' );
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} ).not.toThrow();
-	} );
-
-	it( 'error-log/index.js mounts when #event-logger-errors exists', () => {
-		const errors = mountContainer( 'event-logger-errors' );
-		require( '../error-log' );
-		document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		expect( errors.parentNode ).toBe( document.body );
-	} );
-
-	it( 'error-log/index.js is a no-op without the container', () => {
-		expect( () => {
-			require( '../error-log' );
 			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
 		} ).not.toThrow();
 	} );

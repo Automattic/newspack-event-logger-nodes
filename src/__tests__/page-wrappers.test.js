@@ -1,27 +1,17 @@
 /**
- * Tests for the dashboard "Page" wrappers — GyroscopePage, RequestStreamPage.
- * They're identical thin shells: fixed-position dark div + the heavy dashboard
- * child, with useAdminMenuWidth controlling the left offset.
+ * The log pages' shell: each page in one exact skinned provider, never
+ * repeated on the page root, heading the page by its own name.
  *
- * Each child is mocked so we don't pay the SSE / d3 / canvas tax just
- * to assert the wrapper renders. (The Aggregator Status dashboard is a
- * newspack-nodes station tab whose page chrome the station supplies, so ELN
- * carries no page wrapper for it.)
+ * The page is mocked so the wrapper renders without the stream graph.
  */
 
-jest.mock( '../gyroscope/Inflight', () => ( {
+jest.mock( '../log-pages/LogPage', () => ( {
 	__esModule: true,
-	default: ( { maxRows } ) => `INFLIGHT[${ maxRows }]`,
-} ) );
-jest.mock( '../requests/RequestStream', () => ( {
-	__esModule: true,
-	default: ( { maxEntries } ) => `REQUEST_STREAM[${ maxEntries }]`,
+	default: ( { page } ) => `LOG_PAGE[${ page }]`,
 } ) );
 
-import * as React from 'react';
-import GyroscopePage from '../gyroscope/GyroscopePage';
-import RequestStreamPage from '../requests/RequestStreamPage';
-import { renderComponent } from '../test-helpers/renderHook';
+import { LogPageShell } from '../log-pages';
+import { act, renderComponent } from '../test-helpers/renderHook';
 
 const TOKEN_ROOT_CLASSES = [
 	'topology-app',
@@ -36,38 +26,27 @@ function expectNoTokenRoot( element ) {
 	}
 }
 
-describe( 'page wrappers', () => {
-	it( 'GyroscopePage mounts <Inflight maxRows={100}>', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( GyroscopePage )
-		);
-		expect( container.textContent ).toContain( 'INFLIGHT[100]' );
-		unmount();
-	} );
+describe( 'the log page shell', () => {
+	it.each( [
+		[ 'request-log', 'Request Log' ],
+		[ 'error-log', 'Error Log' ],
+		[ 'gyroscope', 'Gyroscope' ],
+	] )(
+		'mounts the %s page under its own heading',
+		async ( page, heading ) => {
+			const { container, unmount } = renderComponent(
+				<LogPageShell page={ page } />
+			);
+			await act( async () => {} );
+			expect( container.textContent ).toContain( `LOG_PAGE[${ page }]` );
+			expect( container.textContent ).toContain( heading );
+			unmount();
+		}
+	);
 
-	it( 'RequestStreamPage mounts <RequestStream maxEntries={1000}>', () => {
+	it( 'uses one exact skinned provider without repeating it on the page root', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( RequestStreamPage )
-		);
-		expect( container.textContent ).toContain( 'REQUEST_STREAM[1000]' );
-		unmount();
-	} );
-
-	it( 'GyroscopePage uses one exact skinned provider without repeating it on the page root', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( GyroscopePage )
-		);
-		const provider = container.firstElementChild;
-		expect( provider.className ).toBe(
-			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
-		);
-		expectNoTokenRoot( provider.firstElementChild );
-		unmount();
-	} );
-
-	it( 'RequestStreamPage uses one exact skinned provider without repeating it on the page root', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( RequestStreamPage )
+			<LogPageShell page="error-log" />
 		);
 		const provider = container.firstElementChild;
 		expect( provider.className ).toBe(

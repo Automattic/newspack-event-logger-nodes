@@ -48,6 +48,17 @@ declare global {
 			/** The stats window in buckets, or its refusal. */
 			window: number | { error: string };
 		};
+		/** What a log page's load sets (`Log_Pages::page_data()`). */
+		NewspackEventLoggerLogPage?: {
+			/** The page, as `?edit=` names it. */
+			page: 'request-log' | 'error-log' | 'gyroscope';
+			/** Whether the reader may curate the layout. */
+			canTune: boolean;
+			/** Whether the reader is an operator, who reads a refusal's own words. */
+			canManage: boolean;
+			/** Context => its layout or its refusal. */
+			compositions: Record< string, Object >;
+		};
 	}
 }
 

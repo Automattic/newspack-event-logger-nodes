@@ -55,7 +55,7 @@
 </style>
 <div class="sheet">
 <h1>Each running request reaches the log as its own row every second, and the browser tells rows from completions by <span class="mono">state</span> alone</h1>
-<p class="sub">On the left, Request_Flight_Node reads Request_Builder_Node's in-flight map on the Router's 1 s TIMER, fits each row to the 4096-byte line cap, and the completion summary joins the same partition. In the middle, <span class="mono">gyroscope.p0</span> interleaves the two record shapes. On the right, GyroscopeView folds them and <span class="mono">snapshot()</span> reaps, sorts and caps what the table renders.</p>
+<p class="sub">On the left, Request_Flight_Node reads Request_Builder_Node's in-flight map on the Router's 1 s TIMER, fits each row to the 4096-byte line cap, and the completion summary joins the same partition. In the middle, <span class="mono">gyroscope.p0</span> interleaves the two record shapes. On the right, GyroscopeView folds them and <span class="mono">snapshot()</span> reaps, sorts and caps what the page's log-stream block renders.</p>
 
 <div class="grid3" id="grid">
 <svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
@@ -129,9 +129,9 @@
 <div>
   <div class="colh">Browser · the Gyroscope page</div>
 
-  <div class="card" id="b1"><div class="where">useGyroscopeGraph · SSE</div>
+  <div class="card" id="b1"><div class="where">the <span class="mono">eln/gyroscope</span> source · SSE</div>
     <h3>One stream, subscribed to <span class="mono">gyroscope.*</span></h3>
-    <p>The page's stream link, <span class="mono">_stream</span>, feeds the <span class="mono">gyroscope:stream</span> Tee, which copies every frame to <span class="mono">gyroscope:view</span>. A <span class="mono">clear</span> empties the model each time the graph rides that stream: at mount, after a rebuild and on refocus, but not when the SseIn alone reopens.</p>
+    <p>The page's stream link, <span class="mono">_stream</span>, feeds the <span class="mono">eln:gyroscope:&lt;n&gt;:stream</span> Tee, which copies every frame to <span class="mono">eln:gyroscope:&lt;n&gt;:view</span>. The source declares <span class="mono">clearOnOpen</span>, so a <span class="mono">clear</span> empties the model each time the graph rides that stream: at mount, after a rebuild and on refocus, but not when the SseIn alone reopens.</p>
   </div>
 
   <div class="card" id="b2" style="margin-top:10px"><div class="where">GyroscopeViewNode · fill()</div>
@@ -143,9 +143,9 @@
     <p style="margin-top:6px">A string or array VALUE, an empty KEY or a missing <span class="mono">state</span> is dropped. With no mode flag, one fold is correct under full and delta mode alike.</p>
   </div>
 
-  <div class="card" id="b3" style="margin-top:10px"><div class="where">Inflight · the refresh tick</div>
-    <h3>React samples the model on the operator's cadence</h3>
-    <p>100 ms to 10 s, 2 s by default, set by the dropdown or the 0–9 keys. Each tick calls <span class="mono">snapshot( maxRows )</span> (GyroscopePage passes 100), then reads <span class="mono">.rps</span>. No streamed message re-renders React.</p>
+  <div class="card" id="b3" style="margin-top:10px"><div class="where">useSnapshots · the source's cadence</div>
+    <h3>The view takes its snapshot on the operator's cadence</h3>
+    <p>A <span class="mono">useRouterTick</span> timer, <span class="mono">&lt;prefix&gt;:timer</span>, sends the view a <span class="mono">snapshot</span> control as it arms and at the milliseconds page state's <span class="mono">refresh</span> holds: 100 ms to 10 s, 2 s by default, set by the picker or the 0–9 keys. <span class="mono">_serve()</span> takes <span class="mono">snapshot( maxRows )</span> (100), and a paused view takes none. <span class="mono">LogRowList</span> reads <span class="mono">linesCount</span>, <span class="mono">lineAt()</span> and <span class="mono">lps</span> off the view each frame, so no streamed message re-renders React.</p>
   </div>
 
   <div class="dn"><svg width="12" height="20"><path d="M6 0 V14" stroke="#003DA5" stroke-width="1.8"/><path d="M1 12 L6 19 L11 12 z" fill="#003DA5"/></svg>the only caller, and the only reaper</div>
@@ -154,7 +154,7 @@
     <h3>Reap, sort by <span class="mono">est_ms</span> descending, cap</h3>
     <table class="reap">
       <tr><td class="w">complete</td><td>Returned once and deleted in the same pass, so it flashes for one refresh tick.</td></tr>
-      <tr><td class="w">in flight, <span class="mono">_seen</span> older than 15 min</td><td class="x">Deleted, never rendered (<span class="mono">INFLIGHT_STALE_MS</span>).</td></tr>
+      <tr><td class="w">in flight, <span class="mono">_seen</span> older than 20 min</td><td class="x">Deleted, never rendered (<span class="mono">INFLIGHT_STALE_MS</span>).</td></tr>
       <tr><td class="w">in flight, fresher</td><td>Kept.</td></tr>
     </table>
     <p>The table reads slowest first, and <span class="mono">slice( 0, maxRows )</span> can cap a short request out of a busy tick. A completion capped out is deleted all the same, and never renders.</p>
@@ -169,10 +169,10 @@
 
 <div class="bottom">
   <div class="card"><h3>Three ways a row leaves the table</h3>
-    <p><b>A completion arrives</b>, normal or timed out (T), and the next snapshot shows it once and deletes it. <b>Fifteen minutes pass unrefreshed</b>, and the snapshot deletes it unrendered; that and a fresh ride are the only exits for a request <span class="mono">purge</span> discarded, which emits no summary, or for a producer that died. <b>The graph rides the stream again</b>, at a remount, a rebuild or a refocus, and its <span class="mono">clear</span> empties the model.</p>
+    <p><b>A completion arrives</b>, normal or timed out (T), and the next snapshot shows it once and deletes it. <b>Twenty minutes pass unrefreshed</b>, and the snapshot deletes it unrendered; that and a fresh ride are the only exits for a request <span class="mono">purge</span> discarded, which emits no summary, or for a producer that died. <b>The graph rides the stream again</b>, at a remount, a rebuild or a refocus, and its <span class="mono">clear</span> empties the model.</p>
   </div>
   <div class="callout"><h4>Delta mode stops refreshing an idle row</h4>
-    <p>A row whose request logs nothing is not re-sent, so its <span class="mono">_seen</span> stops advancing: a request silent for 15 minutes leaves the table while it is still running. Full mode refreshes every row each tick, so only a row the server stopped offering ages out.</p>
+    <p>A row whose request logs nothing is not re-sent, so its <span class="mono">_seen</span> stops advancing: a request silent for 20 minutes leaves the table while it is still running. Full mode refreshes every row each tick, so only a row the server stopped offering ages out.</p>
   </div>
 </div>
 </div>

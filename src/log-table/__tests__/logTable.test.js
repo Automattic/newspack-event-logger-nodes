@@ -6,12 +6,10 @@
  */
 
 import {
-	cellRenderer,
 	countLabel,
 	durationCell,
 	ipCell,
 	logColumns,
-	logListHeader,
 	rateLabel,
 	ridCell,
 	statusCell,
@@ -26,48 +24,6 @@ const draw = ( element ) => {
 	const { container } = renderComponent( element );
 	return container.firstElementChild;
 };
-
-describe( 'cellRenderer', () => {
-	// A dashboard's own column set, one key of which has no case below.
-	const COLUMNS = logColumns( {
-		rid: {},
-		sentinel_col: {
-			label: 'Sentinel',
-			tooltip: 'A column no case renders',
-			width: '128px',
-		},
-		remote_addr: {},
-	} );
-
-	const renderCell = cellRenderer( {
-		rid: ( row, col ) => <span key={ col }>{ row.rid }</span>,
-		remote_addr: ( row, col ) => (
-			<span key={ col }>{ row.remote_addr }</span>
-		),
-	} );
-
-	it( 'draws a placeholder for a declared column without a case to render it', () => {
-		const cell = draw(
-			renderCell( 'sentinel_col', { rid: 'rid-8471-zed' } )
-		);
-		expect( cell.getAttribute( 'role' ) ).toBe( 'cell' );
-		expect( cell.className ).toBe( 'newspack-nodes-table__cell' );
-		expect( cell.textContent ).toBe( '-' );
-	} );
-
-	it( 'keeps every later column in its own slot', () => {
-		const row = { rid: 'rid-8471-zed', remote_addr: '203.0.113.77' };
-		const cells = Object.keys( COLUMNS ).map( ( col ) =>
-			renderCell( col, row )
-		);
-		expect( cells ).toHaveLength( 3 );
-		expect( cells.map( ( cell ) => cell.key ) ).toEqual( [
-			'rid',
-			'sentinel_col',
-			'remote_addr',
-		] );
-	} );
-} );
 
 describe( 'log table cells', () => {
 	it( 'links the request id to its trace', () => {
@@ -179,25 +135,10 @@ describe( 'log table cells', () => {
 		);
 		expect( cell.textContent ).toBe( '13:42:07.913' );
 	} );
-
-	it( 'takes the React key from the caller, and has none without one', () => {
-		expect( ridCell( 'rid-8471-zed', 'rid' ).key ).toBe( 'rid' );
-		expect( urlCell( 'PATCH', '/q', 'h-1', 'url' ).key ).toBe( 'url' );
-		expect( statusCell( 418, 'status' ).key ).toBe( 'status' );
-		expect( ipCell( '203.0.113.77', 'remote_addr' ).key ).toBe(
-			'remote_addr'
-		);
-		expect( uaCell( 'Quixote/9.9', 'user_agent' ).key ).toBe(
-			'user_agent'
-		);
-		expect( durationCell( 7321, 'est' ).key ).toBe( 'est' );
-		expect( timeCell( 1, 'time' ).key ).toBe( 'time' );
-		expect( ridCell( 'rid-8471-zed' ).key ).toBeNull();
-	} );
 } );
 
 describe( 'logColumns', () => {
-	it( 'merges a dashboard spelling over the shared declaration', () => {
+	it( 'declares each column a rows field, merging a page’s spelling over the shared one', () => {
 		const columns = logColumns( {
 			rid: { tooltip: 'Click to view the trace' },
 			url: { width: 'minmax(0, 7fr)' },
@@ -209,16 +150,19 @@ describe( 'logColumns', () => {
 		} );
 
 		expect( columns.rid ).toEqual( {
+			kind: 'rows',
 			label: 'Request ID',
 			tooltip: 'Click to view the trace',
 			width: '240px',
 		} );
 		expect( columns.url ).toEqual( {
+			kind: 'rows',
 			label: 'URL',
 			tooltip: 'Request method and URL - click to view URL stats',
 			width: 'minmax(0, 7fr)',
 		} );
 		expect( columns.keyword ).toEqual( {
+			kind: 'rows',
 			label: 'Keyword',
 			tooltip: 'Error/warning keyword',
 			width: '248px',
@@ -231,41 +175,6 @@ describe( 'logColumns', () => {
 				logColumns( { user_agent: {}, rid: {}, remote_addr: {} } )
 			)
 		).toEqual( [ 'user_agent', 'rid', 'remote_addr' ] );
-	} );
-} );
-
-describe( 'logListHeader', () => {
-	it( 'publishes the grid template and heads each column in order', () => {
-		const { container } = renderComponent(
-			logListHeader( {
-				className: 'quixote-columns',
-				columns: logColumns( {
-					rid: {
-						tooltip: 'Click to view the trace',
-						width: '248px',
-					},
-					remote_addr: { width: '128px' },
-				} ),
-				order: [ 'remote_addr', 'rid' ],
-			} )
-		);
-
-		const wrapper = container.firstElementChild;
-		expect( wrapper.className ).toBe( 'quixote-columns' );
-		expect(
-			wrapper.style.getPropertyValue( '--stream-grid-template' )
-		).toBe( '128px 248px' );
-		const ths = [
-			...wrapper.querySelectorAll( '.newspack-nodes-log-header__th' ),
-		];
-		expect( ths.map( ( th ) => th.textContent ) ).toEqual( [
-			'IP',
-			'Request ID',
-		] );
-		expect( ths.map( ( th ) => th.getAttribute( 'title' ) ) ).toEqual( [
-			'Client IP address',
-			'Click to view the trace',
-		] );
 	} );
 } );
 

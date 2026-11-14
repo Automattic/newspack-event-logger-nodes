@@ -1,0 +1,52 @@
+{
+	"newspack-event-logger-nodes/request-log": [
+		{
+			"name": "newspack-nodes/log-stream",
+			"attributes": {
+				"source": "eln/requests",
+				"columns": [
+					"time",
+					"rid",
+					"url",
+					"status_code",
+					"remote_addr",
+					"duration"
+				],
+				"title": "",
+				"toolbar": "header"
+			},
+			"inner": []
+		}
+	],
+	"newspack-event-logger-nodes/error-log": [
+		{
+			"name": "newspack-nodes/log-stream",
+			"attributes": {
+				"source": "eln/errors",
+				"columns": [],
+				"title": "",
+				"toolbar": "header"
+			},
+			"inner": []
+		}
+	],
+	"newspack-event-logger-nodes/gyroscope": [
+		{
+			"name": "newspack-nodes/log-stream",
+			"attributes": {
+				"source": "eln/gyroscope",
+				"columns": [
+					"rid",
+					"url",
+					"status_code",
+					"state",
+					"what",
+					"est"
+				],
+				"title": "",
+				"toolbar": "header"
+			},
+			"inner": []
+		}
+	]
+}

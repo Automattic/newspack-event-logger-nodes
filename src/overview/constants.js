@@ -5,8 +5,8 @@
  * The page's state (`./sources`) reads the refresh cadences, the defaults
  * and the whitelists, the breakdown bar the dimensions,
  * `BreakdownControls` the metrics, the dimensions and the chip fields, and
- * `./questions` the series count every chart asks for; the Gyroscope
- * in-flight view keeps its own list in `src/gyroscope/constants.js`. Each
+ * `./questions` the series count every chart asks for; the Gyroscope keeps
+ * its own cadences in `src/log-pages/sources.js`. Each
  * option is a `SelectControl` option, so the `value` is the token the rest of
  * the dashboard — and, for fields, the server — matches on. The metric and
  * field labels are translated; the refresh cadences' unit abbreviations are
@@ -295,8 +295,8 @@ export const CATEGORY_MEASURES = [ 'ms', 'calls' ];
  * `UrlDetailView` and `AskPanel` send their one-shot commands under `url`,
  * `request`, `performance` and `rules`; the rules editor
  * sends under `rules`, the hook picker under `hooks`, the current-request tab
- * under `currentRequest`, and the request and error streams under `requestLog`
- * and `errorLog`.
+ * under `currentRequest`, and the request, error and gyroscope pages under
+ * `requestLog`, `errorLog` and `gyroscope`.
  */
 export const GROUPS = {
 	overview: 'overview',
@@ -308,6 +308,7 @@ export const GROUPS = {
 	currentRequest: 'current-request',
 	requestLog: 'request-log',
 	errorLog: 'error-log',
+	gyroscope: 'gyroscope',
 };
 
 /**

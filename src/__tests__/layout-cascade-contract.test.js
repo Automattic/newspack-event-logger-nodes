@@ -142,14 +142,6 @@ describe( 'Event Logger layout cascade', () => {
 			'.event-logger-flame-empty',
 			{ padding: '24px' },
 		],
-		[
-			// No padding here: the row carries `is-quiet`, which is the shared
-			// variant for an empty state that should read as a quiet note
-			// rather than a boxed panel, so it takes the shared padding.
-			'gyroscope/styles/inflight.scss',
-			'.event-logger-request-stream-empty',
-			{ display: 'flex', height: '100%' },
-		],
 	] )(
 		'keeps compact empty-state geometry in %s',
 		( file, localSelector, expected ) => {
@@ -173,11 +165,9 @@ describe( 'Event Logger layout cascade', () => {
 
 	it.each( [
 		[
-			'requests/styles/request-stream.scss',
-			'.event-logger-request-stream',
+			'log-pages/styles/base.scss',
+			'#event-logger-log-page .newspack-nodes-composed-layout',
 		],
-		[ 'error-log/styles/error-log.scss', '.event-logger-error-log' ],
-		[ 'gyroscope/styles/inflight.scss', '.event-logger-inflight' ],
 	] )( 'leaves the page inset to the shell in %s', ( file, selector ) => {
 		const root = declarations( findRule( local( file ), selector ) );
 		expect( root ).toMatchObject( {
@@ -185,6 +175,37 @@ describe( 'Event Logger layout cascade', () => {
 			'min-height': '0',
 		} );
 		expect( root.padding ).toBeUndefined();
+	} );
+
+	it( 'keeps each Gyroscope legend chip whole, and still clips a state pill at 90px', () => {
+		const stylesheet = local( 'log-pages/styles/base.scss' );
+		expect(
+			declarations(
+				findRule(
+					stylesheet,
+					'.event-logger-inflight-legend .event-logger-state-badge'
+				)
+			)
+		).toMatchObject( { 'max-width': 'none' } );
+		expect(
+			declarations( findRule( stylesheet, '.event-logger-state-badge' ) )
+		).toMatchObject( { 'max-width': '90px' } );
+	} );
+
+	it( 'wraps the Gyroscope legend chip by chip, so it never overflows the header', () => {
+		// Its narrow-screen rule hides it; the rule outside any media query lays it out.
+		const unconditional = [];
+		local( 'log-pages/styles/base.scss' ).walkRules(
+			'.event-logger-inflight-legend',
+			( rule ) => {
+				if ( 'root' === rule.parent.type ) {
+					unconditional.push( declarations( rule ) );
+				}
+			}
+		);
+		expect( unconditional ).toEqual( [
+			expect.objectContaining( { display: 'flex', 'flex-wrap': 'wrap' } ),
+		] );
 	} );
 
 	it( 'keeps the current-request panel and title compact', () => {

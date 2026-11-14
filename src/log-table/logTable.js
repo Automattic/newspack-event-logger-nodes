@@ -1,32 +1,28 @@
 /**
- * logTable — the vocabulary the In-Flight, Request Log and Error Log tables
- * share: the columns more than one declares, the cells they draw, the header
- * capping the table, and the toolbar's count and rate labels. Each
- * dashboard declares only its OWN columns, cases and nouns.
+ * logTable — the vocabulary the Gyroscope, Request Log and Error Log streams
+ * share: the columns more than one declares, the cells they draw, and the
+ * toolbar's count and rate labels. Each stream source declares its columns
+ * as the `rows` fields the log-stream block draws, through `logColumns()`,
+ * spelling only its OWN columns, cells and nouns.
  *
- * The cell helpers take explicit values rather than a row: the three
- * dashboards spell the same quantity differently (`est_ms`/`time_ms` vs
- * `duration_ms`, `ts` vs `timestamp`), and the URL hash is computed
- * client-side on the In-Flight table but stamped by the view node on the other
- * two. The caller supplies the trailing `key` — a dashboard mapping a dynamic
- * column list passes the column, the Error Log's fixed JSX siblings pass
- * nothing.
+ * The cell helpers take explicit values rather than a row: the three streams
+ * spell the same quantity differently (`est_ms`/`time_ms` vs `duration_ms`,
+ * `ts` vs `timestamp`), and the URL hash is computed client-side on the
+ * Gyroscope but stamped by the view node on the other two.
  */
 
 import { __, sprintf } from '@wordpress/i18n';
 
-import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
 import {
 	formatDuration,
 	formatTime,
 	getDurationClass,
 } from '@newspack-nodes/shared/utils/formatUtils';
-import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { requestedUrl } from './urlIdentity';
 
 /**
- * The columns more than one dashboard declares. A dashboard merges its own
- * `label`, `tooltip` or `width` over these.
+ * The columns more than one stream declares. A stream merges its own
+ * `label`, `tooltip`, `width` or `cell` over these.
  *
  * `time` carries no tooltip and no shared meaning beyond its label: the two
  * viewer panes head a wall clock with it, In-Flight a server-side duration.
@@ -73,19 +69,20 @@ const SHARED_COLUMNS = {
 };
 
 /**
- * Build a dashboard's column map: each entry is the shared declaration with
- * the dashboard's own merged over it, so a dashboard spells out only what
- * differs and its own columns in full. Declaration order carries through,
- * because it is the table order `useColumnPicker` reads back off the result.
+ * A stream source's columns, as the `rows` fields the log-stream block
+ * draws: each entry is the shared declaration with the stream's own merged
+ * over it, so a stream spells out only what differs and its own columns in
+ * full. Declaration order carries through, because it is the table order the
+ * block's column picker reads back.
  *
- * @param {Object} spec Column key → the dashboard's `{ label, tooltip, width }`.
- * @return {Object} The merged column map.
+ * @param {Object} spec Column key → the stream's `{ label, tooltip, width, cell }`.
+ * @return {Object} The fields.
  */
 export const logColumns = ( spec ) =>
 	Object.fromEntries(
 		Object.entries( spec ).map( ( [ col, own ] ) => [
 			col,
-			{ ...SHARED_COLUMNS[ col ], ...own },
+			{ kind: 'rows', ...SHARED_COLUMNS[ col ], ...own },
 		] )
 	);
 
@@ -109,12 +106,11 @@ export const Cell = ( { mod = '', children, ...rest } ) => (
 /**
  * Request id, linked to its trace in the Performance Dashboard.
  *
- * @param {string} rid   Request id.
- * @param {string} [key] React key, when the caller renders from a list.
+ * @param {string} rid Request id.
  * @return {import('react').ReactElement} The cell.
  */
-export const ridCell = ( rid, key ) => (
-	<Cell key={ key }>
+export const ridCell = ( rid ) => (
+	<Cell>
 		<a
 			className="entry-rid"
 			href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
@@ -137,11 +133,10 @@ export const ridCell = ( rid, key ) => (
  * @param {string}  method  HTTP method.
  * @param {?string} url     Request URL.
  * @param {?string} urlHash FNV-1a hash of the URL, for the deep link.
- * @param {string}  [key]   React key, when the caller renders from a list.
  * @return {import('react').ReactElement} The cell.
  */
-export const urlCell = ( method, url, urlHash, key ) => (
-	<Cell key={ key } mod="entry-url" title={ requestedUrl( url ) }>
+export const urlCell = ( method, url, urlHash ) => (
+	<Cell mod="entry-url" title={ requestedUrl( url ) }>
 		{ url && (
 			<>
 				<span className="entry-method">{ method }</span>{ ' ' }
@@ -164,11 +159,10 @@ export const urlCell = ( method, url, urlHash, key ) => (
  * HTTP status code; `data-status` carries it for the scss accent.
  *
  * @param {?number} status HTTP status code.
- * @param {string}  [key]  React key, when the caller renders from a list.
  * @return {import('react').ReactElement} The cell.
  */
-export const statusCell = ( status, key ) => (
-	<Cell key={ key } mod="entry-status" data-status={ status }>
+export const statusCell = ( status ) => (
+	<Cell mod="entry-status" data-status={ status }>
 		{ status }
 	</Cell>
 );
@@ -177,13 +171,10 @@ export const statusCell = ( status, key ) => (
  * Client IP address, or a dash when the entry carried none.
  *
  * @param {?string} remoteAddr Client IP.
- * @param {string}  [key]      React key, when the caller renders from a list.
  * @return {import('react').ReactElement} The cell.
  */
-export const ipCell = ( remoteAddr, key ) => (
-	<Cell key={ key } mod="entry-ip">
-		{ remoteAddr || '-' }
-	</Cell>
+export const ipCell = ( remoteAddr ) => (
+	<Cell mod="entry-ip">{ remoteAddr || '-' }</Cell>
 );
 
 /**
@@ -191,11 +182,10 @@ export const ipCell = ( remoteAddr, key ) => (
  * Draws a dash when the entry carried none.
  *
  * @param {?string} userAgent Browser/client identifier.
- * @param {string}  [key]     React key, when the caller renders from a list.
  * @return {import('react').ReactElement} The cell.
  */
-export const uaCell = ( userAgent, key ) => (
-	<Cell key={ key } mod="entry-ua" title={ userAgent }>
+export const uaCell = ( userAgent ) => (
+	<Cell mod="entry-ua" title={ userAgent }>
 		{ userAgent || '-' }
 	</Cell>
 );
@@ -203,15 +193,11 @@ export const uaCell = ( userAgent, key ) => (
 /**
  * A duration, graded fast/slow/critical by the shared thresholds.
  *
- * @param {?number} ms    Duration in milliseconds.
- * @param {string}  [key] React key, when the caller renders from a list.
+ * @param {?number} ms Duration in milliseconds.
  * @return {import('react').ReactElement} The cell.
  */
-export const durationCell = ( ms, key ) => (
-	<Cell
-		key={ key }
-		mod={ `entry-duration entry-duration--${ getDurationClass( ms ) }` }
-	>
+export const durationCell = ( ms ) => (
+	<Cell mod={ `entry-duration entry-duration--${ getDurationClass( ms ) }` }>
 		{ formatDuration( ms ) }
 	</Cell>
 );
@@ -219,58 +205,11 @@ export const durationCell = ( ms, key ) => (
 /**
  * A timestamp as a local wall clock.
  *
- * @param {?number} ts    Unix seconds.
- * @param {string}  [key] React key, when the caller renders from a list.
+ * @param {?number} ts Unix seconds.
  * @return {import('react').ReactElement} The cell.
  */
-export const timeCell = ( ts, key ) => (
-	<Cell key={ key } mod="entry-time">
-		{ formatTime( ts ) }
-	</Cell>
-);
-
-/**
- * A row's cell renderer, built from the dashboard's own per-column cases: each
- * case is called with the row arguments and the column as its React key. A
- * declared column with no case draws a placeholder, since a cell that draws
- * nothing shifts every column after it a slot left.
- *
- * @param {Object} cases Column key → `( ...row, col ) => element`.
- * @return {( col: string, ...row: * ) => import('react').ReactElement}
- *   The row's cell renderer.
- */
-export const cellRenderer =
-	( cases ) =>
-	( col, ...row ) =>
-		cases[ col ] ? cases[ col ]( ...row, col ) : <Cell key={ col }>-</Cell>;
-
-/**
- * The header above a log table: the wrapper publishing the grid template as
- * the custom property its scss applies, over the shared `LogListHeader`.
- *
- * The grid lands on `LogListHeader` itself, whose style this function does not
- * own, so the template rides down as a custom property and the wrapper is
- * `display: contents` — the header row is the grid, and the extra element
- * costs no layout.
- *
- * @param {Object}   opts           Options.
- * @param {string}   opts.className Wrapper class the dashboard's scss reads.
- * @param {Object}   opts.columns   Column map from `logColumns()`.
- * @param {string[]} opts.order     Column keys, in display order.
- * @return {import('react').ReactElement} The header.
- */
-export const logListHeader = ( { className, columns, order } ) => (
-	<div
-		className={ className }
-		style={ { '--stream-grid-template': gridTemplate( columns, order ) } }
-	>
-		<LogListHeader
-			columns={ order.map( ( col ) => ( {
-				key: col,
-				...columns[ col ],
-			} ) ) }
-		/>
-	</div>
+export const timeCell = ( ts ) => (
+	<Cell mod="entry-time">{ formatTime( ts ) }</Cell>
 );
 
 /**
@@ -284,11 +223,11 @@ const interpolate = sprintf;
 /**
  * The toolbar's count label: shown over held while a filter hides rows,
  * otherwise the plain total. Both forms arrive already translated, since
- * `_n()` extracts only literals. A table that filters nothing — In-Flight —
- * passes its total alone and names no split form.
+ * `_n()` extracts only literals. A stream that filters nothing — the
+ * Gyroscope — passes its total alone and names no split form.
  *
  * @param {Object}  stats   Ring stats: `{ total }`, plus `visible` when the
- *                          dashboard filters.
+ *                          stream filters.
  * @param {string}  plain   `sprintf` format taking the total alone.
  * @param {?string} [split] `sprintf` format taking rows shown, then rows held.
  * @return {string} The label.

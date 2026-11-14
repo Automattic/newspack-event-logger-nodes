@@ -114,21 +114,20 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'button-link',
 		'button button-small log-entries-search__nav',
 	],
-	'gyroscope/Inflight.js': [
-		'newspack-nodes-table',
-		'newspack-nodes-table__row',
-		'newspack-nodes-empty-state',
+	'log-pages/sources.js': [
 		'newspack-nodes-badge',
 		'newspack-nodes-status',
 		'is-warning',
+		'entry-keyword',
+		'newspack-nodes-status-badge is-error',
 	],
-	'requests/RequestStream.js': [ 'newspack-nodes-table__row' ],
+	'log-pages/GyroscopeControls.js': [ 'newspack-nodes-badge' ],
 	// Every section heading beside a ruled one takes the same shared rule.
 	'overview/OwnerTable.js': [ 'newspack-nodes-section-heading' ],
 	'overview/ResponseTimeChart.js': [ 'newspack-nodes-section-heading' ],
 	'overview/components/RequestTrace.js': [ 'newspack-nodes-section-heading' ],
 	// The cell class belongs to the one table primitive the three log
-	// dashboards draw through; each still owns its own modifiers below.
+	// streams draw through; each still owns its own modifiers above.
 	'log-table/logTable.js': [
 		'newspack-nodes-table__cell',
 		'entry-status',
@@ -137,11 +136,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'entry-url',
 		'entry-ip',
 		'entry-ua',
-	],
-	'error-log/ErrorLog.js': [
-		'newspack-nodes-table__row',
-		'entry-keyword',
-		'newspack-nodes-status-badge is-error',
 	],
 	'overview/FlameGraph.js': [ 'newspack-nodes-empty-state' ],
 	'rules/RulesAdmin.js': [
@@ -198,7 +192,7 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 		],
 	],
 	[
-		'gyroscope/Inflight.js',
+		'log-pages/sources.js',
 		[ /backgroundColor:\s*background/, /color:\s*getTextColor/ ],
 	],
 ] );
@@ -395,20 +389,16 @@ const selectorHasClass = ( selector, className ) =>
 	).test( selector );
 
 describe( 'canonical appearance ownership', () => {
-	it.each( [
-		'requests/styles/request-stream.scss',
-		'gyroscope/styles/inflight.scss',
-	] )( 'leaves HTTP status paint to shared CSS in %s', ( relative ) => {
-		const source = readSource( relative );
-		expect( source ).not.toMatch( /\.entry-status\s*\{/ );
-		expect( source ).not.toMatch( /\bentry-status--/ );
-	} );
+	it.each( [ 'log-pages/styles/base.scss' ] )(
+		'leaves HTTP status paint to shared CSS in %s',
+		( relative ) => {
+			const source = readSource( relative );
+			expect( source ).not.toMatch( /\.entry-status\s*\{/ );
+			expect( source ).not.toMatch( /\bentry-status--/ );
+		}
+	);
 
-	it.each( [
-		'requests/styles/request-stream.scss',
-		'gyroscope/styles/inflight.scss',
-		'error-log/styles/error-log.scss',
-	] )(
+	it.each( [ 'log-pages/styles/base.scss' ] )(
 		'leaves duration and keyword inks to shared CSS in %s',
 		( relative ) => {
 			const source = readSource( relative );
@@ -611,7 +601,7 @@ describe( 'canonical appearance ownership', () => {
 	it( 'spells no colour literal in markup outside the data colours', () => {
 		// Data colours: a state swatch, the PHP event default, the flame label inks.
 		const allowed = {
-			'gyroscope/Inflight.js': [ '#9e9e9e' ],
+			'log-pages/GyroscopeControls.js': [ '#9e9e9e' ],
 			'settings/settings/CustomEventSelectorModal.js': [ '#ffa726' ],
 			'overview/flameColors.js': [ '#0b140d', '#eafff1' ],
 		};

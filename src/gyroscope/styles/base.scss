@@ -1,8 +1,0 @@
-/**
- * Gyroscope dashboard base forwards the shared token/mixin API and emits only
- * this page's scoped border-box reset.
- */
-@forward "../../styles/base";
-@use "../../styles/base" as base;
-
-@include base.scoped-reset("#event-logger-gyroscope");

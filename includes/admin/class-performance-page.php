@@ -7,10 +7,11 @@
  * layout is `layouts/performance.html` and which admits every shared block,
  * beside the five blocks this plugin owns for what no shared block shows: the
  * breakdown bar, the aggregate and category charts, the profile with its
- * owners, and the URL table. `declare()` declares them on
- * `Composition::FILTER`. A Performance load sets `page_data()` before the
- * page's bundle, as an inline script of its own, and loads the layout editor
- * on a load whose `?edit=` names the page, for a `tune` caller alone.
+ * owners, and the URL table. `contexts()` and `blocks()` answer them for
+ * `Compositions::declare()`, the plugin's one declaration. A Performance
+ * load sets `page_data()` before the page's bundle, as an inline script of
+ * its own, and loads the layout editor on a load whose `?edit=` names the
+ * page, for a `tune` caller alone.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -37,9 +38,6 @@ final class Performance_Page {
 	/** The layout editor's script handle. */
 	public const EDITOR = 'newspack-event-logger-nodes-overview-editor';
 
-	/** The composition namespace this plugin declares under. */
-	private const NAMESPACE = 'newspack-event-logger-nodes';
-
 	/** The page slug `?edit=` names => the context it lays out. */
 	private const PAGES = [
 		'performance' => 'newspack-event-logger-nodes/performance',
@@ -51,16 +49,6 @@ final class Performance_Page {
 	 * block on that source.
 	 */
 	private const MAX_BLOCKS = 64;
-
-	/** The shared blocks the page admits. */
-	private const ADMITS = [
-		'newspack-nodes/stats',
-		'newspack-nodes/time-chart',
-		'newspack-nodes/table',
-		'newspack-nodes/log-stream',
-		'newspack-nodes/sparkline',
-		'newspack-nodes/section',
-	];
 
 	/** Each block this plugin owns => its title; each stands once. */
 	private const BLOCKS = [
@@ -129,32 +117,34 @@ final class Performance_Page {
 	}
 
 	/**
-	 * Declare the page's context and blocks on `Composition::FILTER`.
+	 * The page's context, as `Compositions::declare()` reads it.
 	 *
-	 * @param array<mixed> $declared What the filter holds so far.
-	 * @return array<mixed>
+	 * @return array<string,array{default: string, max_blocks: int}>
 	 */
-	public static function declare( array $declared ): array {
-		$context  = self::PAGES['performance'];
-		$blocks   = [];
+	public static function contexts(): array {
+		return [
+			self::PAGES['performance'] => [
+				'default'    => \dirname( __DIR__, 2 ) . '/layouts/performance.html',
+				'max_blocks' => self::MAX_BLOCKS,
+			],
+		];
+	}
+
+	/**
+	 * The blocks this page owns, each on its context alone and standing once.
+	 *
+	 * @return array<string,array{title: string, contexts: list<string>, attributes: array<never,never>, multiple: false}>
+	 */
+	public static function blocks(): array {
+		$blocks = [];
 		foreach ( self::BLOCKS as $name => $title ) {
-			$blocks[ self::NAMESPACE . "/{$name}" ] = [
+			$blocks[ Compositions::NAMESPACE . "/{$name}" ] = [
 				'title'      => $title,
-				'contexts'   => [ $context ],
+				'contexts'   => [ self::PAGES['performance'] ],
 				'attributes' => [],
 				'multiple'   => false,
 			];
 		}
-		$declared[ self::NAMESPACE ] = [
-			'blocks'   => $blocks,
-			'contexts' => [
-				$context => [
-					'default'    => \dirname( __DIR__, 2 ) . '/layouts/performance.html',
-					'max_blocks' => self::MAX_BLOCKS,
-					'admits'     => self::ADMITS,
-				],
-			],
-		];
-		return $declared;
+		return $blocks;
 	}
 }

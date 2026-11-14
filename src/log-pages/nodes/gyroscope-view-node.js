@@ -1,0 +1,361 @@
+/**
+ * The Gyroscope page's view node.
+ *
+ * The `gyroscope.*` partitions carry two producers' records: one per in-flight
+ * request per Router tick, and one per completion. This file turns that stream
+ * into the request model the `eln/gyroscope` source serves, and does nothing
+ * else: the source owns the stream graph, and the log-stream block draws the
+ * rows.
+ */
+
+import {
+	KEY,
+	Node,
+	ReactBridge,
+	VALUE,
+	CommandInterpreterNode,
+} from '@newspack-nodes/runtime';
+import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
+
+/** Averaging window for the requests/second readout, in seconds. */
+const RPS_WINDOW_SEC = 10;
+
+/** Rows a snapshot holds until a caller assigns `maxRows` of its own. */
+const DEFAULT_MAX_ROWS = 100;
+
+/**
+ * Age out an in-flight row unseen this long — a lost-completion backstop.
+ * Past the request builder's default eviction window (1080 s) by enough
+ * for the eviction's own completion record to arrive and be rendered.
+ */
+const INFLIGHT_STALE_MS = 20 * 60 * 1000;
+
+/**
+ * `gyroscope:view` — owns the in-flight request model behind the Gyroscope.
+ *
+ * Two cadences, deliberately split for performance:
+ * - HIGH frequency (the gyroscope stream): `_inflight` / `_complete` mutate the
+ *   `this.requests` map, but do NOT publish.
+ * - SNAPSHOT (the page's cadence): a `snapshot` control, which the source
+ *   sends at the cadence its page-state key holds, takes `snapshot()` into
+ *   the rows this node serves the way a ring does (`linesCount`, `lineAt()`,
+ *   `lps`), so `LogRowList` reads the render list off the node each frame and
+ *   a high-volume stream never re-renders React per message. A paused view
+ *   keeps the rows it served.
+ * - LOW frequency (control): only `_control` publishes the small view model,
+ *   the `view` field `{ paused, connectionError }` set through `setField()`.
+ *
+ * The producers write to `gyroscope.p0`: PHP `Request_Flight_Node` emits ONE
+ * record per in-flight request on each Router tick, and `Request_Builder_Node`
+ * emits one completion per finished request through `completed:tee`. Both use
+ * the Tachikoma shape — KEY is always the request identity (never duplicated
+ * in VALUE), and the server-built `state` field alone says what a record IS.
+ * This view is therefore written ONCE, correct under BOTH producer modes (full
+ * per-tick re-emit / delta) with NO mode awareness. It tests the ORIGIN first
+ * — a message from `controlFrom` is a control the page filled in locally,
+ * whose `action` picks the verb. A control is never recognised by what its
+ * payload looks like: a record carrying an `action` is a record. Everything
+ * else is one:
+ * - object VALUE with `state` `complete` and a non-empty KEY: a completion — the
+ *   source of RETIREMENT under both modes. Merge, derive time_ms/est_ms.
+ * - object VALUE with any other `state` and a non-empty KEY: an in-flight upsert
+ *   by rid, stamping a freshness time; NEVER overwrite one already marked
+ *   complete (a late record may predate a completion already in the map).
+ * - every other shape is dropped: a string or array VALUE, an empty KEY, or an
+ *   object carrying no `state`. Only the two producers' records have both.
+ *
+ * `snapshot()` reaps completed entries (shown one tick), ages out in-flight rows
+ * past INFLIGHT_STALE_MS, sorts by est_ms descending, and caps — plus the
+ * 10s-window RPS.
+ *
+ * @testonly The class is exported for its suite; production reaches it
+ *           through the `views` map registered at the foot of this file.
+ */
+export class GyroscopeViewNode extends ReactBridge( Node ) {
+	/** The banner model: what the dashboard renders, not the node's state. */
+	static dumpOmits = [ 'view' ];
+
+	/**
+	 * Start empty, holding the initial view model, so a React subscriber
+	 * mounting before the first control message reads a defined banner state.
+	 */
+	constructor() {
+		super();
+		// Every request seen, in-flight and just completed, keyed by rid.
+		this.requests = new Map();
+		// Completions per second, bucketed, plus the running window total.
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
+		// Completions per second over the window, served as the ring's `lps`.
+		this.rps = 0;
+		// The last snapshot, served as a ring; its cap; the pause.
+		this.rows = [];
+		this.maxRows = DEFAULT_MAX_ROWS;
+		this.paused = false;
+		// FROM of controls; unset loses them silently (see LogStreamViewNode).
+		this.controlFrom = '';
+		// The published model: the pause button and the reconnect banner.
+		this.view = { paused: false, connectionError: false };
+	}
+
+	/**
+	 * Dispatch one envelope: a control from `controlFrom`, else a gyroscope
+	 * record. A control is recognised by WHO SENT IT, never by what its
+	 * payload looks like — a record carrying an `action` field is a record.
+	 *
+	 * Terminal node — nothing is ever forwarded, so no sink is required.
+	 *
+	 * @param {Array} message The 7-field envelope (KEY=rid, VALUE=record).
+	 */
+	fill( message ) {
+		const value = message[ VALUE ];
+		if ( ! value ) {
+			return;
+		}
+		// A local control; one with no VALUE was dropped above.
+		if ( isControl( this, message ) ) {
+			this._control( value );
+			return;
+		}
+		// Gyroscope record: rid rides KEY; `state` says what the record IS.
+		const rid = message[ KEY ] ?? '';
+		if (
+			typeof value === 'object' &&
+			! Array.isArray( value ) &&
+			value.state &&
+			rid
+		) {
+			const req = { ...value, rid };
+			if ( 'complete' === value.state ) {
+				this._complete( req );
+			} else {
+				this._inflight( req );
+			}
+		}
+	}
+
+	/**
+	 * Upsert one in-flight record by rid, stamping the freshness time
+	 * `snapshot()` ages rows out against. A record for a request already marked
+	 * complete is dropped: it was produced before the completion it lost the
+	 * race with, and applying it would resurrect a finished request.
+	 *
+	 * @param {Object} req The in-flight record, with `rid` restored from KEY.
+	 */
+	_inflight( req ) {
+		const existing = this.requests.get( req.rid );
+		if ( ! existing || 'complete' !== existing.state ) {
+			this.requests.set( req.rid, { ...req, _seen: Date.now() } );
+		}
+	}
+
+	/**
+	 * Retire a request: merge the completion over whatever the in-flight entry
+	 * held, mark it complete, and derive both durations from `duration_ms`. An
+	 * unmatched completion still records the request, so a request that finished
+	 * before its first snapshot is shown rather than lost.
+	 *
+	 * `what` is the label of the innermost span the request was OPEN inside, so
+	 * a finished one has none and the completion carries no such field. Left to
+	 * the merge, the in-flight entry's last frame would survive its own request
+	 * and read as work still being done.
+	 *
+	 * @param {Object} req The completion record, with `rid` restored from KEY.
+	 */
+	_complete( req ) {
+		const existing = this.requests.get( req.rid );
+		this.requests.set( req.rid, {
+			...existing,
+			...req,
+			state: 'complete',
+			what: '',
+			time_ms: req.duration_ms || 0,
+			est_ms: req.duration_ms || 0,
+		} );
+	}
+
+	/**
+	 * Dispatch a control message: `snapshot` takes the rows this node serves,
+	 * `pause` holds them, `clear` empties the model, and `connection`
+	 * publishes the reconnect banner flag, each change to the published model
+	 * a new view object so `useNodeField` re-renders.
+	 *
+	 * @param {Object} value The control VALUE, keyed by `action`.
+	 */
+	_control( value ) {
+		if ( 'snapshot' === value.action ) {
+			this._serve();
+		} else if ( 'clear' === value.action ) {
+			this._clear();
+		} else if ( 'pause' === value.action ) {
+			this.paused = !! value.paused;
+			this.setField( 'view', { ...this.view, paused: this.paused } );
+		} else if ( 'connection' === value.action ) {
+			this.setField( 'view', {
+				...this.view,
+				connectionError: !! value.connectionError,
+			} );
+		}
+	}
+
+	/**
+	 * Take a snapshot into the rows this node serves, unless paused: each row a
+	 * fresh object keyed by its request and striped by its place, its record
+	 * read as JSON only when a debug row asks for it.
+	 */
+	_serve() {
+		if ( this.paused ) {
+			return;
+		}
+		this.rows = this.snapshot( this.maxRows ).map( ( req, index ) =>
+			Object.defineProperty(
+				{
+					...req,
+					id: req.rid,
+					key: req.rid,
+					isEven: 0 === index % 2,
+					struct: true,
+				},
+				'raw',
+				{ get: () => JSON.stringify( req ), enumerable: false }
+			)
+		);
+	}
+
+	/**
+	 * Empty the request map, the rows served and the RPS window.
+	 *
+	 * The source declares `clearOnOpen`, so its graph sends a `clear` each time
+	 * it rides the page's stream — at mount, after a rebuild and on refocus —
+	 * and none when the SseIn alone reopens. The producer re-emits every live request, so a row held
+	 * from before the graph rode would linger where a producer will never
+	 * complete it.
+	 */
+	_clear() {
+		this.requests.clear();
+		this.rows = [];
+		this.rpsBuckets = [];
+		this.rpsWindowTotal = 0;
+		this.rps = 0;
+	}
+
+	/**
+	 * The render list for one refresh tick, and the only reaper of the model.
+	 *
+	 * A completed request is returned once and deleted in the same pass, so it
+	 * flashes for exactly one tick. An in-flight row unrefreshed for
+	 * INFLIGHT_STALE_MS is dropped unrendered — the backstop for a request whose
+	 * completion never arrives, which under delta mode would otherwise pin the
+	 * row forever: a producer that crashed or ran `purge_cache()`, an evicted
+	 * request with no URL, or a completion dropped as oversize. LRU eviction of
+	 * any other request emits a timed-out completion. The reaped count feeds RPS.
+	 *
+	 * Calling this mutates the model; a `snapshot` control is its one caller.
+	 *
+	 * @param {number} maxRows Cap on returned rows.
+	 * @return {Object[]} Rows sorted by est_ms descending, capped to maxRows.
+	 */
+	snapshot( maxRows ) {
+		const allRequests = [];
+		let completedCount = 0;
+		const now = Date.now();
+		for ( const [ rid, req ] of this.requests ) {
+			if ( 'complete' === req.state ) {
+				completedCount += 1;
+				this.requests.delete( rid );
+				allRequests.push( req ); // Shown for one tick, then reaped.
+				continue;
+			}
+			if ( req._seen && now - req._seen > INFLIGHT_STALE_MS ) {
+				this.requests.delete( rid ); // Stale: dropped, never rendered.
+				continue;
+			}
+			allRequests.push( req );
+		}
+		this._updateRequestsPerSecond( completedCount );
+		return allRequests
+			.sort( ( a, b ) => ( b.est_ms || 0 ) - ( a.est_ms || 0 ) )
+			.slice( 0, maxRows );
+	}
+
+	/**
+	 * Fold this tick's completions into the requests/second readout: one bucket
+	 * per second, expired buckets subtracted from a running total, so the cost is
+	 * O(1) per tick however busy the stream. An idle stream decays to 0 as its
+	 * buckets age out.
+	 *
+	 * @param {number} completedCount Completions reaped by this snapshot.
+	 */
+	_updateRequestsPerSecond( completedCount ) {
+		const sec = Math.floor( Date.now() / 1000 );
+		if ( completedCount > 0 ) {
+			const last = this.rpsBuckets[ this.rpsBuckets.length - 1 ];
+			if ( last && last.sec === sec ) {
+				last.count += completedCount;
+			} else {
+				this.rpsBuckets.push( { sec, count: completedCount } );
+			}
+			this.rpsWindowTotal += completedCount;
+		}
+		const oldest = sec - RPS_WINDOW_SEC;
+		while (
+			this.rpsBuckets.length > 0 &&
+			this.rpsBuckets[ 0 ].sec <= oldest
+		) {
+			this.rpsWindowTotal -= this.rpsBuckets[ 0 ].count;
+			this.rpsBuckets.shift();
+		}
+		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
+	}
+
+	/**
+	 * The rows the last snapshot served.
+	 *
+	 * @return {number} How many.
+	 */
+	get linesCount() {
+		return this.rows.length;
+	}
+
+	/**
+	 * One served row, by its place in the snapshot.
+	 *
+	 * @param {number} i Its place.
+	 * @return {Object} The row.
+	 */
+	lineAt( i ) {
+		return this.rows[ i ];
+	}
+
+	/**
+	 * The rate a log list reads: completions per second.
+	 *
+	 * @return {number} The rate.
+	 */
+	get lps() {
+		return this.rps;
+	}
+
+	/**
+	 * Hidden terminal: `fill()` mutates the model and publishes, never forwards,
+	 * so the node declares no target — and it is mounted by the dashboard graph,
+	 * not dragged from the palette.
+	 *
+	 * @return {Object} The node schema.
+	 */
+	static nodeSchema() {
+		return {
+			category: 'Hidden',
+			description: 'Owns the in-flight gyroscope request view model.',
+			arguments: [],
+			commands: [],
+			registrations: [ 'view' ],
+			has_target: false,
+		};
+	}
+}
+
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
+	GyroscopeView: GyroscopeViewNode,
+} );
