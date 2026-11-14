@@ -64,3 +64,10 @@ test( "the Gyroscope's entry carries its legend and its cadence picker", () => {
 		Object.keys( LOG_PAGES.gyroscope.standing.sourceControls )
 	).toEqual( [ 'eln/gyroscope' ] );
 } );
+
+test( 'a page its entries do not name is refused by name', () => {
+	localizeComposedPage( 'request-log' );
+	expect( () => LogPage( { page: 'kea-7990' } ) ).toThrow(
+		"no log page is named 'kea-7990'"
+	);
+} );
