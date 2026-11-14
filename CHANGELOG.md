@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.165.0] - 2026-11-14
+
 ### Added
 
 - **The Performance dashboard is a composed page a curator rearranges.** It lays out the `newspack-event-logger-nodes/performance` context, whose default layout reproduces the page it replaces: the headline stats, now the substrate's `newspack-nodes/stats` block over `eln/urls`, whose caption names the stats window the server sets in the page data, or the server's refusal where `min_lifetime` is shorter than one bucket, then the breakdown bar, the aggregate chart, the category charts, the time breakdown with its owners and the URL table, each a block of this plugin's own. A `tune` reader opens **Edit layout** from the header's ⋯ menu, and the editor loads on `?edit=performance`. The page's state and its sources are declared once (`src/overview/sources.js`): blocks reading one source under equal params share one fetch, so the URL table and the headline totals read one `urls` fetch, and every link keeps its param, `?server=`, `?chip=`, `?bucket=`, `?metric=`, `?breakdown=`, `?then=`, `?sort=`, `?order=`, `?q=`, `?workers=`, `?paged=` and `?expand=`. The URL and request window belongs to the page, so `?url=`, `?page_hash=` and `?request=` open it on a layout holding no URL table; they are page state, so the one bar store keeps the window and Back in step. Each block shows its empty state for a null answer: the category charts, the time breakdown and the aggregate chart now say so where they drew nothing. The Peak Memory tile shows only where a request sampled memory.
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Needs newspack-nodes 2.157.0.** The composed pages admit the substrate's shared blocks (`stats`, `time-chart`, `log-stream`, `sparkline`, `section`), which only 2.157.0 declares, so on an older substrate the declaration is refused; their bundles inline 2.157.0's sources, page state, `ComposedPageFrame`, the log-stream `toolbar`, `useGlobBrowse` and the bar store with `holdPop`, which every bundle on a page must share. Below the floor the plugin goes dormant behind an admin notice naming both versions.
 - **The log pages' graphs take their sources' node names.** The Request Log's `request-log:view`, the Error Log's `error-log:view` and the Gyroscope's `gyroscope:view` are `eln:requests:<n>:view`, `eln:errors:<n>:view` and `eln:gyroscope:<n>:view`, and their `:stream` Tees likewise, `<n>` counting the sources made on the page.
 - **The Gyroscope offers pause, Debug and Clear.** A pause holds its rows on screen, and its rows read through the shared row list, its first snapshot taken as the page opens. It offers no filter.
 - **The Performance page's header controls wrap.** In a narrow header they stack, packed to the end, rather than overflowing over the page's name.
