@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.166.0] - 2026-11-14
+
 ### Changed
 
 - **Every portalled modal frame composes its skin classes from the substrate's `SKIN_ROOT_CLASSES`.** The Performance page's modal, `RuleEditModal` and `SelectorModal` import the constant rather than spelling `newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui`, and the `modal-theme-class` gate fails a frame that spells any of the three by hand. Builds against the newspack-nodes release exporting the constant.
