@@ -113,7 +113,7 @@ final class Compositions {
 	 * @param string $handle    The page bundle's script handle.
 	 * @param string $build_dir The plugin's build directory.
 	 * @param string $build_url Its URL.
-	 * @throws \LogicException On a slug outside the table, or through `Composition`, on a declaration that breaks a rule.
+	 * @throws \LogicException On a slug outside the table.
 	 * @throws \RuntimeException When the page data will not encode.
 	 * @throws \InvalidArgumentException Through `Capabilities::can()`, on a broken capability map.
 	 */
@@ -136,7 +136,7 @@ final class Compositions {
 	 *
 	 * @param string $page The page, as `?edit=` names it.
 	 * @return array<string,mixed>
-	 * @throws \LogicException When the page is not in the table, or its context is not declared.
+	 * @throws \LogicException When the page is not in the table.
 	 * @throws \InvalidArgumentException Through `Capabilities::can()`, on a broken capability map.
 	 */
 	public static function page_data( string $page ): array {
