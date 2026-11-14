@@ -1,0 +1,45 @@
+{
+	"newspack-event-logger-nodes/performance": [
+		{
+			"name": "newspack-nodes/stats",
+			"attributes": {
+				"source": "eln/urls",
+				"fields": [
+					"urls",
+					"requests",
+					"errors",
+					"avg_ms",
+					"requests_per_second",
+					"avg_peak_mb"
+				],
+				"columns": 0
+			},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/breakdown-bar",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/aggregate-chart",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/category-chart",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/profile",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-table",
+			"attributes": {},
+			"inner": []
+		}
+	]
+}

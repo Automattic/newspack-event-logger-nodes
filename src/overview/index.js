@@ -1,10 +1,11 @@
 /**
  * Performance Dashboard entry point — the `build/overview` bundle.
  *
- * Registers this dashboard's node classes (`./nodes/register`), then mounts
- * `AdminApp` into `#event-logger-admin`, the bare div the plugin's top-level
- * "Event Logger → Performance" menu page prints. Without that container the
- * module does nothing, so loading the bundle elsewhere is harmless.
+ * Mounts `AdminApp` into `#event-logger-admin`, the bare div the plugin's
+ * top-level "Event Logger → Performance" menu page prints. Without that
+ * container the module does nothing, so loading the bundle elsewhere is
+ * harmless. The page's sources, page state and blocks are declared in
+ * `./sources`, which the lazy page imports.
  *
  * esbuild builds this as its own bundle; the error-log, gyroscope, requests,
  * settings and current-request trees are separate entries. The
@@ -24,16 +25,15 @@ import { __ } from '@wordpress/i18n';
 import { Notice } from '@wordpress/components';
 import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
-import './nodes/register';
 
 /**
- * The dashboard body, code-split into a chunk of its own.
+ * The composed page, code-split into a chunk of its own.
  *
  * The split is what lets the page chrome — heading, error notice and debug
  * overlay — paint under `LoadingFallback` rather than wait on the whole
  * dashboard.
  */
-const PerformanceDashboard = lazy( () => import( './PerformanceDashboard' ) );
+const PerformancePage = lazy( () => import( './PerformancePage' ) );
 
 import './styles/base.scss';
 
@@ -41,7 +41,7 @@ import './styles/base.scss';
  * Performance Dashboard page chrome: heading, error notice, the Suspense
  * boundary around the lazy dashboard, and the debug overlay.
  *
- * `PerformanceDashboard` renders no failure banner of its own; it reports
+ * `PerformancePage` renders no failure banner of its own; it reports
  * upward through `onError`. This component holds that message and clears it
  * five seconds later, so a transient poll failure leaves no stuck notice. The
  * reader can also dismiss it.
@@ -118,7 +118,7 @@ export function AdminApp() {
 								/>
 							}
 						>
-							<PerformanceDashboard
+							<PerformancePage
 								onError={ handleError }
 								headerControlsSlot={ headerControlsSlot }
 							/>

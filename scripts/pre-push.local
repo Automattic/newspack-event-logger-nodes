@@ -13,6 +13,9 @@ push_gates() {
 
 container_gates() { :; }
 
+# The Performance page's composition tests load WordPress's block parser.
+export WP_ABSPATH=/var/www/html
+
 # PHPUnit runs straight from the /services mount, never /usr/src.
 # shellcheck disable=SC2034 # scripts/pre-push reads every constant
 {

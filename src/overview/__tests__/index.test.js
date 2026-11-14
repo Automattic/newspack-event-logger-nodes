@@ -10,7 +10,7 @@
 let mockOnError = null;
 // When set, the lazy dashboard suspends forever so the Suspense fallback shows.
 let mockStallDashboard = false;
-jest.mock( '../PerformanceDashboard', () => ( {
+jest.mock( '../PerformancePage', () => ( {
 	__esModule: true,
 	default: ( props ) => {
 		const React = require( 'react' );

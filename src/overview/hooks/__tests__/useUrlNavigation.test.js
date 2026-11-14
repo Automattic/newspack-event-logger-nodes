@@ -5,14 +5,38 @@
  * Behaviour covered:
  *   - bootstraps selectedSubject/selectedRequest from ?url= / ?request= on mount
  *   - reports a ?url= / ?request= it cannot answer from the loaded page
- *   - pushes history entries when selection changes after mount
- *   - reacts to popstate (back/forward) to restore selection
+ *   - pushes one history entry for each selection the page makes
+ *   - reads the restored entry on Back/Forward, through the bar store
  *   - guards against invalid request IDs (rejected, never selected)
  */
 
 import useUrlNavigation from '../useUrlNavigation';
 import { Core } from '@newspack-nodes/runtime';
-import { renderHook, act } from '../../../test-helpers/renderHook';
+import { PageStateProvider } from '@newspack-nodes/shared/composition/page/pageState';
+import '../../sources';
+import { act, renderComponent } from '../../../test-helpers/renderHook';
+
+/**
+ * Run the hook on the page state the Performance page declares, as the page
+ * runs it.
+ *
+ * @param {() => *} useHook The hook.
+ * @return {{result: {current: *}, unmount: () => void}} Its latest answer.
+ */
+function renderHook( useHook ) {
+	const result = { current: undefined };
+	/** @return {null} Nothing; it runs the hook. */
+	function Probe() {
+		result.current = useHook();
+		return null;
+	}
+	const mount = renderComponent(
+		<PageStateProvider>
+			<Probe />
+		</PageStateProvider>
+	);
+	return { result, unmount: mount.unmount };
+}
 
 const URLS = [
 	{ hash: 'aaa', url: '/foo' },
@@ -30,9 +54,7 @@ describe( 'useUrlNavigation', () => {
 	beforeEach( () => {
 		Core.reset();
 		setLocation( 'http://localhost/wp-admin/' );
-		pushSpy = jest
-			.spyOn( window.history, 'pushState' )
-			.mockImplementation( () => {} );
+		pushSpy = jest.spyOn( window.history, 'pushState' );
 	} );
 
 	afterEach( () => {
@@ -196,6 +218,29 @@ describe( 'useUrlNavigation', () => {
 		expect( pushSpy ).toHaveBeenCalled();
 		const [ , , newUrl ] = pushSpy.mock.calls[ 0 ];
 		expect( newUrl ).toMatch( /url=bbb/ );
+		unmount();
+	} );
+
+	it( 'pushes one entry for a subject and its request opened in one event', () => {
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
+		);
+		act( () => {
+			result.current.selectSubject( {
+				field: 'url',
+				hash: 'bbb',
+				url: '/bar',
+			} );
+			result.current.selectRequest( 'rid_7960' );
+		} );
+		expect( pushSpy ).toHaveBeenCalledTimes( 1 );
+		expect( window.location.search ).toBe( '?url=bbb&request=rid_7960' );
+		expect( result.current.selectedSubject ).toEqual( {
+			field: 'url',
+			hash: 'bbb',
+			url: '/bar',
+		} );
+		expect( result.current.selectedRequest ).toBe( 'rid_7960' );
 		unmount();
 	} );
 

@@ -78,7 +78,7 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 
 import * as React from 'react';
 import UrlDetailView from '../UrlDetailView';
-import { NO_DETAIL_CHART } from '../../hooks/usePerformanceGraph';
+const NO_DETAIL_CHART = { breakdown: 'status_class', thenBy: '', chips: [] };
 import { SERIES_MEASURES } from '../../constants';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 import {

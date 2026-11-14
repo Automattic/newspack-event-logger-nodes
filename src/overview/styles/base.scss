@@ -1,18 +1,11 @@
 /**
  * Performance overview base forwards the shared token/mixin API, emits its
- * scoped reset, and keeps the two page-specific layout overrides below.
+ * scoped reset, and keeps the page-specific layout overrides below.
  */
 @forward "../../styles/base";
 @use "../../styles/base" as base;
 
 @include base.scoped-reset("#event-logger-admin");
-
-// Overview's stats row is a space-between flex, not the shared 4-column grid.
-.event-logger-overview-stats {
-	display: flex;
-	justify-content: space-between;
-	align-items: baseline;
-}
 
 // One rhythm for every section a view stacks: the gap spaces them, and a
 // section never brings a margin of its own.

@@ -1,7 +1,7 @@
 /**
  * URL Detail View — the body of the Performance dashboard's URL modal.
  *
- * `PerformanceDashboard` opens a modal for one URL, or for a whole page, and
+ * `PerformancePage` opens a modal for one URL, or for a whole page, and
  * renders this view inside it. The view owns no slice and asks nothing: it draws the three slices the
  * parent's graph asks each tick — the `dump_url` payload, and the URL's two
  * `query` answers. Top to bottom:
@@ -32,6 +32,7 @@ import {
 	SUBJECT_CHIP_OPTIONS,
 	barStyle,
 	cellClass,
+	wholeMs,
 } from '../constants';
 import { subjectDescriptor } from '../detailSubject';
 
@@ -43,7 +44,6 @@ import { ProfileWithOwners } from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
-import { wholeMs } from './HeadlineStats';
 import SortHeaderButton from './SortHeaderButton';
 import BucketField from './BucketField';
 import {

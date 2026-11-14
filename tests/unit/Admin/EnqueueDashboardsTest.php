@@ -20,21 +20,49 @@ namespace {
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
+	use Newspack_Event_Logger_Nodes\Admin\Performance_Page;
 	use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
 	use Newspack_Event_Logger_Nodes\Log_Manager;
 	use Newspack_Event_Logger_Nodes\Tests\TestCase;
+	use Newspack_Nodes\Admin\Admin;
+	use Newspack_Nodes\Composition;
+	use Newspack_Nodes\Tests\Helpers\Wp_Includes;
 	use PHPUnit\Framework\Attributes\DataProvider;
+
+	require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WpIncludes.php';
 
 	class EnqueueDashboardsTest extends TestCase {
 
+		/** What the composition filter held before each test. */
+		private array $compositions = [];
+
+		public static function setUpBeforeClass(): void {
+			parent::setUpBeforeClass();
+			Wp_Includes::load( [ 'parse_blocks', 'serialize_blocks', 'rest_validate_value_from_schema', 'rest_sanitize_value_from_schema', 'wp_kses', 'wp_sprintf_l' ] );
+		}
+
+		protected function tearDown(): void {
+			$GLOBALS['_wp_actions'][ Composition::FILTER ] = $this->compositions;
+			( new \ReflectionProperty( Composition::class, 'declarations' ) )->setValue( null, null );
+			parent::tearDown();
+		}
+
 		protected function setUp(): void {
 			parent::setUp();
+			// The page a Performance load sets reads the declared context.
+			$this->compositions = $GLOBALS['_wp_actions'][ Composition::FILTER ] ?? [];
+			$GLOBALS['_wp_actions'][ Composition::FILTER ] = [
+				[ Composition::class, 'declare_substrate_blocks' ],
+				[ Performance_Page::class, 'declare' ],
+			];
+			( new \ReflectionProperty( Composition::class, 'declarations' ) )->setValue( null, null );
 			$GLOBALS['_enqueued_scripts']  = [];
 			$GLOBALS['_enqueued_styles']   = [];
 			$GLOBALS['_localized_scripts'] = [];
 			$GLOBALS['_inline_scripts']    = [];
 			$GLOBALS['_style_data']        = [];
 			$_GET = [];
+			( new Admin() )->register_dataviews();
 		}
 
 		/** Invoke the admin_enqueue_scripts callback the deferred bootstrap hooks. */
@@ -162,6 +190,25 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 				}
 			}
 			$this->fail( "no window.{$name} on {$handle}" );
+		}
+
+		/**
+		 * The Performance load sets the composed page's data before its
+		 * bundle; another dashboard's load sets none.
+		 */
+		public function test_the_overview_load_sets_the_performance_page_data(): void {
+			$GLOBALS['_current_user_can'] = true;
+			$_GET                         = [ 'page' => 'event-logger-overview' ];
+			$this->dispatch( 'nodes_page_event-logger-overview' );
+			$data = $this->window_json( 'newspack-nodes-overview', Performance_Page::GLOBAL );
+			$this->assertSame( [ 'canTune', 'canManage', 'compositions', 'window' ], \array_keys( $data ) );
+			$this->assertArrayHasKey( 'newspack-event-logger-nodes/performance', $data['compositions'] );
+
+			$GLOBALS['_inline_scripts'] = [];
+			$_GET                       = [ 'page' => 'event-logger-errors' ];
+			$this->dispatch( 'nodes_page_event-logger-errors' );
+			$printed = \implode( "\n", \array_column( $GLOBALS['_inline_scripts'], 1 ) );
+			$this->assertStringNotContainsString( Performance_Page::GLOBAL, $printed );
 		}
 
 		/**

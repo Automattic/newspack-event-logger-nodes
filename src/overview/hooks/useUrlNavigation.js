@@ -1,259 +1,211 @@
 /**
- * useUrlNavigation — the Performance Dashboard's address bar.
+ * useUrlNavigation — the Performance page's selection, read from the page
+ * state that holds it: the subject `?url=` or `?page_hash=` names, and the
+ * request `?request=` names. Each is a Back entry, so the one bar store
+ * keeps the address bar and the history in step: a selection the operator
+ * makes pushes one entry, and Back or Forward hands the selection the entry
+ * it lands on. The hook keeps no history of its own.
  *
- * The dashboard's selection lives here: which subject is open
- * (`selectedSubject`, as `detailSubject` describes it) and which of its
- * requests (`selectedRequest`). The hook keeps that selection and the
- * `?url=` or `?page_hash=` beside `?request=` in step, so every view is a
- * shareable link and Back/Forward walks the views the operator visited.
- * `?search=` it only reads, once on mount, leaving the writing to the owner.
- *
- * Traffic runs both ways. Inbound, the query params seed the selection — on
- * mount and again on every Back/Forward, because the address bar IS the link.
- * Only the server can answer for a subject missing from the catalog's loaded
- * rows, or for a `?request=`, whose rid names its URL, so the owner supplies
- * the resolvers. Outbound, every later selection change pushes a history entry
- * — every one the OPERATOR makes, that is. A selection the address
- * bar itself dictated is not written back, and the suppression is armed by the
- * same comparison that decides whether the selection moves at all, so the flush
- * it belongs to is the one that spends it.
+ * A subject the loaded rows open, or one the page selected or titled, is
+ * selected. Any other subject and any request the page has not opened are
+ * a deep link the hook reports as `deepLink` for the page to resolve,
+ * because only the server can answer for them and a command belongs beside
+ * the state its reply sets. `?search=` it reads once, on mount, leaving the
+ * writing to the owner.
  */
 
 import {
-	useState,
-	useEffect,
-	useLayoutEffect,
 	useCallback,
+	useLayoutEffect,
 	useMemo,
-	useRef,
+	useState,
 } from '@wordpress/element';
+import { usePageState } from '@newspack-nodes/shared/composition/page/pageState';
 import {
 	getQueryParam,
 	setQueryParams,
 } from '@newspack-nodes/shared/utils/queryParams';
-import {
-	findSubject,
-	linkedSubject,
-	sameSubject,
-	subjectLink,
-} from '../detailSubject';
+import { findSubject, subjectLink } from '../detailSubject';
 
 /**
- * Validate request ID format (alphanumeric, underscore, hyphen).
+ * The subject the page state names, or null for none.
  *
- * A request id read from the query string is echoed back into the address bar
- * and sent to the server, so anything outside the id alphabet is rejected here
- * rather than selected.
- *
- * @param {string} id Request ID to validate.
- * @return {boolean} True if valid.
+ * @param {string} url  The `url` key.
+ * @param {string} page The `page_hash` key.
+ * @return {?{field: string, hash: string}} The subject.
  */
-const isValidRequestId = ( id ) =>
-	typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test( id );
+const linkedOf = ( url, page ) => {
+	if ( url ) {
+		return { field: 'url', hash: url };
+	}
+	return page ? { field: 'page', hash: page } : null;
+};
 
 /**
- * Hold the selection the dashboard renders, and the address bar that names it.
+ * A subject's key in the hook's records.
+ *
+ * @param {{field: string, hash: string}} subject The subject.
+ * @return {string} `<field>:<hash>`.
+ */
+const keyOf = ( subject ) => `${ subject.field }:${ subject.hash }`;
+
+/**
+ * Hold the selection the page renders, from the page state that names it.
  *
  * The returned object carries the selection — `selectedSubject`, its
- * `{ field, hash, url }`, `url` its title when the row it came from names one
- * — and `selectedRequest`, a request id — with a setter for each. It also
- * carries `initialSearchQuery`, the `?search=` value read once on mount: the
- * owner runs that search and then clears the value through
- * `setInitialSearchQuery`, or it runs on every render.
- *
- * A subject or `?request=` deep link is an INTENT this hook holds and reports:
- * it resolves one it can answer from the loaded page itself, and otherwise
- * hands the caller `deepLink` — `{ requestId, subject }`, the subject as
- * `{ field, hash }` — and `clearDeepLink`.
- * The caller asks the server, because asking is a command and the commands
- * belong beside the state their replies set. An explicit `selectSubject` /
- * `selectRequest` SUPERSEDES a link still being resolved: it cancels the intent,
- * so a reply landing afterwards answers nothing and is dropped by the caller.
+ * `{ field, hash, url }`, `url` its title once the page knows one — and
+ * `selectedRequest`, a request id — with a setter for each; the setters of
+ * one event write one Back entry. It carries `initialSearchQuery`, the
+ * `?search=` value read once on mount, which the owner runs and then clears
+ * through `setInitialSearchQuery`, and `deepLink`, `{ requestId, subject }`,
+ * the part of the link the page has yet to answer, with `clearDeepLink`,
+ * which reports it answered: `'request'` drops the rid alone, which is how a
+ * rid the server cannot find falls through to the linked subject.
  *
  * @param {Array} urls One page of the URL table's page rows, each opening
  *                     the subject `subjectOfRow()` names.
  * @return {Object} Navigation state and callbacks.
  */
 export default function useUrlNavigation( urls ) {
-	// Selection state.
-	const [ selectedSubject, setSelectedSubject ] = useState( null );
-	const [ selectedRequest, setSelectedRequest ] = useState( null );
+	const [ url ] = usePageState( 'url' );
+	const [ page ] = usePageState( 'page_hash' );
+	const [ request ] = usePageState( 'request' );
 
-	// @longform Seeded from the query string on mount, these hold the part of
-	// the link that is not answered yet: popstate re-seeds the subject and the
-	// rid, while the search query is read once and the owner clears it.
-	const [ initialSubject, setInitialSubject ] = useState( linkedSubject );
-	const [ initialRequestId, setInitialRequestId ] = useState( () => {
-		const rid = getQueryParam( 'request' );
-		return rid && isValidRequestId( rid ) ? rid : null;
-	} );
+	// Writes of one event, flushed as one Back entry after the render.
+	const [ pending, setPending ] = useState( null );
+	// Titles the page named, subjects it opened, and links it answered.
+	const [ titles, setTitles ] = useState( () => new Map() );
+	const [ opened, setOpened ] = useState( () => new Set() );
+	const [ answered, setAnswered ] = useState( () => new Set() );
 	const [ initialSearchQuery, setInitialSearchQuery ] = useState( () =>
 		getQueryParam( 'search' )
 	);
 
-	// Each makes the write-back effect below skip a flush, and it clears them.
-	const isAddressBarNavigation = useRef( false );
-	const isInitialMount = useRef( true );
+	const shown = pending ?? { url, page, request };
+	const linked = linkedOf( shown.url, shown.page );
 
-	// @longform What the popstate listener reads. It registers once, so it
-	// would otherwise close over the first render's selection and catalog
-	// page; assigning during render keeps it reading what is on screen.
-	const selectedSubjectRef = useRef( null );
-	const selectedRequestRef = useRef( null );
-	const urlsRef = useRef( urls );
-	selectedSubjectRef.current = selectedSubject;
-	selectedRequestRef.current = selectedRequest;
-	urlsRef.current = urls;
+	const selectedSubject = useMemo( () => {
+		if ( ! linked ) {
+			return null;
+		}
+		const key = keyOf( linked );
+		const title =
+			titles.get( key ) ?? findSubject( urls, linked )?.url ?? undefined;
+		return undefined !== title || opened.has( key )
+			? { ...linked, url: title }
+			: null;
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- the link keys it
+	}, [ shown.url, shown.page, titles, opened, urls ] );
+
+	const selectedRequest =
+		shown.request && opened.has( `request:${ shown.request }` )
+			? shown.request
+			: null;
+
+	const deepLink = useMemo(
+		() => ( {
+			requestId:
+				shown.request &&
+				! selectedRequest &&
+				! answered.has( `request:${ shown.request }` )
+					? shown.request
+					: null,
+			subject:
+				linked && ! selectedSubject && ! answered.has( keyOf( linked ) )
+					? linked
+					: null,
+		} ),
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- the link keys it
+		[
+			shown.request,
+			selectedRequest,
+			shown.url,
+			shown.page,
+			selectedSubject,
+			answered,
+		]
+	);
 
 	/**
-	 * Report the link as answered. `'request'` drops only the rid, which is
-	 * how a rid the server cannot find falls THROUGH to the linked subject
-	 * instead of being re-asked forever.
+	 * Report the link as answered.
 	 *
 	 * @param {string} [part] `'request'` for the rid alone; omit for the link.
 	 */
-	const clearDeepLink = useCallback( ( part ) => {
-		setInitialRequestId( null );
-		if ( 'request' !== part ) {
-			setInitialSubject( null );
+	const clearDeepLink = useCallback(
+		( part ) => {
+			setAnswered( ( held ) => {
+				const next = new Set( held );
+				if ( shown.request ) {
+					next.add( `request:${ shown.request }` );
+				}
+				if ( 'request' !== part && linked ) {
+					next.add( keyOf( linked ) );
+				}
+				return next;
+			} );
+		},
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- the link keys it
+		[ shown.request, shown.url, shown.page ]
+	);
+
+	/**
+	 * Open a subject, titled as given, or close the selection.
+	 *
+	 * @param {?Object} subject Its `{ field, hash, url }`, or null.
+	 */
+	const selectSubject = useCallback( ( subject ) => {
+		if ( subject ) {
+			const key = keyOf( subject );
+			setOpened( ( held ) => new Set( held ).add( key ) );
+			if ( undefined !== subject.url ) {
+				setTitles( ( held ) =>
+					new Map( held ).set( key, subject.url )
+				);
+			}
 		}
+		const link = subjectLink( subject );
+		setPending( ( held ) => ( {
+			...( held ?? {} ),
+			url: link.url ?? '',
+			page: link.page_hash ?? '',
+		} ) );
 	}, [] );
 
 	/**
-	 * Open a subject, or close the selection.
+	 * Open a request within the selected subject, or close it.
 	 *
-	 * @param {Object|null} subject Its `{ field, hash, url }`, or null.
+	 * @param {?string} rid Request id, or null to close it.
 	 */
-	const selectSubject = useCallback(
-		( subject ) => {
-			// @longform An explicit selection SUPERSEDES a link still being
-			// resolved: the operator has said what they want, so the reply
-			// must not reopen what they closed nor yank them off what they
-			// opened. Reporting a link goes through the raw setters, so this
-			// cancels only what the operator or a resolver asks for.
-			clearDeepLink();
-			setSelectedSubject( subject );
-		},
-		[ clearDeepLink ]
-	);
-
-	/**
-	 * Open a request within the selected URL, or close it.
-	 *
-	 * @param {string|null} rid Request id, or null to clear.
-	 */
-	const selectRequest = useCallback(
-		( rid ) => {
-			clearDeepLink();
-			setSelectedRequest( rid );
-		},
-		[ clearDeepLink ]
-	);
-
-	// @longform Restore the selection a subject / `?request=` link asks for.
-	//
-	// What this hook can answer, it answers: a subject a loaded row opens
-	// needs no round trip. Anything else is reported as an intent, because
-	// resolving it means asking the server, and a command belongs beside the
-	// state its reply sets — held here it would need a resolver threaded in,
-	// a one-at-a-time latch and a backoff, all of which a retried read already
-	// does.
-	useEffect( () => {
-		const found = findSubject( urls, initialSubject );
-		if ( ! found ) {
-			return;
+	const selectRequest = useCallback( ( rid ) => {
+		if ( rid ) {
+			setOpened( ( held ) => new Set( held ).add( `request:${ rid }` ) );
 		}
-		// @longform Answering the link is not a navigation, so it suppresses
-		// the write-back: the bar already reads this subject, and writing the
-		// selection alone would DELETE a `?request=` still being resolved and
-		// push an entry for the deletion. Armed by the same comparison that
-		// decides whether anything commits, so the flush spends what it armed.
-		isAddressBarNavigation.current = found !== selectedSubjectRef.current;
-		setSelectedSubject( found );
-		// @longform The subject is answered, so it stops being an intent. The
-		// RID beside it stays REPORTED: the caller resolves it, which answers
-		// the URL it was made on, and selects the two together.
-		setInitialSubject( null );
-	}, [ urls, initialSubject ] );
+		setPending( ( held ) => ( { ...( held ?? {} ), request: rid ?? '' } ) );
+	}, [] );
 
-	// @longform The link's unanswered part, packaged for the caller. Memoized
-	// because the caller keys an effect on it: a fresh literal each render
-	// re-fires the deep-link read.
-	const deepLink = useMemo(
-		() => ( { requestId: initialRequestId, subject: initialSubject } ),
-		[ initialRequestId, initialSubject ]
-	);
-
-	// @longform Write the operator's selection back as a history entry. A
-	// layout effect, so the push lands before any passive replaceState write
-	// on the page, and those write into the entry it opened.
+	// One event's writes, one Back entry, landing before any passive write.
 	useLayoutEffect( () => {
-		// Skip when the address bar drove the change — it already says so.
-		if ( isAddressBarNavigation.current ) {
-			isAddressBarNavigation.current = false;
+		if ( ! pending ) {
 			return;
 		}
-
-		// Skip the mount flush — the bar already says what loaded.
-		if ( isInitialMount.current ) {
-			isInitialMount.current = false;
-			return;
+		const write = { url, page_hash: page, request };
+		if ( undefined !== pending.url ) {
+			write.url = pending.url;
+			write.page_hash = pending.page;
 		}
-
-		// The pushed state is never read back: popstate re-reads the bar.
+		if ( undefined !== pending.request ) {
+			write.request = pending.request;
+		}
+		setPending( null );
 		setQueryParams(
 			{
-				...subjectLink( selectedSubject ),
-				request: selectedRequest || null,
+				url: write.url || null,
+				page_hash: write.page_hash || null,
+				request: write.request || null,
 			},
 			{ push: true }
 		);
-	}, [ selectedSubject, selectedRequest ] );
-
-	// @longform Browser back/forward re-enters through the deep-link path a
-	// fresh load takes: the address bar is the link, so the rid is REPORTED
-	// and the subject is answered from the loaded page where it can be, so
-	// Forward opens a request exactly as a reload of the same URL does.
-	useEffect( () => {
-		const handlePopState = () => {
-			const linked = linkedSubject();
-			const rawRequestId = getQueryParam( 'request' );
-			const requestId =
-				rawRequestId && isValidRequestId( rawRequestId )
-					? rawRequestId
-					: null;
-
-			// @longform What the loaded page can answer is answered HERE, in
-			// the same flush: resolved a commit later instead, the write-back
-			// runs in between on a selection that is only half the link. The
-			// subject it cannot answer selects nothing — leaving the window
-			// the operator came from open would make Back read as a no-op.
-			const nextSubject = sameSubject(
-				selectedSubjectRef.current,
-				linked
-			)
-				? selectedSubjectRef.current
-				: findSubject( urlsRef.current, linked );
-
-			// @longform Armed only when this popstate moves the
-			// selection, so the flush that move causes is what spends it.
-			// Armed unconditionally it outlives a Forward that selects
-			// nothing — the rid is REPORTED, never selected — and the
-			// operator's next change, closing the modal, goes unpushed.
-			isAddressBarNavigation.current =
-				nextSubject !== selectedSubjectRef.current ||
-				null !== selectedRequestRef.current;
-
-			// Raw setters: reporting the link must not cancel it.
-			setSelectedSubject( nextSubject );
-			setSelectedRequest( null );
-			setInitialSubject( nextSubject ? null : linked );
-			setInitialRequestId( requestId );
-		};
-
-		window.addEventListener( 'popstate', handlePopState );
-		return () => window.removeEventListener( 'popstate', handlePopState );
-	}, [] );
+	}, [ pending, url, page, request ] );
 
 	return {
 		selectedSubject,

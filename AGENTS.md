@@ -37,7 +37,8 @@ The substrate checkout must sit at `../newspack-nodes`, because the build kit an
 ```bash
 # PHPUnit, as a NON-ROOT user (Log_Manager refuses root), with newspack-nodes active.
 # Use the vendored binary; the ten-second per-test budget fails the run on a breach.
-cd tests && ../vendor/bin/phpunit --enforce-time-limit
+# WP_ABSPATH names the install whose block parser the composition tests load.
+cd tests && WP_ABSPATH=/var/www/html ../vendor/bin/phpunit --enforce-time-limit
 tests/run-coverage.sh
 
 # Host-side gates. PHPStan cannot run through `docker exec`: /services is read-only there.
@@ -131,12 +132,13 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Command spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
 | `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three listener sets it binds on every logged request (`Query_Monitor_Actions`, `Request_Context`, `Server_Timing`) and `Php_Errors`, bound under a rule's `log_php_errors`, the three service CIs, `Stats_Query` (the fixed query vocabulary every performance reader asks the rows in), `Overview_Prefetch` (the job publishing the URL snapshot), `Url_Snapshot` (that file, built and read), `Findings`, `Ask_Assembler`, `MCP_Controller` |
 | `includes/class-{flame-facts-row-schema,bucket,url-parts}.php` | The nineteen stats tables the `flame-facts` Row_Table holds; the five-minute bucket, the hour and the selection grammar; a URL's server and paths |
-| `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
+| `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor, and `Performance_Page`, the Performance dashboard's composed page; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
+| `layouts/performance.html` | The Performance page's default layout, which `tests/fixtures/performance-layout.json` holds as its tree for the browser's tests |
 | `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix, the files of every Row_Table the shipped topologies declare with the Flame_Facts schema, and the overview-prefetch job's URL snapshot; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Fourteen `.tsl` graphs, named by filename: seven primitives and seven compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
 | `scripts/` | This plugin's `build.mjs`, `pre-push.local` and `bump-version.sh`; everything else is vendored, `pre-push` included, `render-diagram.sh` (the `docs/img` sheets to PNG) and its `autocrop.py` included |
-| `src/` | Six esbuild entries: five dashboards and the `current-request` tab. Shared SCSS forwards the substrate's tokens and mixins, so never create a local `_tokens.scss` or `_mixins.scss` |
+| `src/` | Seven esbuild entries: five dashboards, the Performance page's layout editor and the `current-request` tab. Shared SCSS forwards the substrate's tokens and mixins, so never create a local `_tokens.scss` or `_mixins.scss` |
 | `types/` | Ambient declarations for `lint:types`; a new `window.*` global needs one in `globals.d.ts` |
 | `tests/` | PHPUnit `unit/` and `integration/`; config at `tests/phpunit.xml` |
 | `docs/` | `README.md` maps three chapters and the reference set |

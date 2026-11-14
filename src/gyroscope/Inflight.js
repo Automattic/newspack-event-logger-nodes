@@ -40,6 +40,7 @@ import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner
 import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
+import RefreshPicker from '@newspack-nodes/shared/components/RefreshPicker';
 import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import { isTypingTarget } from '@newspack-nodes/shared/utils/isTypingTarget';
@@ -399,27 +400,17 @@ export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 							{ renderRate( requestsPerSecond ) }
 						</span>
 					</span>
-					<select
-						className="newspack-nodes-select"
+					<RefreshPicker
 						value={ refreshInterval }
-						onChange={ ( e ) =>
-							setRefreshInterval( parseFloat( e.target.value ) )
+						options={ INFLIGHT_REFRESH_OPTIONS }
+						onChange={ ( next ) =>
+							setRefreshInterval( Number( next ) )
 						}
-						aria-label={ __(
-							'Refresh interval',
-							'newspack-event-logger-nodes'
-						) }
 						title={ __(
 							'Refresh interval (also press 0–9 keys)',
 							'newspack-event-logger-nodes'
 						) }
-					>
-						{ INFLIGHT_REFRESH_OPTIONS.map( ( opt ) => (
-							<option key={ opt.value } value={ opt.value }>
-								{ opt.label }
-							</option>
-						) ) }
-					</select>
+					/>
 					<button
 						className={ `button${
 							showColumnPicker ? ' is-active' : ''

@@ -168,6 +168,9 @@ function newspack_event_logger_nodes_boot(): void {
 		2
 	);
 
+	// The Performance page's context and the blocks it is composed of.
+	\add_filter( \Newspack_Nodes\Composition::FILTER, [ \Newspack_Event_Logger_Nodes\Admin\Performance_Page::class, 'declare' ] );
+
 	// The dashboards call substrate APIs the version floor guarantees.
 	\add_action( 'admin_menu', 'newspack_event_logger_nodes_register_admin_menu' );
 	\add_action( 'admin_enqueue_scripts', 'newspack_event_logger_nodes_enqueue_dashboards' );
@@ -376,7 +379,9 @@ function newspack_event_logger_nodes_register_admin_menu(): void {
  * manifest, CSS sidecar, `NewspackNodesData` localize — and returns the script
  * handle, or null when it declined (wrong page, or no built bundle). The
  * `window.*` payloads below bind to that handle, so they only ship when the
- * bundle did.
+ * bundle did. The Performance load also sets its composed page's data and,
+ * on an edit load for a `tune` caller, its layout editor
+ * (`Admin\Performance_Page::enqueue()`).
  *
  * @api Hooked to `admin_enqueue_scripts` by the deferred bootstrap.
  * @param string $hook Current admin page hook suffix; unused, since the `page` slug gates instead.
@@ -443,6 +448,11 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 		. \Newspack_Event_Logger_Nodes\Config::span_palette_js(),
 		'before'
 	);
+
+	// The Performance page reads its layout, and loads its editor on an edit.
+	if ( 'overview' === $tree ) {
+		\Newspack_Event_Logger_Nodes\Admin\Performance_Page::enqueue( $handle, NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/overview-editor', NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/overview-editor' );
+	}
 
 	// settings + overview both render pickers from these window lists.
 	if ( 'settings' === $tree || 'overview' === $tree ) {

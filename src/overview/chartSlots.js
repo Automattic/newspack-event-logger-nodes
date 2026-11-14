@@ -324,15 +324,23 @@ export const buildChartSlots = ( slots ) =>
 const MINUTES_PER_HOUR = 60;
 
 /**
- * The span a reply's slots cover, as a caption names the window: whole hours
- * as hours, anything under two hours as minutes, the rest as hours and
- * minutes, so a span never reads as 0 hours or rounds to an hour it is not.
+ * The span a reply's slots cover, as a caption names the window.
  *
  * @param {Array} slots The reply's slots, or the axis built from them.
  * @return {string} `2 hours`, `90 minutes` or `3 hours 5 minutes`.
  */
-export const slotSpan = ( slots ) => {
-	const minutes = ( slots.length * BUCKET_SECONDS ) / 60;
+export const slotSpan = ( slots ) => windowSpan( slots.length );
+
+/**
+ * The span `buckets` five-minute buckets cover, as a caption names it: whole
+ * hours as hours, anything under two hours as minutes, the rest as hours and
+ * minutes, so a span never reads as 0 hours or rounds to an hour it is not.
+ *
+ * @param {number} buckets The buckets.
+ * @return {string} `2 hours`, `90 minutes` or `3 hours 5 minutes`.
+ */
+export const windowSpan = ( buckets ) => {
+	const minutes = ( buckets * BUCKET_SECONDS ) / 60;
 	const hours = Math.floor( minutes / MINUTES_PER_HOUR );
 	const past = minutes % MINUTES_PER_HOUR;
 	const inMinutes = ( count ) =>

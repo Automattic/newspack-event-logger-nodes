@@ -1,35 +1,28 @@
 /* global requestAnimationFrame */
 /**
- * Performance Dashboard — the orchestrator over the dashboard's node graph.
+ * Performance page — the composed page and the URL and request window over
+ * it.
  *
- * `usePerformanceGraph` mounts the graph and owns every fetch; this component
- * owns none. The graph publishes its data through independent per-slice view
- * nodes — `overview:view`, `urls:view`, `chart:view`, `categories:view`,
- * `url-detail:view`, `url-chart:view`, `url-categories:view` and
- * `request-detail:view`. This component reads each slice with its own
- * `useNodeField`, derives the render-time values, and hands the URL table's
- * paging back through `handleUrlParamsChange`, the one callback the hook
- * returns.
+ * What the page shows is its layout: the blocks of the
+ * `newspack-event-logger-nodes/performance` context, which read the page's
+ * sources and its page state (`./sources`). What stands outside the layout
+ * is what no block owns: the header controls (the Ask trigger, the request
+ * search and its results, the refresh cadence and, for a `tune` reader,
+ * **Edit layout**), the page's facts, and the window a URL row, a `?url=`,
+ * `?page_hash=` or `?request=` link, or a search opens, so a link opens it
+ * on any layout. A URL table opens it through the page it stands on, whose
+ * `openSubject`, `selectedSubject` and `busySubject` this page provides.
  *
- * What it does own is the UI state the graph's fetchers read at fire time: the
- * server filter, the chart metric, dimensions and chips, the refresh cadence,
- * the search box and its results, the request-table sort, the bucket
- * selections that narrow the URL table and the URL modal, the URL modal
- * chart's question and metric, and the inline "Log this URL" rule editor. The
- * server filter, metric, both dimensions, the chart's chips, the table
- * selection and the pages the table expands also live in the address bar, as
- * `?server=`, `?metric=`, `?breakdown=`, `?then=`, one `?chip=` per chip,
- * `?bucket=` and one `?expand=` per page, so a shared link opens the same
- * view. While a detail modal is open, on a URL or on a whole page, or a link
- * is opening one, its own controls ride there too under a `url_` prefix, as
- * `docs/dashboards.md` lists. The component also runs every command whose
- * reply sets that state: the `?url=` / `?page_hash=` and `?request=`
- * deep-link resolvers, the
- * title lookup for a hash the loaded catalog page does not carry, the search
- * box's exact-rid lookup and its pattern search, and the ruleset reads and
- * writes behind "Log this URL". It renders the URL / request detail modal and
- * the Ask panel over it, and preserves the modal's scroll position across the
- * URL-detail ↔ request-detail switch.
+ * The window's own controls live in the address bar under a `url_` prefix
+ * while it is open, as `docs/dashboards.md` lists. The page runs every
+ * command whose reply sets that state: the `?url=` / `?page_hash=` and
+ * `?request=` deep-link resolvers, the title lookup for a hash the loaded
+ * table page does not carry, the search box's exact-rid lookup and its
+ * pattern search, and the ruleset reads and writes behind "Log this URL". It
+ * preserves the window's scroll position across the URL-detail ↔
+ * request-detail switch, and holds its `overview` sources still while the
+ * window stands or the `?` picker is armed, since a repaint under a
+ * stationary pointer swaps the row aimed at.
  */
 
 import {
@@ -39,38 +32,44 @@ import {
 	useCallback,
 	useRef,
 } from '@wordpress/element';
-import { Spinner, Modal } from '@wordpress/components';
+import { Modal } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { useNodeField, formatCommandArgs } from '@newspack-nodes/runtime';
+import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
+import ComposedPageFrame from '@newspack-nodes/shared/composition/page/ComposedPageFrame';
+import { PageStateProvider } from '@newspack-nodes/shared/composition/page/pageState';
+import {
+	SourcesProvider,
+	useSource,
+	useSourcesPaused,
+} from '@newspack-nodes/shared/sources';
+import {
+	fieldValue,
+	namedFields,
+	display,
+} from '@newspack-nodes/shared/blocks/sourceBlock';
 import {
 	computeIndentedEntries,
 	spliceFoldedSpans,
 } from './utils/logEntryUtils';
 import {
-	DASHBOARD_REFRESH_OPTIONS,
 	CHART_METRIC_OPTIONS,
-	CHART_BREAKDOWN_OPTIONS,
-	DEFAULT_CHART_BREAKDOWN,
 	DEFAULT_CHART_METRIC,
-	FILTER_FIELD_OPTIONS,
 	GROUPS,
 	SCOPED_BREAKDOWN_OPTIONS,
 	SORT_ORDERS,
 	SUBJECT_CHIP_OPTIONS,
-	NO_PAGE_KEYS,
-	PAGE_KEY,
-	pageKey,
 } from './constants';
+import { BLOCK_VIEWS, NO_CHIPS, RULES_CI, SERVER } from './sources';
+import { isValidHash, isValidRequestId } from './questions';
+import { useFilter, useSite, useUrlsParams } from './blocks/pageQuestions';
 import {
-	usePerformanceGraph,
-	SERVER,
-	RULES_CI,
-	GREP_RESULT_LIMIT,
-	NO_CHIPS,
-	NO_DETAIL_CHART,
-} from './hooks/usePerformanceGraph';
+	PERFORMANCE_CONTEXT,
+	PERFORMANCE_PAGE,
+	PERFORMANCE_PAGES,
+	performancePage,
+} from './performancePageData';
 import useUrlNavigation from './hooks/useUrlNavigation';
 import {
 	findSubject,
@@ -86,10 +85,8 @@ import {
 	useQueryParamState,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
-import { requestedUrl, rulePath, serverName } from '../log-table/urlIdentity';
-import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
+import { requestedUrl, rulePath } from '../log-table/urlIdentity';
 import { useDismissable } from '@newspack-nodes/shared/hooks/useDismissable';
-import OverviewSection from './components/OverviewSection';
 import { chipRefusal, chipsOf } from './components/BreakdownControls';
 import UrlDetailView, {
 	DEFAULT_REQUEST_SORT,
@@ -97,18 +94,14 @@ import UrlDetailView, {
 } from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
-import { headlineStats } from './components/HeadlineStats';
+import PerformanceHeader, {
+	SearchFindings,
+} from './components/PerformanceHeader';
 import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
-import UrlTable from './UrlTable';
-import {
-	activeChart,
-	answerSlots,
-	useBucketSelection,
-	withoutChips,
-} from './chartSlots';
+import { withoutChips } from './chartSlots';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -168,18 +161,6 @@ const compareRequests = ( a, b, { field, dir } ) => {
 	return ( aVal > bVal ? 1 : -1 ) * ( 'asc' === dir ? 1 : -1 );
 };
 
-/** The URL modal header's stats, over what its chips and bucket keep. */
-const URL_HEADER_STATS = [
-	'requests_per_second',
-	'errors',
-	'error_rate',
-	'avg_ms',
-	'p50_ms',
-	'p95_ms',
-	'p99_ms',
-	'avg_peak_mb',
-];
-
 /**
  * A search box with nothing answered under it: the lookup's miss or the grep's
  * error, the grep's rows and whether the server capped them, and the lines it
@@ -196,31 +177,24 @@ const NO_SEARCH_ANSWER = {
 const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
 
 /**
- * The linked `?expand=` values that name a page, each once, its server
- * spelled as the list names it.
- *
- * @param {string[]} raw Every value the param holds.
- * @return {string[]} The page keys kept, or `NO_PAGE_KEYS` for none.
+ * Matched-request cap the request search sends with `grep_requests`. It
+ * matches the command's own default, and the server clamps anything larger
+ * to 50.
  */
-const restoreExpanded = ( raw ) => {
-	const kept = [
-		...new Set(
-			raw
-				.filter( ( key ) => PAGE_KEY.test( key ) )
-				.map( ( key ) => {
-					const at = key.indexOf( ':' ) + 1;
-					return key.slice( 0, at ) + serverName( key.slice( at ) );
-				} )
-		),
-	];
-	return kept.length ? kept : NO_PAGE_KEYS;
+const GREP_RESULT_LIMIT = 20;
+
+/**
+ * The URL window chart's question until someone changes it: its status
+ * classes, no second dimension and no chip.
+ */
+const NO_DETAIL_CHART = {
+	breakdown: 'status_class',
+	thenBy: '',
+	chips: NO_CHIPS,
 };
 
 // The address-bar whitelists: what the dropdowns offer.
 const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
-const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
-	( option ) => option.value
-);
 const DETAIL_BREAKDOWNS = SCOPED_BREAKDOWN_OPTIONS.map(
 	( option ) => option.value
 );
@@ -258,74 +232,105 @@ const restoreChips = ( raw, options ) => {
 };
 
 /**
- * The dashboard's one component: the overview card, the URL table, and the
- * detail modal over them.
+ * The window's charts: the subject's requests by the window chart's
+ * dimensions, and its categories, each read only while the URL view shows.
  *
- * It renders a spinner until the `overview:view` slice resolves — until then the
- * graph may not even be mounted, and an empty dashboard would read as no data.
+ * @param {Omit<Parameters<typeof UrlDetailView>[0], 'chartSlice'|'categoriesSlice'> & {serverFilter: string}} props `UrlDetailView`'s props, less the two chart slices, and the page's server filter.
+ * @return {import('react').ReactElement} The URL view.
+ */
+function UrlWindow( { serverFilter, ...props } ) {
+	const { subject, chart } = props;
+	const scope = { field: subject.field, hash: subject.hash };
+	const series = useSource( 'eln/url-chart', {
+		subject: scope,
+		server: serverFilter,
+		chips: chart.chips,
+		breakdown: chart.breakdown,
+		then: chart.thenBy,
+	} );
+	const categories = useSource( 'eln/url-categories', {
+		subject: scope,
+		server: serverFilter,
+	} );
+	return (
+		<UrlDetailView
+			{ ...props }
+			chartSlice={ {
+				data: series.model?.data ?? null,
+				loading: series.loading,
+				error: series.error,
+			} }
+			categoriesSlice={ {
+				data: categories.model?.data ?? null,
+				loading: categories.loading,
+				error: categories.error,
+			} }
+		/>
+	);
+}
+
+/**
+ * The window's header figures, each one `eln/url-detail` declares shown for
+ * its answer.
+ *
+ * @param {Object} props       Component props.
+ * @param {Object} props.model The `eln/url-detail` model.
+ * @return {import('react').ReactElement} The figures.
+ */
+function WindowStats( { model } ) {
+	return (
+		<div className="event-logger-header-stats newspack-nodes-stats-grid">
+			{ namedFields( 'eln/url-detail', [], 'value', model ).map(
+				( field ) => (
+					<span key={ field.key } className="newspack-nodes-stat">
+						{ display( field, fieldValue( field, model ) ) }
+						<small className="newspack-nodes-stat-label">
+							{ field.label }
+						</small>
+					</span>
+				)
+			) }
+		</div>
+	);
+}
+
+/**
+ * The Performance page: the providers its layout, its chrome and its window
+ * share, so every reader of one source on the page shares its one fetch.
  *
  * @param {Object}                    props                      Component props.
- * @param {(message: string) => void} props.onError              Ask-failure reporter, handed
- *                                                               straight to `useAsk`, which
- *                                                               calls it with the reason the
- *                                                               ask failed. The page renders
- *                                                               that as a dismissible notice.
- * @param {?Element}                  [props.headerControlsSlot] Shell header slot to portal the Ask, search and refresh controls into; null while it is pending, undefined renders them inline.
- * @return {import('react').ReactElement} Rendered component.
+ * @param {(message: string) => void} props.onError              Ask-failure reporter, handed straight to `useAsk`, which calls it with the reason the ask failed.
+ * @param {?Element}                  [props.headerControlsSlot] Shell header slot to portal the controls into; null while it is pending, undefined renders them inline.
+ * @return {import('react').ReactElement} The page.
  */
-export default function PerformanceDashboard( {
-	onError,
-	headerControlsSlot,
-} ) {
-	// @longform The table's bucket selection, as its spelling. A linked one
-	// goes out as it arrived: the server judges it against the charted slots,
-	// and the Time field's token that shows its refusal is the way out.
-	const [ tableBucket, setTableBucket ] = useQueryParamState(
-		'bucket',
-		( raw ) => raw ?? '',
-		String
+export default function PerformancePage( props ) {
+	return (
+		<PageStateProvider>
+			<SourcesProvider>
+				<PerformanceSurface { ...props } />
+			</SourcesProvider>
+		</PageStateProvider>
 	);
-	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
-		'metric',
-		CHART_METRICS,
-		DEFAULT_CHART_METRIC
-	);
+}
 
-	// Read each slice from its own per-slice view node (null until mounted).
-	const overviewSlice = useNodeField( 'overview:view', 'view' );
-	const urlsSlice = useNodeField( 'urls:view', 'view' );
-	const chartSlice = useNodeField( 'chart:view', 'view' );
-	const categoriesSlice = useNodeField( 'categories:view', 'view' );
-	const urlDetailSlice = useNodeField( 'url-detail:view', 'view' );
-	const urlChartSlice = useNodeField( 'url-chart:view', 'view' );
-	const urlCategoriesSlice = useNodeField( 'url-categories:view', 'view' );
-	const requestDetailSlice = useNodeField( 'request-detail:view', 'view' );
-	const overview = overviewSlice?.data ?? null;
-	// The live chart the selection is edited on bounds it.
-	const chartAnswer = chartSlice?.data ?? null;
-	const chartSlots = useMemo(
-		() => answerSlots( chartAnswer ),
-		[ chartAnswer ]
-	);
-	const [ tableBuckets, pickTableBucket, pickTableRange ] =
-		useBucketSelection( tableBucket, setTableBucket, chartSlots );
+/**
+ * The page under its providers: its header controls, its facts, its layout
+ * or, on an edit load for a curator, the layout's editor, and the window.
+ *
+ * @param {Object}                    props                      Component props.
+ * @param {(message: string) => void} props.onError              Ask-failure reporter.
+ * @param {?Element}                  [props.headerControlsSlot] Shell header slot.
+ * @return {import('react').ReactElement} The page.
+ */
+function PerformanceSurface( { onError, headerControlsSlot } ) {
+	const { canTune, canManage, compositions } = performancePage();
+	const urlsSlice = useSource( 'eln/urls', useUrlsParams() ).model;
+	const { servers: serverNames } = useSite();
 
-	// @longform Every overview answer names every server with traffic, busiest
-	// first; the select lists them by name. Null until the first one lands,
-	// which is neither one server nor several.
-	const answeredServers = overview?.servers;
-	const serverNames = useMemo(
-		() => ( answeredServers ? [ ...answeredServers ].sort() : null ),
-		[ answeredServers ]
-	);
-	// @longform The server filter is page-wide scope, not the overview card's
-	// own. A server linked in other capitals is the one the list names, and
-	// one the list does not name is dropped once the list can judge it.
-	const [ linkedServer, setServerFilter ] = useQueryParamState(
-		'server',
-		( raw ) => serverName( raw ?? '' ),
-		( value ) => value || null
-	);
+	// @longform The server filter is page-wide scope. A server linked in other
+	// capitals is the one the list names, and one the list does not name is
+	// dropped once the list can judge it.
+	const [ linkedServer, setServerFilter ] = useFilter( 'server' );
 	const serverFilter =
 		! serverNames?.length || serverNames.includes( linkedServer )
 			? linkedServer
@@ -336,49 +341,8 @@ export default function PerformanceDashboard( {
 		}
 	}, [ serverFilter, linkedServer, setServerFilter ] );
 
-	// The chart's question rides the `chart` fetch, so it lives here.
-	const [ chartBreakdown, setChartBreakdown ] = useQueryParamChoice(
-		'breakdown',
-		CHART_BREAKDOWNS,
-		DEFAULT_CHART_BREAKDOWN
-	);
-	const [ chartThenBy, setChartThenBy ] = useQueryParamChoice(
-		'then',
-		thenBysUnder( CHART_BREAKDOWNS, chartBreakdown ),
-		''
-	);
-	const [ chartChips, setChartChips ] = useQueryParamList(
-		'chip',
-		( raw ) => restoreChips( raw, FILTER_FIELD_OPTIONS ),
-		( chips ) => chips
-	);
-	const [ expanded, setExpanded ] = useQueryParamList(
-		'expand',
-		restoreExpanded,
-		( keys ) => keys
-	);
-	/**
-	 * Expand a page of the URL table, or shut it.
-	 *
-	 * @param {string} key The page's `pageKey()`.
-	 */
-	const toggleExpanded = useCallback(
-		( key ) =>
-			setExpanded( ( keys ) =>
-				keys.includes( key )
-					? keys.filter( ( other ) => other !== key )
-					: [ ...keys, key ]
-			),
-		[ setExpanded ]
-	);
-
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchAnswer, setSearchAnswer ] = useState( NO_SEARCH_ANSWER );
-	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
-		'event-logger-refresh-interval',
-		DASHBOARD_REFRESH_OPTIONS,
-		'15000'
-	);
 
 	// Read, never depended on: these keep the callbacks below stable.
 	const selectSubjectRef = useRef(
@@ -396,35 +360,7 @@ export default function PerformanceDashboard( {
 	// The same set's slowest, and what the set is, as the server applied it.
 	const urlSlowest = urlsSlice?.slowest ?? null;
 	const urlFilters = urlsSlice?.filters ?? null;
-	const urlDetail = urlDetailSlice?.data ?? null;
-	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
-	// The URL window's model on screen, which a one-request click records.
-	const urlDetailSliceRef = useRef( urlDetailSlice );
-	urlDetailSliceRef.current = urlDetailSlice;
-	// @longform The pages whose shapes the graph asks: those expanded, listed
-	// and of several shapes. A key naming a page off this page asks nothing.
-	const expandedPages = useMemo(
-		() =>
-			urls.filter(
-				( page ) =>
-					1 < page.shapes && expanded.includes( pageKey( page ) )
-			),
-		[ urls, expanded ]
-	);
-
-	// The selector shows the derived axes; the state keeps the choice made.
-	const {
-		breakdown: activeBreakdown,
-		thenBy: activeThenBy,
-		canBreakDownByServer,
-	} = activeChart( {
-		breakdown: chartBreakdown,
-		thenBy: chartThenBy,
-		serverFilter,
-		serverNames,
-	} );
-
 	const {
 		selectedSubject,
 		selectedRequest,
@@ -508,6 +444,45 @@ export default function PerformanceDashboard( {
 		() => ( { field: sortField, dir: sortDir } ),
 		[ sortField, sortDir ]
 	);
+
+	// @longform The window's reads, asking nothing while it is shut: the URL's
+	// answer stays on screen while a narrowed one is asked, but never under
+	// another subject's title, and a hash or rid no command may carry shows
+	// as the window's refusal instead of asking.
+	const detailRead = useSource( 'eln/url-detail', {
+		subject: selectedSubject && {
+			field: selectedSubject.field,
+			hash: selectedSubject.hash,
+		},
+		server: serverFilter,
+		buckets: detailBucket,
+		chips: detailChips,
+	} );
+	const badHash = !! selectedSubject && ! isValidHash( selectedSubject.hash );
+	const urlDetailSlice = useMemo(
+		() => ( {
+			data: badHash ? null : detailRead.model?.data ?? null,
+			loading: detailRead.loading,
+			error: badHash ? 'Invalid URL hash format' : detailRead.error,
+		} ),
+		[ badHash, detailRead.model, detailRead.loading, detailRead.error ]
+	);
+	const requestRead = useSource( 'eln/request-detail', {
+		request: selectedRequest,
+	} );
+	const badRid = !! selectedRequest && ! isValidRequestId( selectedRequest );
+	const requestDetailSlice = useMemo(
+		() => ( {
+			data: badRid ? null : requestRead.model,
+			error: badRid ? 'Invalid request ID format' : requestRead.error,
+		} ),
+		[ badRid, requestRead.model, requestRead.error ]
+	);
+	const urlDetail = urlDetailSlice.data;
+	const requestDetail = requestDetailSlice.data;
+	// The URL window's model on screen, which a one-request click records.
+	const urlDetailSliceRef = useRef( urlDetailSlice );
+	urlDetailSliceRef.current = urlDetailSlice;
 	/**
 	 * Reset the window for a URL opened or closed: its bucket and chips as
 	 * given, its chart and metric on the defaults. The request sort stays.
@@ -576,20 +551,10 @@ export default function PerformanceDashboard( {
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
-	// The graph polls and publishes; this page's own actions are below.
-	const { handleUrlParamsChange } = usePerformanceGraph( {
-		serverFilter,
-		chartBreakdown: activeBreakdown,
-		chartThenBy: activeThenBy,
-		chartChips,
-		refreshInterval,
-		selectedSubject,
-		selectedRequest,
-		detailFilters,
-		detailChart,
-		askActive: ask.active,
-		expandedPages,
-	} );
+	// The page holds still while the picker is armed.
+	useSourcesPaused( !! ( selectedSubject || selectedRequest || ask.active ), [
+		GROUPS.overview,
+	] );
 
 	// Where the URL detail was scrolled to, restored when the request closes.
 	const urlDetailScrollRef = useRef( 0 );
@@ -1209,25 +1174,11 @@ export default function PerformanceDashboard( {
 		}
 	}, [ selectedRequest ] );
 
-	// Initial load pending: no data, no error, and no fetch started yet.
-	const overviewResolved =
-		!! overviewSlice &&
-		( null !== overviewSlice.data ||
-			!! overviewSlice.error ||
-			overviewSlice.loading );
-	if ( ! overviewResolved ) {
-		return (
-			<div className="newspack-nodes-performance-loading">
-				<Spinner />
-				<p>
-					{ __(
-						'Loading performance data…',
-						'newspack-event-logger-nodes'
-					) }
-				</p>
-			</div>
-		);
-	}
+	const standing = {
+		openSubject,
+		selectedSubject,
+		busySubject: holdingWindow ? oneRequest.subject : null,
+	};
 
 	return (
 		<div className="event-logger-performance-dashboard">
@@ -1258,80 +1209,35 @@ export default function PerformanceDashboard( {
 				} }
 			/>
 
-			{ /* Overview Stats */ }
-			<OverviewSection
-				ask={ ask }
-				overview={ overview }
-				urlTotals={ urlTotals }
-				serverFilter={ serverFilter }
-				setServerFilter={ setServerFilter }
-				serverNames={ serverNames }
-				searchQuery={ searchQuery }
-				setSearchQuery={ changeSearchQuery }
-				searchLoading={ requestSearchPending || grepPending }
-				searchError={ searchAnswer.error }
-				onSearch={ handleSearch }
-				searchResults={ searchAnswer.results }
-				searchResultsTruncated={ searchAnswer.truncated }
-				searchUnparseableLines={ searchAnswer.unparseableLines }
-				onSelectResult={ searchRequest }
-				refreshInterval={ refreshInterval }
-				setRefreshInterval={ setRefreshInterval }
+			<ComposedPageFrame
+				context={ PERFORMANCE_CONTEXT }
+				page={ PERFORMANCE_PAGE }
+				pages={ PERFORMANCE_PAGES }
+				group={ GROUPS.performance }
+				canTune={ canTune }
+				canManage={ canManage }
+				layout={ compositions[ PERFORMANCE_CONTEXT ] }
+				views={ BLOCK_VIEWS }
+				standing={ standing }
 				headerControlsSlot={ headerControlsSlot }
-				chartMetric={ chartMetric }
-				setChartMetric={ setChartMetric }
-				chartBreakdown={ activeBreakdown }
-				canBreakDownByServer={ canBreakDownByServer }
-				setChartBreakdown={ setChartBreakdown }
-				chartThenBy={ activeThenBy }
-				setChartThenBy={ setChartThenBy }
-				chartChips={ chartChips }
-				setChartChips={ setChartChips }
-				chartSlice={ chartSlice }
-				categoriesSlice={ categoriesSlice }
-				onSlotClick={ pickTableBucket }
-				onSlotRange={ pickTableRange }
-				selectedBuckets={ tableBuckets }
-			/>
-
-			{ /* Main Content */ }
-			<div className="event-logger-performance-content">
-				{ /* URL List */ }
-				<div className="event-logger-performance-urls">
-					<div className="newspack-nodes-card event-logger-card">
-						<div className="event-logger-card__header">
-							<h2 className="newspack-nodes-section-heading">
-								{ __(
-									'Pages by Request Count',
-									'newspack-event-logger-nodes'
-								) }
-							</h2>
-						</div>
-						<div className="event-logger-card__body">
-							<UrlTable
-								urls={ urls }
-								selectedSubject={ selectedSubject }
-								onSelect={ openSubject }
-								expanded={ expanded }
-								onToggleExpand={ toggleExpanded }
-								busy={
-									holdingWindow ? oneRequest.subject : null
-								}
-								onParamsChange={ handleUrlParamsChange }
-								bucket={ tableBucket }
-								slots={ chartSlots }
-								server={ serverFilter }
-								onBucketChange={ setTableBucket }
-								totalRows={ urlsSlice?.rows }
-								chips={ chartChips }
-								metric={ chartMetric }
-								error={ urlsSlice?.error ?? null }
-								loading={ !! urlsSlice?.loading }
-							/>
-						</div>
-					</div>
-				</div>
-			</div>
+				controls={
+					<PerformanceHeader
+						ask={ ask }
+						searchQuery={ searchQuery }
+						setSearchQuery={ changeSearchQuery }
+						searchLoading={ requestSearchPending || grepPending }
+						searchError={ searchAnswer.error }
+						onSearch={ handleSearch }
+					/>
+				}
+			>
+				<SearchFindings
+					results={ searchAnswer.results }
+					truncated={ searchAnswer.truncated }
+					unparseableLines={ searchAnswer.unparseableLines }
+					onSelect={ searchRequest }
+				/>
+			</ComposedPageFrame>
 
 			{ holdingWindow && <HeldClick onCancel={ cancelHold } /> }
 
@@ -1382,22 +1288,7 @@ export default function PerformanceDashboard( {
 						) : (
 							<>
 								{ urlDetail && (
-									<div className="event-logger-header-stats newspack-nodes-stats-grid">
-										{ headlineStats(
-											urlDetail.stats,
-											URL_HEADER_STATS
-										).map( ( { key, short, value } ) => (
-											<span
-												key={ key }
-												className="newspack-nodes-stat"
-											>
-												{ value }
-												<small className="newspack-nodes-stat-label">
-													{ short }
-												</small>
-											</span>
-										) ) }
-									</div>
+									<WindowStats model={ detailRead.model } />
 								) }
 								<AskButton ask={ ask } />
 								<div className="event-logger-rule-control">
@@ -1461,7 +1352,8 @@ export default function PerformanceDashboard( {
 					) }
 
 					{ ! selectedRequest && urlDetail && (
-						<UrlDetailView
+						<UrlWindow
+							serverFilter={ serverFilter }
 							urlDetail={ urlDetail }
 							sortedRequests={ sortedRequests }
 							requestSort={ requestSort }
@@ -1472,8 +1364,6 @@ export default function PerformanceDashboard( {
 							onBucketChange={ setDetailBucket }
 							listing={ detailListing }
 							listError={ urlDetailSlice.error }
-							chartSlice={ urlChartSlice }
-							categoriesSlice={ urlCategoriesSlice }
 							chart={ detailChart }
 							onBreakdownChange={ setDetailBreakdown }
 							onThenByChange={ setDetailThenBy }

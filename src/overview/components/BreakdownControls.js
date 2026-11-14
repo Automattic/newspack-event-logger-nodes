@@ -1,10 +1,10 @@
 /**
  * The aggregate time chart and the selectors that drive it.
  *
- * The chart and its controls are one panel: the Metric and Breakdown values
- * the chart reads are exactly the ones the selects above it set, so splitting
- * the two would hand every caller the same select-to-chart wiring to redo.
- * The Overview card and the URL modal both draw it.
+ * `BreakdownBar` holds the selects and the chips, `BreakdownChart` the chart
+ * and what its answer is. The Performance page lays the two out as blocks of
+ * their own, which page state joins; the URL window draws them as one panel,
+ * `BreakdownControls`, whose bar sets the values its chart reads.
  */
 
 import { useMemo } from '@wordpress/element';
@@ -133,55 +133,27 @@ function FilterChips( { chips, onChange, options } ) {
 
 /**
  * Draws a Server select where the caller offers one, then Metric, Breakdown
- * and Then by, with the filter chips filling the rest of their row, then the
- * chart, and one line naming what the chart has instead of a series.
+ * and Then by, with the filter chips filling the rest of their row: the bar
+ * whose values the aggregate chart beneath it reads.
  *
- * What differs between the Overview card and the URL modal arrives as a prop —
- * the Server select on one side, the in-flight flag and the refusal on the
- * other, and on both the dimension list that still splits inside that scope and
- * the fields a chip may name — so neither scope carries a second copy of the
- * panel to hang its own extra on. The Metric list is not a prop: every metric
- * reduces the same per-bucket sums, so a caller never has one to withhold.
- *
- * Both callers mount it unconditionally, because the selects are the only way
- * out of a dimension with no rows, a read still in flight or a refused reply.
- * The panel says which of those three it has: a Loading pill beside the
- * selects, the refusal and the empty-dimension line under the chart. The
- * caller's one `breakdownState()` read yields both the state and the series
- * the chart draws, so the blank frame and the line beneath it cannot
- * disagree, and an answer the caller already read is never decoded again
- * here. Where the answer ranked more series than the chart holds, a line
- * says how many it draws of how many.
- *
- * @param {Object}                                              props                   Component props.
- * @param {Object}                                              props.breakdownRead     The caller's `breakdownState()` read of the dimensions' answer: `{ state, series, groups }`.
- * @param {string[]|null}                                       props.slots             The bucket keys the answer read, which the chart's axis is.
- * @param {string}                                              props.storageKey        Untranslated placement name for the chart; see AggregateTimeChart.
- * @param {string}                                              props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {(value: string) => void}                             props.setMetric         Metric setter.
- * @param {string}                                              props.breakdown         Selected first dimension, a value from `breakdownOptions`.
- * @param {(value: string) => void}                             props.setBreakdown      First dimension setter.
- * @param {string}                                              props.thenBy            Selected second dimension; '' for none.
- * @param {(value: string) => void}                             props.setThenBy         Second dimension setter.
- * @param {Array<Object>}                                       props.breakdownOptions  `{ label, value }` dimension choices: what still splits inside the caller's scope.
- * @param {string[]}                                            props.chips             The filter chips, each `field=value`.
- * @param {(chips: string[]) => void}                           props.setChips          Receives the chips an edit leaves.
- * @param {Array<Object>}                                       props.chipOptions       `{ label, value }` fields a chip may name.
- * @param {Array<Object>|null}                                  [props.serverOptions]   `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
- * @param {string}                                              [props.serverFilter]    Selected server name, or '' for all servers.
- * @param {(value: string) => void}                             [props.setServerFilter] Server filter setter, required alongside `serverOptions`.
- * @param {boolean}                                             [props.loading]         True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
- * @param {string|null}                                         [props.error]           Already-translated refusal printed under the chart.
- * @param {string|null}                                         [props.note]            Already-translated caveat printed under the chart.
- * @param {(key: string, click: {additive: boolean}) => void}   [props.onSlotClick]     Receives the bucket key a click on the chart lands on, and `{ additive }`.
- * @param {(keys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]     Receives the bucket keys a drag on the chart spans, and `{ additive }`.
- * @param {string[]}                                            props.selectedBuckets   The selected bucket keys the chart shades.
- * @return {import('react').ReactElement} Rendered panel.
+ * @param {Object}                    props                   Component props.
+ * @param {string}                    props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {(value: string) => void}   props.setMetric         Metric setter.
+ * @param {string}                    props.breakdown         Selected first dimension, a value from `breakdownOptions`.
+ * @param {(value: string) => void}   props.setBreakdown      First dimension setter.
+ * @param {string}                    props.thenBy            Selected second dimension; '' for none.
+ * @param {(value: string) => void}   props.setThenBy         Second dimension setter.
+ * @param {Array<Object>}             props.breakdownOptions  `{ label, value }` dimension choices: what still splits inside the caller's scope.
+ * @param {string[]}                  props.chips             The filter chips, each `field=value`.
+ * @param {(chips: string[]) => void} props.setChips          Receives the chips an edit leaves.
+ * @param {Array<Object>}             props.chipOptions       `{ label, value }` fields a chip may name.
+ * @param {Array<Object>|null}        [props.serverOptions]   `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
+ * @param {string}                    [props.serverFilter]    Selected server name, or '' for all servers.
+ * @param {(value: string) => void}   [props.setServerFilter] Server filter setter, required alongside `serverOptions`.
+ * @param {boolean}                   [props.loading]         True while the chart's read is out, which a Loading pill beside the selects says.
+ * @return {import('react').ReactElement} Rendered bar.
  */
-export default function BreakdownControls( {
-	breakdownRead,
-	slots,
-	storageKey,
+export function BreakdownBar( {
 	metric,
 	setMetric,
 	breakdown,
@@ -196,18 +168,126 @@ export default function BreakdownControls( {
 	serverFilter = '',
 	setServerFilter,
 	loading = false,
+} ) {
+	return (
+		<div
+			className="event-logger-chart-controls"
+			style={ {
+				display: 'flex',
+				gap: '16px',
+				margin: '12px 0',
+				alignItems: 'flex-end',
+				flexWrap: 'wrap',
+			} }
+		>
+			{ serverOptions && (
+				<SelectControl
+					__next40pxDefaultSize
+					label={ __( 'Server', 'newspack-event-logger-nodes' ) }
+					value={ serverFilter }
+					options={ serverOptions }
+					onChange={ setServerFilter }
+					style={ { minWidth: '180px' } }
+				/>
+			) }
+			<SelectControl
+				__next40pxDefaultSize
+				label={ __( 'Metric', 'newspack-event-logger-nodes' ) }
+				value={ metric }
+				options={ CHART_METRIC_OPTIONS }
+				onChange={ setMetric }
+				style={ { minWidth: '180px' } }
+			/>
+			<SelectControl
+				__next40pxDefaultSize
+				label={ __( 'Breakdown', 'newspack-event-logger-nodes' ) }
+				value={ breakdown }
+				options={ breakdownOptions }
+				onChange={ setBreakdown }
+				style={ { minWidth: '140px' } }
+			/>
+			<SelectControl
+				__next40pxDefaultSize
+				label={ __( 'Then by', 'newspack-event-logger-nodes' ) }
+				value={ thenBy }
+				options={ [
+					{
+						label: __( 'None', 'newspack-event-logger-nodes' ),
+						value: '',
+					},
+					...breakdownOptions.filter(
+						( option ) => option.value !== breakdown
+					),
+				] }
+				onChange={ setThenBy }
+				style={ { minWidth: '140px' } }
+			/>
+			{ loading && <LoadingPill /> }
+			<FilterChips
+				chips={ chips }
+				onChange={ setChips }
+				options={ chipOptions }
+			/>
+		</div>
+	);
+}
+
+/**
+ * The Loading pill that says a chart's read is out.
+ *
+ * @return {import('react').ReactElement} The pill.
+ */
+export function LoadingPill() {
+	return (
+		<span
+			className="newspack-nodes-status"
+			style={ { fontSize: '12px', paddingBottom: '8px' } }
+		>
+			{ __( 'Loading…', 'newspack-event-logger-nodes' ) }
+		</span>
+	);
+}
+
+/**
+ * What the aggregate chart's answer is: the refusal, the empty-dimension
+ * line, a caveat, and the chart.
+ *
+ * The caller's one `breakdownState()` read yields both the state and the
+ * series the chart draws, so the blank frame and the line beneath it cannot
+ * disagree. Where the answer ranked more series than the chart holds, the
+ * chart says how many it draws of how many.
+ *
+ * @param {Object}                                              props                  Component props.
+ * @param {Object}                                              props.breakdownRead    The caller's `breakdownState()` read: `{ state, series, groups }`.
+ * @param {string[]|null}                                       props.slots            The bucket keys the answer read, which the chart's axis is.
+ * @param {string}                                              props.storageKey       Untranslated placement name for the chart; see AggregateTimeChart.
+ * @param {string}                                              props.metric           The chart's metric.
+ * @param {string[]}                                            props.dims             Its dimensions.
+ * @param {Array<Object>}                                       props.breakdownOptions `{ label, value }` dimension choices, which name the dimensions.
+ * @param {string|null}                                         [props.error]          Already-translated refusal printed under the chart.
+ * @param {string|null}                                         [props.note]           Already-translated caveat printed under the chart.
+ * @param {string}                                              [props.serverFilter]   Selected server name, or '' for all servers.
+ * @param {(key: string, click: {additive: boolean}) => void}   [props.onSlotClick]    Receives the bucket key a click on the chart lands on, and `{ additive }`.
+ * @param {(keys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]    Receives the bucket keys a drag on the chart spans, and `{ additive }`.
+ * @param {string[]}                                            props.selectedBuckets  The selected bucket keys the chart shades.
+ * @return {import('react').ReactElement} Rendered chart.
+ */
+export function BreakdownChart( {
+	breakdownRead,
+	slots,
+	storageKey,
+	metric,
+	dims,
+	breakdownOptions,
 	error = null,
 	note = null,
+	serverFilter = '',
 	onSlotClick,
 	onSlotRange,
 	selectedBuckets,
 } ) {
 	// A refusal is terminal: it is why the dimension never arrived.
 	const state = error ? 'error' : breakdownRead.state;
-	const dims = useMemo(
-		() => chartDims( { breakdown, thenBy } ),
-		[ breakdown, thenBy ]
-	);
 	const dimension = dims
 		.map(
 			( dim ) =>
@@ -216,73 +296,7 @@ export default function BreakdownControls( {
 		)
 		.join( ' × ' );
 	return (
-		<div className="event-logger-aggregate-chart">
-			<div
-				className="event-logger-chart-controls"
-				style={ {
-					display: 'flex',
-					gap: '16px',
-					margin: '12px 0',
-					alignItems: 'flex-end',
-					flexWrap: 'wrap',
-				} }
-			>
-				{ serverOptions && (
-					<SelectControl
-						__next40pxDefaultSize
-						label={ __( 'Server', 'newspack-event-logger-nodes' ) }
-						value={ serverFilter }
-						options={ serverOptions }
-						onChange={ setServerFilter }
-						style={ { minWidth: '180px' } }
-					/>
-				) }
-				<SelectControl
-					__next40pxDefaultSize
-					label={ __( 'Metric', 'newspack-event-logger-nodes' ) }
-					value={ metric }
-					options={ CHART_METRIC_OPTIONS }
-					onChange={ setMetric }
-					style={ { minWidth: '180px' } }
-				/>
-				<SelectControl
-					__next40pxDefaultSize
-					label={ __( 'Breakdown', 'newspack-event-logger-nodes' ) }
-					value={ breakdown }
-					options={ breakdownOptions }
-					onChange={ setBreakdown }
-					style={ { minWidth: '140px' } }
-				/>
-				<SelectControl
-					__next40pxDefaultSize
-					label={ __( 'Then by', 'newspack-event-logger-nodes' ) }
-					value={ thenBy }
-					options={ [
-						{
-							label: __( 'None', 'newspack-event-logger-nodes' ),
-							value: '',
-						},
-						...breakdownOptions.filter(
-							( option ) => option.value !== breakdown
-						),
-					] }
-					onChange={ setThenBy }
-					style={ { minWidth: '140px' } }
-				/>
-				{ ( loading || 'pending' === state ) && (
-					<span
-						className="newspack-nodes-status"
-						style={ { fontSize: '12px', paddingBottom: '8px' } }
-					>
-						{ __( 'Loading…', 'newspack-event-logger-nodes' ) }
-					</span>
-				) }
-				<FilterChips
-					chips={ chips }
-					onChange={ setChips }
-					options={ chipOptions }
-				/>
-			</div>
+		<>
 			{ error && (
 				<p className="newspack-nodes-status is-error">{ error }</p>
 			) }
@@ -314,6 +328,32 @@ export default function BreakdownControls( {
 				onSlotRange={ onSlotRange }
 				selectedBuckets={ selectedBuckets }
 			/>
+		</>
+	);
+}
+
+/**
+ * The bar and the chart it drives, as one panel: the URL window draws it.
+ *
+ * Mounted unconditionally, because the selects are the only way out of a
+ * dimension with no rows, a read still in flight or a refused reply. The
+ * panel says which of those three it has: a Loading pill beside the
+ * selects, the refusal and the empty-dimension line under the chart.
+ *
+ * @param {Parameters<typeof BreakdownBar>[0] & Omit<Parameters<typeof BreakdownChart>[0], 'dims'>} props `BreakdownBar`'s props and `BreakdownChart`'s; `loading` is true while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
+ * @return {import('react').ReactElement} Rendered panel.
+ */
+export default function BreakdownControls( props ) {
+	const { breakdown, thenBy, breakdownRead, error = null, loading } = props;
+	const dims = useMemo(
+		() => chartDims( { breakdown, thenBy } ),
+		[ breakdown, thenBy ]
+	);
+	const pending = ! error && 'pending' === breakdownRead.state;
+	return (
+		<div className="event-logger-aggregate-chart">
+			<BreakdownBar { ...props } loading={ loading || pending } />
+			<BreakdownChart { ...props } dims={ dims } />
 		</div>
 	);
 }

@@ -2,7 +2,7 @@
  * Request Detail View Component
  *
  * Everything known about one logged request: the summary line, its findings,
- * the flame graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
+ * the flame graph, the profile breakdown, and the log entries table. `PerformancePage`
  * renders this inside the URL modal once a request row is selected.
  *
  * The data arrives already assembled. The `request-detail:view` node holds the

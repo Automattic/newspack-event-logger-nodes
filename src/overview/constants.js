@@ -2,10 +2,10 @@
  * The Performance Dashboard's dropdown vocabularies, and the groups its
  * commands travel.
  *
- * `PerformanceDashboard` reads the refresh cadences and the breakdown default,
- * `OverviewSection` the refresh cadences and the breakdown dimensions,
+ * The page's state (`./sources`) reads the refresh cadences, the defaults
+ * and the whitelists, the breakdown bar the dimensions,
  * `BreakdownControls` the metrics, the dimensions and the chip fields, and
- * `usePerformanceGraph` the series count every chart asks for; the Gyroscope
+ * `./questions` the series count every chart asks for; the Gyroscope
  * in-flight view keeps its own list in `src/gyroscope/constants.js`. Each
  * option is a `SelectControl` option, so the `value` is the token the rest of
  * the dashboard — and, for fields, the server — matches on. The metric and
@@ -19,15 +19,15 @@ import { SUBJECT_PARAMS } from './detailSubject';
 /**
  * Auto-refresh cadences for the dashboard's "Refresh:" dropdown.
  *
- * Each `value` is a number of MILLISECONDS held as a string, because
- * `SelectControl` compares option values as strings; `usePerformanceGraph`
- * parses it back with `parseInt` to arm the poll timer.
+ * Each `value` is a number of MILLISECONDS held as a string, as the picker
+ * hands it back; every poll reads it as its cadence, the `refresh` page
+ * state.
  *
  * The list doubles as the validation whitelist for the persisted
- * `event-logger-refresh-interval` localStorage value: `PerformanceDashboard`
- * hands it to `usePersistedChoice`, which discards a saved string that does not
- * match an option here and falls back to `'15000'`. Dropping that entry would
- * leave the dashboard defaulting to a value the dropdown cannot render.
+ * `event-logger-refresh-interval` localStorage value: `refresh` opens on a
+ * saved string that matches an option here and on `'15000'` otherwise.
+ * Dropping that entry would leave the page defaulting to a value the
+ * dropdown cannot render.
  */
 export const DASHBOARD_REFRESH_OPTIONS = [
 	{ label: '1s', value: '1000' },
@@ -165,13 +165,13 @@ const asOption = ( { value, label } ) => ( { label, value } );
  * Dimension choices for the aggregate time chart's two breakdown selects:
  * every `series` field.
  *
- * Each caller hands `BreakdownControls` the list it offers. `OverviewSection`
- * offers this one while `canBreakDownByServer` holds and
+ * Each caller hands `BreakdownControls` the list it offers. The breakdown
+ * bar offers this one while `canBreakDownByServer` holds and
  * `SCOPED_BREAKDOWN_OPTIONS` once it does not — a server filter is on, or a
- * landed server list names fewer than two; `PerformanceDashboard` computes
- * that flag, passes it down, and resolves the active dimension against the
- * same flag, so a list that has not landed yet keeps the default. The URL
- * modal offers the scoped list always.
+ * landed server list names fewer than two; `useChartQuestion()` computes
+ * that flag and resolves the active dimension against it, so a list that has
+ * not landed yet keeps the default. The URL modal offers the scoped list
+ * always.
  */
 export const CHART_BREAKDOWN_OPTIONS = REQUEST_FIELDS.filter(
 	( field ) => 'series' === field.kind
@@ -255,7 +255,7 @@ export const SORT_ORDERS = [ 'asc', 'desc' ];
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.
  *
- * `PerformanceDashboard` seeds its `chartBreakdown` state with this and
+ * The `breakdown` page state opens on this, and `useChartQuestion()`
  * resolves `server` to `status_class` whenever `canBreakDownByServer` is
  * false. That fallback is DERIVED, never written back over the state, so a
  * hub whose second server reports late gets the axis back rather than
@@ -290,9 +290,10 @@ export const CATEGORY_MEASURES = [ 'ms', 'calls' ];
 /**
  * The groups this plugin's commands travel, each through its own
  * `<group>:shell` Tap so `connect <group>:shell` watches one family alone.
- * `usePerformanceGraph` polls under `overview`, `url` and `request`;
- * `PerformanceDashboard`, `UrlDetailView` and `AskPanel` send their one-shot
- * commands under `url`, `request`, `performance` and `rules`; the rules editor
+ * The Performance page's sources ask under `overview`, `url` and `request`,
+ * and its layout's commands go under `performance`; `PerformancePage`,
+ * `UrlDetailView` and `AskPanel` send their one-shot commands under `url`,
+ * `request`, `performance` and `rules`; the rules editor
  * sends under `rules`, the hook picker under `hooks`, the current-request tab
  * under `currentRequest`, and the request and error streams under `requestLog`
  * and `errorLog`.
@@ -336,16 +337,15 @@ export const PAGE_KEY = /^[a-f0-9]+:[^\s/]+$/;
 export const NO_PAGE_KEYS = [];
 
 /**
- * The subject of the slice an expanded page asks its shapes through, whose
- * view the URL table reads its shape rows from as `<subject>:view`.
- *
- * @param {{page_hash: string, server: string}} page A page row.
- * @return {string} `shapes:<page key>`.
- */
-export const shapesSubject = ( page ) => `shapes:${ pageKey( page ) }`;
-
-/**
  * The shapes one ask for an expanded page lists: `Stats_Query::MAX_LIMIT`,
  * the most the `urls` command answers at once.
  */
 export const SHAPES_PER_ASK = 1000;
+
+/**
+ * A duration in whole milliseconds.
+ *
+ * @param {number} n Milliseconds.
+ * @return {string} `n` rounded, with its unit.
+ */
+export const wholeMs = ( n ) => `${ n.toFixed( 0 ) }ms`;

@@ -158,7 +158,7 @@ describe( 'dashboard Modal theme class', () => {
 		const files = modals().map( ( modal ) => modal.file.split( ':' )[ 0 ] );
 		expect( files ).toEqual(
 			expect.arrayContaining( [
-				'overview/PerformanceDashboard.js',
+				'overview/PerformancePage.js',
 				'overview/components/AskPanel.js',
 				'rules/RuleEditModal.js',
 				'rules/RulesAdmin.js',

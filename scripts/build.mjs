@@ -89,7 +89,8 @@ for ( const dep of Object.keys(
 
 /**
  * One bundle per screen: five admin pages that `enqueue_react_page()` mounts by
- * directory name, plus the front-end `current-request` overlay. Into each
+ * directory name, the Performance page's layout editor, which an edit load
+ * adds, plus the front-end `current-request` overlay. Into each
  * `outDir` the kit emits `index.js` and the `index.asset.php` manifest PHP
  * reads dependencies and version from, plus `index.css` and its RTL companion
  * whenever the entry imports styles.
@@ -114,6 +115,10 @@ const ENTRIES = [
 	{
 		entry: 'src/requests/index.js',
 		outDir: path.resolve( ROOT, 'build/requests' ),
+	},
+	{
+		entry: 'src/overview/layout-editor.js',
+		outDir: path.resolve( ROOT, 'build/overview-editor' ),
 	},
 	{
 		entry: 'src/current-request/index.js',

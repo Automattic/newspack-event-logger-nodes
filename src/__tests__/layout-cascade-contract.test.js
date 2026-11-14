@@ -107,22 +107,6 @@ const expectLocalCascadeWin = ( {
 };
 
 describe( 'Event Logger layout cascade', () => {
-	it( 'keeps overview stats as the original five-item flex row', () => {
-		expect.hasAssertions();
-		expectLocalCascadeWin( {
-			localStylesheet: local( 'overview/styles/base.scss' ),
-			localSelector: '.event-logger-overview-stats',
-			sharedStylesheet: sharedComponents,
-			sharedSelector:
-				':where(.newspack-nodes-ui) .newspack-nodes-stats-grid',
-			expected: {
-				display: 'flex',
-				'justify-content': 'space-between',
-				'align-items': 'baseline',
-			},
-		} );
-	} );
-
 	it( 'ships compact loading geometry with every bundle rendering a trace', () => {
 		expect.hasAssertions();
 		expect(

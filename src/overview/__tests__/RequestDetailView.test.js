@@ -2,7 +2,7 @@
  * Tests for RequestDetailView's folded-request surface.
  *
  * A folded request keeps its head and tail and reports the middle as merged
- * spans, which `PerformanceDashboard` splices into the entry list before this
+ * spans, which `PerformancePage` splices into the entry list before this
  * view sees it. So the view's whole job here is to SAY the request was
  * aggregated — otherwise a short entry list reads as "nothing happened", which
  * is the opposite of what a folded request means.

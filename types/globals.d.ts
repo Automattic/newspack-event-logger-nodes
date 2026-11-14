@@ -37,6 +37,17 @@ declare global {
 		newspackNodesRecommendedHooks?: string[];
 		/** Hook names offered for time-by-owner attribution. */
 		newspackNodesOwnerTimeEvents?: string[];
+		/** Set by `Performance_Page::enqueue()`: the composed page's data. */
+		NewspackEventLoggerPerformancePage?: {
+			/** Whether the reader may curate the layout. */
+			canTune: boolean;
+			/** Whether the reader is an operator, who reads a refusal's own words. */
+			canManage: boolean;
+			/** Context => its layout or its refusal. */
+			compositions: Record< string, Object >;
+			/** The stats window in buckets, or its refusal. */
+			window: number | { error: string };
+		};
 	}
 }
 

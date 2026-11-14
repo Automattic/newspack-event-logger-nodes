@@ -11,8 +11,8 @@ jest.mock( '../requests/RequestStreamPage', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_STREAM_PAGE',
 } ) );
-// overview mounts the lazy PerformanceDashboard; error-log is its own entry.
-jest.mock( '../overview/PerformanceDashboard', () => ( {
+// overview mounts the lazy PerformancePage; error-log is its own entry.
+jest.mock( '../overview/PerformancePage', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );

@@ -9,7 +9,7 @@
  * "not wrapped in act" warning the shared jest.setup escalates to a failure.
  */
 
-jest.mock( '../overview/PerformanceDashboard', () => ( {
+jest.mock( '../overview/PerformancePage', () => ( {
 	__esModule: true,
 	default: () => 'PERFORMANCE_DASHBOARD',
 } ) );

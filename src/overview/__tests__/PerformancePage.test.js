@@ -1,46 +1,137 @@
 /* global globalThis, PopStateEvent */
 /**
- * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
+ * Tests for PerformancePage — the composed page's frame: its header controls,
+ * its facts, the layout it hands the page it stands on, and the URL and
+ * request window over it.
  *
- * The orchestrator reads FOUR per-slice view nodes
- * (`overview:view` / `urls:view` / `url-detail:view` / `request-detail:view`), each
- * via its own `useNodeField`. `usePerformanceGraph` mounts the polls and hands
- * back `handleUrlParamsChange` alone; the commands a click drives are this
- * component's own one-shots, held beside the state each reply sets.
- *
- * These tests cover the ORCHESTRATION contract only — which child renders given
- * which slice, what callbacks the children receive, how the orchestrator derives
- * its render-time values. The fetch mechanics live in the usePerformanceGraph
- * tests; the per-slice view-model logic lives in the per-node tests.
- *
- * The data seam is the slice model: tests set `mockView` (the same combined
- * `{ overview, urls, urlDetail, requestDetail }` shape as before), and the mocked
- * `useNodeField` fans it out by node name so the existing setups work unchanged.
- * The graph control callbacks come from `mockGraph`. Children are mocked at the
- * module boundary as stub components that record their props.
+ * The data seam is the source: tests set `mockView`, one slice per source
+ * (`{ overview, urls, urlDetail, urlChart, urlCategories, requestDetail }`),
+ * and the mocked `useSource` answers each read from it, recording every read
+ * in `mockReads`. The layout and the header are mocked at the module
+ * boundary as stubs that record their props: `__layoutPage` is the page the
+ * layout's blocks stand on, `__urlTableProps` the URL table's view of it,
+ * and `__overviewProps` the header's.
  */
 
-// Per-slice view model; the mock fans it out by node name.
+// Per-source view model, by the source a read names.
 let mockView = null;
-jest.mock( '@newspack-nodes/runtime', () => ( {
-	__esModule: true,
-	useNodeField: ( nodeName ) => {
-		if ( ! mockView ) {
-			return undefined;
-		}
-		const sliceByNode = {
-			'overview:view': 'overview',
-			'urls:view': 'urls',
-			'chart:view': 'chart',
-			'categories:view': 'categories',
-			'url-detail:view': 'urlDetail',
-			'url-chart:view': 'urlChart',
-			'url-categories:view': 'urlCategories',
-			'request-detail:view': 'requestDetail',
-		};
-		const key = sliceByNode[ nodeName ];
-		return key ? mockView[ key ] : undefined;
+// Every source read, oldest first: `{ name, params }`.
+const mockReads = [];
+// Every hold the page asked, oldest first.
+const mockHolds = [];
+
+/**
+ * What one source shows the page, from `mockView`.
+ *
+ * @param {string} name The source.
+ * @return {Object} `{ model, error, loading, stale }`.
+ */
+function mockSourceState( name ) {
+	const slice = mockView
+		? {
+				'eln/urls': mockView.urls,
+				'eln/overview': mockView.overview,
+				'eln/url-detail': mockView.urlDetail,
+				'eln/request-detail': mockView.requestDetail,
+				'eln/chart': mockView.chart,
+				'eln/categories': mockView.categories,
+				'eln/url-chart': mockView.urlChart,
+				'eln/url-categories': mockView.urlCategories,
+		  }[ name ]
+		: undefined;
+	if ( ! slice ) {
+		return { model: null, error: null, loading: true, stale: false };
+	}
+	// One state a slice, as a key's state stands until its host publishes.
+	const known = mockStates.get( slice )?.[ name ];
+	if ( known ) {
+		return known;
+	}
+	const models = {
+		'eln/urls': () => ( {
+			data: slice.data ?? [],
+			totals: slice.totals ?? null,
+			rows: slice.rows ?? 0,
+			offset: slice.offset ?? 0,
+			slowest: slice.slowest ?? [],
+			filters: slice.filters ?? null,
+		} ),
+		'eln/request-detail': () => slice.data ?? null,
+	};
+	const state = {
+		model: (
+			models[ name ] ?? ( () => ( { data: slice.data ?? null } ) )
+		)(),
+		error: slice.error ?? null,
+		loading: !! slice.loading,
+		stale: false,
+	};
+	mockStates.set( slice, { ...mockStates.get( slice ), [ name ]: state } );
+	return state;
+}
+
+/** Each slice's states, by source, so a slice reads as one state. */
+const mockStates = new WeakMap();
+
+jest.mock( '@newspack-nodes/shared/sources', () => ( {
+	...jest.requireActual( '@newspack-nodes/shared/sources' ),
+	SourcesProvider: ( { children } ) => children,
+	useSourcesPaused: ( held, groups ) => mockHolds.push( { held, groups } ),
+	useSource: ( name, params ) => {
+		mockReads.push( { name, params } );
+		return mockSourceState( name );
 	},
+} ) );
+
+/**
+ * What the page asked the window and the table, as the graph once took it:
+ * the table's server filter and chips, the window's subject, narrowing and
+ * chart, the request, and whether the page holds its sources still.
+ *
+ * @param {(name: string) => ?Object} read The read of one source to take.
+ * @return {Object} The question.
+ */
+const questionOf = ( read ) => {
+	const detail = read( 'eln/url-detail' );
+	const chart = mockReads
+		.filter( ( one ) => 'eln/url-chart' === one.name )
+		.at( -1 )?.params;
+	return {
+		serverFilter: read( 'eln/urls' )?.server,
+		chartChips: read( 'eln/urls' )?.chips,
+		selectedSubject: globalThis.__layoutPage?.selectedSubject ?? null,
+		detailFilters: { bucket: detail?.buckets ?? '' },
+		detailChart: {
+			breakdown: chart?.breakdown ?? 'status_class',
+			thenBy: chart?.then ?? '',
+			chips: detail?.chips ?? [],
+		},
+		selectedRequest: read( 'eln/request-detail' )?.request ?? null,
+		held: mockHolds.at( -1 ) ?? null,
+	};
+};
+
+/** The question the page asks now. */
+const graphOpts = () => questionOf( lastRead );
+
+/** The question the page's first render asked. */
+const firstGraphOpts = () =>
+	questionOf(
+		( name ) =>
+			mockReads.find( ( read ) => name === read.name )?.params ?? null
+	);
+
+/**
+ * The params of the latest read of one source.
+ *
+ * @param {string} name The source.
+ * @return {?Object} Its params, or null for none.
+ */
+const lastRead = ( name ) =>
+	mockReads.filter( ( read ) => name === read.name ).at( -1 )?.params ?? null;
+
+jest.mock( '@newspack-nodes/runtime', () => ( {
+	...jest.requireActual( '@newspack-nodes/runtime' ),
 	// Faithful enough to assert on: positionals then `--key=value`, as the
 	// real one emits, so a test sees the tokens the server would.
 	formatCommandArgs: ( args, options = {} ) => [
@@ -49,6 +140,54 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 	],
 	// The Ask panel prints the MCP endpoint under this site's REST root.
 	nodesData: () => ( { restUrl: '/wp-json/', nonce: 'NONCE' } ),
+} ) );
+
+// The frame records the page its blocks stand on, and the table's view of it.
+jest.mock(
+	'@newspack-nodes/shared/composition/page/ComposedPageFrame',
+	() => ( {
+		__esModule: true,
+		default: ( { standing, controls, children } ) => {
+			const React = require( 'react' );
+			globalThis.__layoutPage = standing;
+			globalThis.__urlTableProps = {
+				onSelect: standing.openSubject,
+				selectedSubject: standing.selectedSubject,
+				busy: standing.busySubject,
+			};
+			return React.createElement(
+				'div',
+				{ 'data-testid': 'url-table' },
+				controls,
+				children,
+				'Layout'
+			);
+		},
+	} )
+);
+
+// The header records the search props the page hands it.
+jest.mock( '../components/PerformanceHeader', () => ( {
+	__esModule: true,
+	// The findings record their props beside the header's, as one header.
+	SearchFindings: ( props ) => {
+		Object.assign( globalThis.__overviewProps, {
+			searchResults: props.results,
+			searchResultsTruncated: props.truncated,
+			searchUnparseableLines: props.unparseableLines,
+			onSelectResult: props.onSelect,
+		} );
+		return null;
+	},
+	default: ( props ) => {
+		const React = require( 'react' );
+		globalThis.__overviewProps = { ...props };
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'overview' },
+			'PerformanceHeader'
+		);
+	},
 } ) );
 
 // @longform Every on-demand command this page drives is a one-shot, and this
@@ -152,27 +291,6 @@ const RULES_DUMP = 'rules:dump';
 const RULES_UPSERT = 'rules:upsert';
 const RULES_DELETE = 'rules:delete';
 
-// The graph control callbacks usePerformanceGraph hands back.
-const mockGraph = { handleUrlParamsChange: jest.fn() };
-// Records what the dashboard hands the graph.
-let mockGraphOpts = null;
-// Every render's ask, oldest first, so a test can read the FIRST fetch.
-const mockGraphCalls = [];
-jest.mock( '../hooks/usePerformanceGraph', () => ( {
-	__esModule: true,
-	// The CI mounts are real: the scopes below are built from them.
-	SERVER: 'performance',
-	RULES_CI: 'rules',
-	GREP_RESULT_LIMIT: 20,
-	NO_CHIPS: [],
-	NO_DETAIL_CHART: { breakdown: 'status_class', thenBy: '', chips: [] },
-	usePerformanceGraph: ( opts ) => {
-		mockGraphOpts = opts;
-		mockGraphCalls.push( opts );
-		return mockGraph;
-	},
-} ) );
-
 // `mock` prefix permits cross-scope reference in jest.mock factories.
 const mockNavState = {
 	selectedSubject: null,
@@ -203,39 +321,6 @@ jest.mock( '../hooks/useUrlNavigation', () => ( {
 jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	__esModule: true,
 	default: () => true,
-} ) );
-
-// Mock children: each renders a placeholder capturing its props.
-jest.mock( '../components/OverviewSection', () => ( {
-	__esModule: true,
-	default: ( props ) => {
-		const React = require( 'react' );
-		globalThis.__overviewProps = props;
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'overview' },
-			'OverviewSection',
-			' chartMetric=',
-			props.chartMetric,
-			' breakdown=',
-			props.chartBreakdown
-		);
-	},
-} ) );
-
-jest.mock( '../UrlTable', () => ( {
-	__esModule: true,
-	default: ( props ) => {
-		const React = require( 'react' );
-		// Stash latest props so tests can invoke callbacks.
-		globalThis.__urlTableProps = props;
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'url-table' },
-			'UrlTable totalRows=',
-			props.totalRows
-		);
-	},
 } ) );
 
 jest.mock( '../components/UrlDetailView', () => ( {
@@ -318,8 +403,9 @@ jest.mock( '@wordpress/components', () => ( {
 } ) );
 
 import * as React from 'react';
-import { DEFAULT_CHART_BREAKDOWN } from '../constants';
-import PerformanceDashboard from '../PerformanceDashboard';
+import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
+import { localizePerformancePage } from '../../test-helpers/localizePerformancePage';
+import PerformancePage from '../PerformancePage';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 
@@ -379,10 +465,9 @@ const serverView = ( servers ) =>
 
 // A hub's two servers, busiest first, and a site reporting one.
 const hub = [ 'edge-02', 'edge-01' ];
-const single = [ 'edge-01' ];
 
 const dashboard = () =>
-	React.createElement( PerformanceDashboard, { onError: jest.fn() } );
+	React.createElement( PerformancePage, { onError: jest.fn() } );
 // Every dashboard a test mounts, so a failing one cannot outlive its test.
 const mounted = [];
 const mountDash = () => {
@@ -402,9 +487,10 @@ const closeModal = async ( rerender ) => {
 	await act( async () => rerender( dashboard() ) );
 };
 
-describe( 'PerformanceDashboard', () => {
+describe( 'PerformancePage', () => {
 	beforeEach( () => {
 		mockView = null;
+		localizePerformancePage();
 		window.localStorage.clear();
 		// The page writes its filters into the bar; a test never inherits them.
 		window.history.replaceState(
@@ -416,8 +502,8 @@ describe( 'PerformanceDashboard', () => {
 
 	afterEach( () => {
 		mounted.splice( 0 ).forEach( ( mount ) => mount.unmount() );
-		mockGraph.handleUrlParamsChange.mockClear();
-		mockGraphCalls.length = 0;
+		mockReads.length = 0;
+		mockHolds.length = 0;
 		Object.keys( mockCommands ).forEach(
 			( k ) => delete mockCommands[ k ]
 		);
@@ -469,49 +555,6 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'shows the loading spinner while the view model is null', () => {
-		mockView = null;
-		const { container, unmount } = mountDash();
-		expect( container.textContent ).toContain( 'Loading performance' );
-		expect(
-			container.querySelector( '[data-testid="spinner"]' )
-		).toBeTruthy();
-		unmount();
-	} );
-
-	it( 'orchestrates the full dashboard once the overview resolves', async () => {
-		mockView = loadedView();
-		const { container, unmount } = mountDash();
-		await flushEffects();
-		expect(
-			container.querySelector( '[data-testid="overview"]' )
-		).toBeTruthy();
-		expect(
-			container.querySelector( '[data-testid="url-table"]' )
-		).toBeTruthy();
-		expect( globalThis.__overviewProps.overview.totals.requests ).toBe(
-			100
-		);
-		unmount();
-	} );
-
-	it( 'forwards the urls slice error and pending state to UrlTable', async () => {
-		mockView = loadedView( {
-			urls: {
-				data: [],
-				loading: true,
-				error: 'include_workers wants a bool: maybe',
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-		expect( globalThis.__urlTableProps.error ).toBe(
-			'include_workers wants a bool: maybe'
-		);
-		expect( globalThis.__urlTableProps.loading ).toBe( true );
-		unmount();
-	} );
-
 	it( 'hands UrlTable no ranking flag and no server clock', async () => {
 		mockView = loadedView( {
 			urls: {
@@ -527,44 +570,6 @@ describe( 'PerformanceDashboard', () => {
 		await flushEffects();
 		expect( globalThis.__urlTableProps ).not.toHaveProperty( 'ranked' );
 		expect( globalThis.__urlTableProps ).not.toHaveProperty( 'now' );
-		unmount();
-	} );
-
-	it( "hands the graph the chart's second dimension and chips from the panel", async () => {
-		mockView = serverView( hub );
-		const { unmount } = mountDash();
-		await flushEffects();
-
-		act( () => globalThis.__overviewProps.setChartThenBy( 'country' ) );
-		act( () =>
-			globalThis.__overviewProps.setChartChips( [ 'method=PURGE' ] )
-		);
-		await flushEffects();
-
-		expect( mockGraphOpts.chartThenBy ).toBe( 'country' );
-		expect( mockGraphOpts.chartChips ).toEqual( [ 'method=PURGE' ] );
-		expect( globalThis.__overviewProps.chartThenBy ).toBe( 'country' );
-		expect( globalThis.__overviewProps.chartChips ).toEqual( [
-			'method=PURGE',
-		] );
-		unmount();
-	} );
-
-	it( 'asks no server axis it cannot chart, and leaves a repeat to the graph', async () => {
-		mockView = serverView( single );
-		const { unmount } = mountDash();
-		await flushEffects();
-
-		act( () => globalThis.__overviewProps.setChartThenBy( 'server' ) );
-		await flushEffects();
-		expect( mockGraphOpts.chartThenBy ).toBe( '' );
-
-		act( () =>
-			globalThis.__overviewProps.setChartThenBy( 'status_class' )
-		);
-		await flushEffects();
-		expect( mockGraphOpts.chartBreakdown ).toBe( 'status_class' );
-		expect( mockGraphOpts.chartThenBy ).toBe( 'status_class' );
 		unmount();
 	} );
 
@@ -592,11 +597,11 @@ describe( 'PerformanceDashboard', () => {
 		const { rerender, unmount } = mountDash();
 		await flushEffects();
 
-		expect( globalThis.__urlDetailProps.chartSlice ).toBe( urlChart );
-		expect( globalThis.__urlDetailProps.categoriesSlice ).toBe(
+		expect( globalThis.__urlDetailProps.chartSlice ).toEqual( urlChart );
+		expect( globalThis.__urlDetailProps.categoriesSlice ).toEqual(
 			urlCategories
 		);
-		expect( mockGraphOpts.detailChart ).toEqual( {
+		expect( graphOpts().detailChart ).toEqual( {
 			breakdown: 'status_class',
 			thenBy: '',
 			chips: [],
@@ -604,17 +609,19 @@ describe( 'PerformanceDashboard', () => {
 
 		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
 		await flushEffects();
-		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'ja4' );
+		expect( graphOpts().detailChart.breakdown ).toBe( 'ja4' );
 		expect( globalThis.__urlDetailProps.chart.breakdown ).toBe( 'ja4' );
 
-		// The same value hands the graph the same object, so it asks nothing.
-		const held = mockGraphOpts.detailChart;
+		// The same value asks the same question, so the window asks nothing.
+		const held = graphOpts().detailChart;
 		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
 		await flushEffects();
-		expect( mockGraphOpts.detailChart ).toBe( held );
+		expect( graphOpts().detailChart ).toEqual( held );
 
 		await closeModal( rerender );
-		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'status_class' );
+		expect(
+			new URLSearchParams( window.location.search ).get( 'url_breakdown' )
+		).toBeNull();
 		unmount();
 	} );
 
@@ -654,134 +661,10 @@ describe( 'PerformanceDashboard', () => {
 		expect( true ).toBe( true );
 	} );
 
-	it( 'persists refresh interval changes to localStorage via effect', () => {
-		window.localStorage.clear();
-		mockView = loadedView();
-		const { unmount } = mountDash();
-		expect(
-			window.localStorage.getItem( 'event-logger-refresh-interval' )
-		).toBe( '15000' );
-		unmount();
-	} );
-
 	it( 'unmounts cleanly without throwing', () => {
 		mockView = loadedView();
 		const { unmount } = mountDash();
 		expect( () => unmount() ).not.toThrow();
-	} );
-
-	describe( 'the server breakdown axis', () => {
-		it( 'stays on Server while the first reply is still in flight', async () => {
-			// Empty is "nothing has ARRIVED", not "one server". Resolving it as
-			// the latter demoted every page load before the names could land.
-			mockView = loadedView( {
-				overview: { data: null, loading: true, error: null },
-			} );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'server'
-			);
-			unmount();
-		} );
-
-		it( 'stays on Server on a hub with no filter', async () => {
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'server'
-			);
-			expect( globalThis.__overviewProps.canBreakDownByServer ).toBe(
-				true
-			);
-			unmount();
-		} );
-
-		it( 'falls back to Status Class when one server reports', async () => {
-			mockView = serverView( single );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status_class'
-			);
-			unmount();
-		} );
-
-		it( 'falls back under a server filter and restores when it clears', async () => {
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'server'
-			);
-
-			await act( async () => {
-				globalThis.__overviewProps.setServerFilter( 'edge-01' );
-			} );
-			await flushEffects();
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status_class'
-			);
-
-			// The scoped reply still names every server: the axis is site-wide.
-			mockView = serverView( hub );
-			await act( async () => {
-				globalThis.__overviewProps.setRefreshInterval( '5000' );
-			} );
-			await flushEffects();
-
-			await act( async () => {
-				globalThis.__overviewProps.setServerFilter( '' );
-			} );
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.serverNames ).toEqual( [
-				'edge-01',
-				'edge-02',
-			] );
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'server'
-			);
-			unmount();
-		} );
-
-		it( 'asks the server for the dimension it is going to draw', async () => {
-			// The whole point of deriving: the request and the render agree.
-			mockView = serverView( single );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status_class'
-			);
-			expect( mockGraphOpts.chartBreakdown ).toBe( 'status_class' );
-			unmount();
-		} );
-
-		it( 'returns to Server when a second server starts reporting', async () => {
-			// The fallback is derived per render, never written back: a hub
-			// whose sibling was silent for one window would otherwise be stuck
-			// on Status Codes for the session.
-			mockView = serverView( single );
-			const { rerender, unmount } = mountDash();
-			await flushEffects();
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status_class'
-			);
-
-			mockView = serverView( hub );
-			rerender( dashboard() );
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'server'
-			);
-			unmount();
-		} );
 	} );
 
 	describe( 'the address bar', () => {
@@ -803,94 +686,6 @@ describe( 'PerformanceDashboard', () => {
 			pushSpy.mockRestore();
 		} );
 
-		it( 'opens on the metric and breakdown a link names', async () => {
-			linkTo( 'metric=memory&breakdown=country' );
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartMetric ).toBe( 'memory' );
-			expect( globalThis.__urlTableProps.metric ).toBe( 'memory' );
-			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'country'
-			);
-			expect( mockGraphOpts.chartBreakdown ).toBe( 'country' );
-			unmount();
-		} );
-
-		it( 'ignores a metric or breakdown the dropdowns do not offer', async () => {
-			linkTo( 'metric=p99&breakdown=referrer' );
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.chartMetric ).toBe( 'volume' );
-			expect( mockGraphOpts.chartBreakdown ).toBe(
-				DEFAULT_CHART_BREAKDOWN
-			);
-			expect( param( 'metric' ) ).toBeNull();
-			expect( param( 'breakdown' ) ).toBeNull();
-			unmount();
-		} );
-
-		it( 'drops a linked Then by that repeats the Breakdown', async () => {
-			linkTo( 'breakdown=ja4&then=ja4' );
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( mockGraphCalls[ 0 ].chartBreakdown ).toBe( 'ja4' );
-			expect( mockGraphCalls[ 0 ].chartThenBy ).toBe( '' );
-			expect( globalThis.__overviewProps.chartThenBy ).toBe( '' );
-			expect( window.location.search ).toBe( '?page=perf&breakdown=ja4' );
-			unmount();
-		} );
-
-		it( 'keeps a stored Then by through a poll that answers one server', async () => {
-			mockView = serverView( hub );
-			const { rerender, unmount } = mountDash();
-			await flushEffects();
-			act( () =>
-				globalThis.__overviewProps.setChartThenBy( 'status_class' )
-			);
-
-			mockView = serverView( single );
-			await act( async () => rerender( dashboard() ) );
-			await flushEffects();
-			mockView = serverView( hub );
-			await act( async () => rerender( dashboard() ) );
-			await flushEffects();
-
-			expect( param( 'then' ) ).toBe( 'status_class' );
-			expect( mockGraphOpts.chartBreakdown ).toBe( 'server' );
-			expect( mockGraphOpts.chartThenBy ).toBe( 'status_class' );
-			unmount();
-		} );
-
-		it( 'writes a metric or breakdown change and drops a default', async () => {
-			linkTo( 'url=h1&request=r1' );
-			mockView = serverView( hub );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			act( () => globalThis.__overviewProps.setChartMetric( 'avg' ) );
-			act( () => globalThis.__overviewProps.setChartBreakdown( 'ua' ) );
-			expect( param( 'metric' ) ).toBe( 'avg' );
-			expect( param( 'breakdown' ) ).toBe( 'ua' );
-
-			act( () => globalThis.__overviewProps.setChartMetric( 'volume' ) );
-			act( () =>
-				globalThis.__overviewProps.setChartBreakdown(
-					DEFAULT_CHART_BREAKDOWN
-				)
-			);
-			expect( window.location.search ).toBe(
-				'?page=perf&url=h1&request=r1'
-			);
-			expect( pushSpy ).not.toHaveBeenCalled();
-			unmount();
-		} );
-
 		it( 'scopes the first fetch to a linked server', async () => {
 			linkTo( 'server=edge-02' );
 			mockView = loadedView( {
@@ -898,14 +693,14 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
-			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-02' );
+			expect( firstGraphOpts().serverFilter ).toBe( 'edge-02' );
 
 			mockView = serverView( hub );
 			rerender( dashboard() );
 			await flushEffects();
 
-			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-02' );
-			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( 'edge-02' );
+			expect( graphOpts().serverFilter ).toBe( 'edge-02' );
 			unmount();
 		} );
 
@@ -916,35 +711,35 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
-			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-02' );
+			expect( firstGraphOpts().serverFilter ).toBe( 'edge-02' );
 
 			mockView = serverView( hub );
 			rerender( dashboard() );
 			await flushEffects();
 
-			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-02' );
-			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( 'edge-02' );
+			expect( graphOpts().serverFilter ).toBe( 'edge-02' );
 			unmount();
 		} );
 
 		it( 'resets a linked server the list does not name, and drops it', async () => {
-			linkTo( 'server=edge-09&url=h1' );
+			linkTo( 'server=edge-09&url=a1' );
 			mockView = loadedView( {
 				overview: { data: null, loading: true, error: null },
 			} );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
 			// Trusted until the list can judge it; the server scopes it empty.
-			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-09' );
+			expect( firstGraphOpts().serverFilter ).toBe( 'edge-09' );
 			expect( param( 'server' ) ).toBe( 'edge-09' );
 
 			mockView = serverView( hub );
 			rerender( dashboard() );
 			await flushEffects();
 
-			expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
-			expect( mockGraphOpts.serverFilter ).toBe( '' );
-			expect( window.location.search ).toBe( '?page=perf&url=h1' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( '' );
+			expect( graphOpts().serverFilter ).toBe( '' );
+			expect( window.location.search ).toBe( '?page=perf&url=a1' );
 			unmount();
 		} );
 
@@ -952,16 +747,14 @@ describe( 'PerformanceDashboard', () => {
 			mockView = serverView( hub );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
-			act( () =>
-				globalThis.__overviewProps.setServerFilter( 'edge-01' )
-			);
+			act( () => setQueryParams( { server: 'edge-01' || null } ) );
 
 			mockView = serverView( [] );
 			rerender( dashboard() );
 			await flushEffects();
 
-			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
-			expect( mockGraphOpts.serverFilter ).toBe( 'edge-01' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( 'edge-01' );
+			expect( graphOpts().serverFilter ).toBe( 'edge-01' );
 			expect( param( 'server' ) ).toBe( 'edge-01' );
 			unmount();
 		} );
@@ -970,19 +763,17 @@ describe( 'PerformanceDashboard', () => {
 			mockView = serverView( hub );
 			const { unmount } = mountDash();
 			await flushEffects();
-			act( () =>
-				globalThis.__overviewProps.setServerFilter( 'edge-02' )
-			);
+			act( () => setQueryParams( { server: 'edge-02' || null } ) );
 
 			// The restored entry was pushed under another server.
-			linkTo( 'server=edge-01&url=h1' );
+			linkTo( 'server=edge-01&url=a1' );
 			act( () => {
 				window.dispatchEvent( new PopStateEvent( 'popstate' ) );
 			} );
 
-			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			expect( graphOpts().serverFilter ).toBe( 'edge-02' );
 			expect( param( 'server' ) ).toBe( 'edge-02' );
-			expect( param( 'url' ) ).toBe( 'h1' );
+			expect( param( 'url' ) ).toBe( 'a1' );
 			unmount();
 		} );
 
@@ -1000,7 +791,7 @@ describe( 'PerformanceDashboard', () => {
 						`chip=${ encodeURIComponent( UA ) }`,
 						'chip=status_class%3Dunknown',
 						'chip=country%3D',
-						'url=h1',
+						'url=a1',
 					].join( '&' )
 				);
 				mockView = serverView( hub );
@@ -1012,12 +803,10 @@ describe( 'PerformanceDashboard', () => {
 					UA,
 					'status_class=Unknown',
 				];
-				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( spelled );
-				expect( globalThis.__overviewProps.chartChips ).toEqual(
-					spelled
-				);
+				expect( firstGraphOpts().chartChips ).toEqual( spelled );
+				expect( lastRead( 'eln/urls' ).chips ).toEqual( spelled );
 				expect( chips() ).toEqual( spelled );
-				expect( param( 'url' ) ).toBe( 'h1' );
+				expect( param( 'url' ) ).toBe( 'a1' );
 				unmount();
 			} );
 
@@ -1027,42 +816,17 @@ describe( 'PerformanceDashboard', () => {
 						'chip=Country%3DSG',
 						'chip=country%3DUS',
 						'chip=COUNTRY%3DUS',
-						'url=h1',
+						'url=a1',
 					].join( '&' )
 				);
 				mockView = serverView( hub );
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( [
+				expect( firstGraphOpts().chartChips ).toEqual( [
 					'country=SG',
 					'country=US',
 				] );
-				unmount();
-			} );
-
-			it( 'writes each chip as its own key, and the last removal drops them', async () => {
-				linkTo( 'url=h1' );
-				mockView = serverView( hub );
-				const { unmount } = mountDash();
-				await flushEffects();
-
-				act( () =>
-					globalThis.__overviewProps.setChartChips( [
-						'status_class=5xx',
-						UA,
-					] )
-				);
-				expect( chips() ).toEqual( [ 'status_class=5xx', UA ] );
-				// The chart asks what a reload of this bar would.
-				expect( mockGraphOpts.chartChips ).toEqual( [
-					'status_class=5',
-					UA,
-				] );
-
-				act( () => globalThis.__overviewProps.setChartChips( [] ) );
-				expect( window.location.search ).toBe( '?page=perf&url=h1' );
-				expect( pushSpy ).not.toHaveBeenCalled();
 				unmount();
 			} );
 
@@ -1070,16 +834,16 @@ describe( 'PerformanceDashboard', () => {
 				mockView = serverView( hub );
 				const { unmount } = mountDash();
 				await flushEffects();
-				act( () => globalThis.__overviewProps.setChartChips( [ UA ] ) );
+				act( () => setQueryParams( { chip: [ UA ] } ) );
 
-				linkTo( 'chip=method%3DPURGE&url=h1' );
+				linkTo( 'chip=method%3DPURGE&url=a1' );
 				act( () => {
 					window.dispatchEvent( new PopStateEvent( 'popstate' ) );
 				} );
 
-				expect( mockGraphOpts.chartChips ).toEqual( [ UA ] );
+				expect( graphOpts().chartChips ).toEqual( [ UA ] );
 				expect( chips() ).toEqual( [ UA ] );
-				expect( param( 'url' ) ).toBe( 'h1' );
+				expect( param( 'url' ) ).toBe( 'a1' );
 				unmount();
 			} );
 
@@ -1106,7 +870,7 @@ describe( 'PerformanceDashboard', () => {
 				);
 				await flushEffects();
 
-				expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				expect( graphOpts().detailChart.chips ).toEqual( [
 					'method=PURGE',
 				] );
 				expect( chips() ).toEqual( [] );
@@ -1115,20 +879,18 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'writes a server pick, and All Servers drops it', async () => {
-			linkTo( 'url=h1' );
+			linkTo( 'url=a1' );
 			mockView = serverView( hub );
 			const { unmount } = mountDash();
 			await flushEffects();
 
-			act( () =>
-				globalThis.__overviewProps.setServerFilter( 'edge-01' )
-			);
+			act( () => setQueryParams( { server: 'edge-01' || null } ) );
 			expect( param( 'server' ) ).toBe( 'edge-01' );
 			// The table returns to page 1 on it, as on its own filters.
-			expect( globalThis.__urlTableProps.server ).toBe( 'edge-01' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( 'edge-01' );
 
-			act( () => globalThis.__overviewProps.setServerFilter( '' ) );
-			expect( window.location.search ).toBe( '?page=perf&url=h1' );
+			act( () => setQueryParams( { server: '' || null } ) );
+			expect( window.location.search ).toBe( '?page=perf&url=a1' );
 			expect( pushSpy ).not.toHaveBeenCalled();
 			unmount();
 		} );
@@ -1143,13 +905,13 @@ describe( 'PerformanceDashboard', () => {
 				await globalThis.__overviewProps.onSearch( 'r1' );
 			} );
 			answerCommand( SEARCH, {
-				result: { url_hash: 'h1', partition: 0 },
+				result: { url_hash: 'a1', partition: 0 },
 				args: [ 'r1' ],
 			} );
 
 			expect( pushSpy ).toHaveBeenCalledTimes( 1 );
 			expect( window.location.search ).toBe(
-				'?page=perf&metric=avg&url=h1&request=r1'
+				'?page=perf&metric=avg&url=a1&request=r1'
 			);
 			unmount();
 		} );
@@ -1158,20 +920,18 @@ describe( 'PerformanceDashboard', () => {
 			mockView = serverView( hub );
 			const { unmount } = mountDash();
 			await flushEffects();
-			act( () =>
-				globalThis.__overviewProps.setServerFilter( 'edge-01' )
-			);
+			act( () => setQueryParams( { server: 'edge-01' || null } ) );
 
 			await act( async () => {
 				await globalThis.__overviewProps.onSearch( 'r1' );
 			} );
 			answerCommand( SEARCH, {
-				result: { url_hash: 'h1', partition: 0 },
+				result: { url_hash: 'a1', partition: 0 },
 				args: [ 'r1' ],
 			} );
 			await flushEffects();
 
-			expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
+			expect( lastRead( 'eln/urls' ).server ).toBe( '' );
 			expect( param( 'server' ) ).toBeNull();
 			unmount();
 		} );
@@ -1271,12 +1031,12 @@ describe( 'PerformanceDashboard', () => {
 					field: 'url',
 					hash: 'beef7743',
 				} );
-				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
+				expect( windowState( graphOpts() ) ).toEqual( LINKED_STATE );
 				// The first ask already carries the link: no default fetch.
-				expect( mockGraphCalls[ 0 ].detailFilters ).toEqual(
+				expect( firstGraphOpts().detailFilters ).toEqual(
 					LINKED_STATE.filters
 				);
-				expect( mockGraphCalls[ 0 ].detailChart ).toEqual(
+				expect( firstGraphOpts().detailChart ).toEqual(
 					LINKED_STATE.chart
 				);
 				expect( windowParams() ).toEqual( RESTORED );
@@ -1308,7 +1068,7 @@ describe( 'PerformanceDashboard', () => {
 					field: 'url',
 					hash: 'beef7743',
 				} );
-				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
+				expect( windowState( graphOpts() ) ).toEqual( LINKED_STATE );
 				expect( windowParams() ).toEqual( RESTORED );
 				unmount();
 			} );
@@ -1338,10 +1098,10 @@ describe( 'PerformanceDashboard', () => {
 					url_metric: [ 'avg' ],
 					url_sort: [ 'duration_ms' ],
 				} );
-				expect( mockGraphOpts.detailFilters ).toEqual( {
+				expect( graphOpts().detailFilters ).toEqual( {
 					bucket: '2026-09-29-14-30',
 				} );
-				expect( mockGraphOpts.detailChart ).toEqual( {
+				expect( graphOpts().detailChart ).toEqual( {
 					breakdown: 'ja4',
 					thenBy: 'country',
 					chips: [ 'method=PURGE', 'country=SG' ],
@@ -1367,7 +1127,7 @@ describe( 'PerformanceDashboard', () => {
 					dir: 'asc',
 				} );
 				expect( view().metric ).toBe( 'volume' );
-				expect( mockGraphOpts.detailChart.breakdown ).toBe(
+				expect( graphOpts().detailChart.breakdown ).toBe(
 					'status_class'
 				);
 				expect( windowParams() ).toEqual( {
@@ -1396,7 +1156,7 @@ describe( 'PerformanceDashboard', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( windowState( mockGraphOpts ) ).toEqual( {
+				expect( windowState( graphOpts() ) ).toEqual( {
 					filters: { bucket: '' },
 					chart: {
 						breakdown: 'status_class',
@@ -1420,7 +1180,7 @@ describe( 'PerformanceDashboard', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( mockGraphCalls[ 0 ].detailChart ).toEqual( {
+				expect( firstGraphOpts().detailChart ).toEqual( {
 					breakdown: 'ja4',
 					thenBy: '',
 					chips: [],
@@ -1471,7 +1231,7 @@ describe( 'PerformanceDashboard', () => {
 				};
 				await act( async () => rerender( dashboard() ) );
 
-				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				expect( openWindow( graphOpts() ) ).toEqual( DEFAULT_WINDOW );
 				expect( globalThis.__urlDetailProps.requestSort ).toEqual( {
 					field: 'duration_ms',
 					dir: 'desc',
@@ -1499,7 +1259,7 @@ describe( 'PerformanceDashboard', () => {
 				// Back from the found request, to the window it opened in.
 				mockNavState.selectedRequest = null;
 				await act( async () => rerender( dashboard() ) );
-				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				expect( openWindow( graphOpts() ) ).toEqual( DEFAULT_WINDOW );
 				unmount();
 			} );
 
@@ -1544,7 +1304,7 @@ describe( 'PerformanceDashboard', () => {
 				mockNavState.selectedSubject = ROW;
 				await act( async () => rerender( dashboard() ) );
 
-				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				expect( openWindow( graphOpts() ) ).toEqual( DEFAULT_WINDOW );
 				unmount();
 			} );
 
@@ -1632,106 +1392,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 	} );
 
-	it( "names the servers the overview answers, sorted, and hands the panel the charts' slices", async () => {
-		const chart = {
-			data: rowsWire( [ 'bucket', 'server', 'count' ], [] ),
-			loading: true,
-			error: null,
-		};
-		const categories = {
-			data: rowsWire( [ 'bucket', 'category', 'ms' ], [] ),
-			loading: false,
-			error: 'unknown timings field plumage',
-		};
-		mockView = loadedView( { chart, categories, ...serverView( hub ) } );
-		mockView.chart = chart;
-		mockView.categories = categories;
-		const { unmount } = mountDash();
-		await flushEffects();
-
-		expect( globalThis.__overviewProps.serverNames ).toEqual( [
-			'edge-01',
-			'edge-02',
-		] );
-		expect( globalThis.__overviewProps.chartSlice ).toBe( chart );
-		expect( globalThis.__overviewProps.categoriesSlice ).toBe( categories );
-		unmount();
-	} );
-
-	it( 'takes the server names from a reply fetched under a filter', async () => {
-		// The server axis is read site-wide under any scope, so a scoped reply
-		// names every server, a newly reporting one included.
-		mockView = serverView( hub );
-		const { rerender, unmount } = mountDash();
-		await flushEffects();
-		act( () => {
-			globalThis.__overviewProps.setServerFilter( 'edge-01' );
-		} );
-		mockView = serverView( [ 'edge-03', 'edge-01', 'edge-02' ] );
-		rerender( dashboard() );
-		await flushEffects();
-
-		expect( globalThis.__overviewProps.serverNames ).toEqual( [
-			'edge-01',
-			'edge-02',
-			'edge-03',
-		] );
-		expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
-		unmount();
-	} );
-
-	it( "hands the panel the filtered set's own totals", async () => {
-		// Every headline number comes from the `urls` reply, so all five answer
-		// for one set — the one the table lists. Assembling them from separate
-		// namespaces is what put `0 Unique URLs` beside 33,049 requests.
-		mockView = loadedView( {
-			urls: {
-				data: [],
-				totals: {
-					urls: 313,
-					requests: 9001,
-					avg_ms: 70,
-					avg_peak_mb: 3.3,
-					requests_per_second: 2.5,
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-
-		expect( globalThis.__overviewProps.urlTotals ).toEqual( {
-			urls: 313,
-			requests: 9001,
-			avg_ms: 70,
-			avg_peak_mb: 3.3,
-			requests_per_second: 2.5,
-		} );
-		unmount();
-	} );
-
-	it( 'offers every server the overview names, each one a host', () => {
-		mockView = serverView( [ 'edge-01', 'Other' ] );
-		const { unmount } = mountDash();
-
-		expect( globalThis.__overviewProps.serverNames ).toEqual( [
-			'Other',
-			'edge-01',
-		] );
-		unmount();
-	} );
-
-	it( 'names no server before an overview answers', () => {
-		mockView = loadedView( {
-			overview: { data: null, loading: true, error: null },
-		} );
-		const { unmount } = mountDash();
-
-		expect( globalThis.__overviewProps.serverNames ).toBeNull();
-		unmount();
-	} );
-
 	it( "renders the modal's rate from the payload, not a second derivation", async () => {
 		// The header divides by the fixed hour, so a client that summed this
 		// URL's series and divided by the buckets it had would read a URL seen
@@ -1739,7 +1399,7 @@ describe( 'PerformanceDashboard', () => {
 		// label. One owner, one window, one divisor.
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = null;
@@ -1772,7 +1432,7 @@ describe( 'PerformanceDashboard', () => {
 			// or did it fail — so neither may render empty.
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h1',
+				hash: 'a1',
 				url: '/foo',
 			};
 			mockNavState.selectedRequest = request;
@@ -1793,7 +1453,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'shows the URL modal header p50, p95, p99 and error rate', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h9',
+			hash: 'a9',
 			url: '/heron',
 		};
 		mockNavState.selectedRequest = null;
@@ -1828,7 +1488,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'keeps the URL modal mounted while a chip change relists it', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h9',
+			hash: 'a9',
 			url: '/heron',
 		};
 		mockNavState.selectedRequest = null;
@@ -1852,9 +1512,7 @@ describe( 'PerformanceDashboard', () => {
 			globalThis.__urlDetailProps.onChipsChange( [ 'status_class=5' ] );
 		} );
 
-		expect( mockGraphOpts.detailChart.chips ).toEqual( [
-			'status_class=5',
-		] );
+		expect( graphOpts().detailChart.chips ).toEqual( [ 'status_class=5' ] );
 		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
 			view
 		);
@@ -1896,7 +1554,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'renders the URL modal when a URL is selected and detail is present', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = null;
@@ -2006,7 +1664,7 @@ describe( 'PerformanceDashboard', () => {
 	] )( '%s', async ( _name, stats, expected ) => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = null;
@@ -2039,7 +1697,7 @@ describe( 'PerformanceDashboard', () => {
 	it( "heads the URL modal with the URL's errors beside its rate", async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h7',
+			hash: 'a7',
 			url: '/kea',
 		};
 		mockNavState.selectedRequest = null;
@@ -2071,22 +1729,6 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'hands UrlTable the Overview chips', async () => {
-		window.history.replaceState(
-			null,
-			'',
-			'/wp-admin/admin.php?page=perf&chip=status_class%3D5'
-		);
-		mockView = loadedView();
-		const { unmount } = mountDash();
-		await flushEffects();
-
-		expect( globalThis.__urlTableProps.chips ).toEqual( [
-			'status_class=5',
-		] );
-		unmount();
-	} );
-
 	describe( 'the chips carry into the URL modal', () => {
 		/**
 		 * Open `/kea` from a table its chips narrowed, as a row click does.
@@ -2105,7 +1747,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h7',
+				hash: 'a7',
 				url: '/kea',
 			};
 			mockNavState.selectedRequest = null;
@@ -2126,7 +1768,7 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 			await act( async () => {
 				globalThis.__urlTableProps.onSelect( {
-					hash: 'h7',
+					hash: 'a7',
 					url: '/kea',
 				} );
 			} );
@@ -2139,7 +1781,7 @@ describe( 'PerformanceDashboard', () => {
 				'country=Kiribati',
 			] );
 
-			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			expect( graphOpts().detailChart.chips ).toEqual( [
 				'status_class=5',
 				'country=Kiribati',
 			] );
@@ -2152,7 +1794,7 @@ describe( 'PerformanceDashboard', () => {
 		it( 'leaves a URL chip behind, since the detail is one URL', async () => {
 			await openFromChippedTable( [ 'url=feed1234', 'method=POST' ] );
 
-			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			expect( graphOpts().detailChart.chips ).toEqual( [
 				'method=POST',
 			] );
 		} );
@@ -2168,14 +1810,14 @@ describe( 'PerformanceDashboard', () => {
 				] );
 			} );
 
-			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			expect( graphOpts().detailChart.chips ).toEqual( [
 				'country=Kiribati',
 			] );
-			expect( mockGraphOpts.chartChips ).toEqual( [
+			expect( graphOpts().chartChips ).toEqual( [
 				'status_class=5',
 				'country=Kiribati',
 			] );
-			expect( globalThis.__overviewProps.chartChips ).toEqual( [
+			expect( lastRead( 'eln/urls' ).chips ).toEqual( [
 				'status_class=5',
 				'country=Kiribati',
 			] );
@@ -2206,7 +1848,7 @@ describe( 'PerformanceDashboard', () => {
 		 */
 		const pickUrl = async () => {
 			const target = document.createElement( 'div' );
-			target.setAttribute( 'data-ask', 'url:h7' );
+			target.setAttribute( 'data-ask', 'url:a7' );
 			document.body.appendChild( target );
 			await act( async () => {
 				globalThis.__overviewProps.ask.start();
@@ -2245,7 +1887,7 @@ describe( 'PerformanceDashboard', () => {
 		async ( dir, order ) => {
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h1',
+				hash: 'a1',
 				url: '/foo',
 			};
 			mockView = loadedView( {
@@ -2308,7 +1950,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h7',
+				hash: 'a7',
 				url: '/kea',
 			};
 			mockNavState.selectedRequest = null;
@@ -2329,125 +1971,12 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 			await act( async () => {
 				globalThis.__urlTableProps.onSelect( {
-					hash: 'h7',
+					hash: 'a7',
 					url: '/kea',
 				} );
 			} );
 			return mount;
 		};
-
-		it( 'edits the table selection from overview chart clicks', async () => {
-			mockView = loadedView();
-			mountDash();
-			await flushEffects();
-			expect( globalThis.__urlTableProps.bucket ).toBe( '' );
-			const click = ( key, additive ) =>
-				act( async () => {
-					globalThis.__overviewProps.onSlotClick( key, { additive } );
-				} );
-
-			await click( '2026-10-04-13-35', false );
-			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
-
-			await click( '2026-10-04-13-40', true );
-			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45'
-			);
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45'
-			);
-			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
-				'2026-10-04-13-35',
-				'2026-10-04-13-40',
-			] );
-
-			await click( '2026-10-04-13-35', true );
-			expect( bucketParam() ).toBe( '2026-10-04-13-40' );
-
-			await click( '2026-10-04-14-00', false );
-			expect( bucketParam() ).toBe( '2026-10-04-14-00' );
-		} );
-
-		it( 'edits the table selection from overview chart drags', async () => {
-			mockView = loadedView();
-			mountDash();
-			await flushEffects();
-			const drag = ( keys, additive ) =>
-				act( async () => {
-					globalThis.__overviewProps.onSlotRange( keys, {
-						additive,
-					} );
-				} );
-
-			await drag(
-				[ '2026-10-04-13-35', '2026-10-04-13-40', '2026-10-04-13-45' ],
-				false
-			);
-			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-50'
-			);
-
-			await drag( [ '2026-10-04-14-10', '2026-10-04-14-15' ], true );
-			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10..2026-10-04-14-20'
-			);
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10..2026-10-04-14-20'
-			);
-		} );
-
-		it( 'holds the table selection to the live chart answer, not the overview snapshot', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-50'
-			);
-			mockView = loadedView();
-			mockView.overview.data.slots = slotsEndingAt(
-				'2026-10-04-14-00',
-				2
-			);
-			mockView.chart = {
-				data: {
-					columns: [ 'bucket', 'count' ],
-					rows: [],
-					filters: { bucket: '2026-10-04-13-35..2026-10-04-14-05' },
-				},
-			};
-			mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
-				'2026-10-04-13-35',
-				'2026-10-04-13-40',
-				'2026-10-04-13-45',
-			] );
-			expect( globalThis.__urlTableProps.slots ).toEqual(
-				slotsEndingAt( '2026-10-04-14-00', 6 )
-			);
-		} );
-
-		it( 'shades a linked selection without a limit before the chart answers', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-50'
-			);
-			mockView = loadedView();
-			mockView.overview.data.slots = slotsEndingAt(
-				'2026-10-04-14-00',
-				2
-			);
-			mountDash();
-			await flushEffects();
-
-			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
-				'2026-10-04-13-35',
-				'2026-10-04-13-40',
-				'2026-10-04-13-45',
-			] );
-			expect( globalThis.__urlTableProps.slots ).toBeNull();
-		} );
 
 		it( 'drops a removed token from ?bucket= and from the ask', async () => {
 			window.history.replaceState(
@@ -2461,14 +1990,14 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 
 			await act( async () => {
-				globalThis.__urlTableProps.onBucketChange(
-					'2026-10-04-13-35..2026-10-04-13-45'
-				);
+				setQueryParams( {
+					bucket: '2026-10-04-13-35..2026-10-04-13-45' || null,
+				} );
 			} );
 			expect( bucketParam() ).toBe(
 				'2026-10-04-13-35..2026-10-04-13-45'
 			);
-			expect( globalThis.__urlTableProps.bucket ).toBe(
+			expect( lastRead( 'eln/urls' ).buckets ).toBe(
 				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 
@@ -2485,7 +2014,7 @@ describe( 'PerformanceDashboard', () => {
 				rerender( dashboard() );
 			} );
 			const target = document.createElement( 'div' );
-			target.setAttribute( 'data-ask', 'url:h7' );
+			target.setAttribute( 'data-ask', 'url:a7' );
 			document.body.appendChild( target );
 			await act( async () => {
 				globalThis.__overviewProps.ask.start();
@@ -2505,30 +2034,10 @@ describe( 'PerformanceDashboard', () => {
 			);
 		} );
 
-		it( 'hands the table a linked bucket as it arrived, for the server to judge', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-37'
-			);
-			mockView = loadedView();
-			mountDash();
-			await flushEffects();
-
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-37'
-			);
-			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [] );
-			await act( async () => {
-				globalThis.__urlTableProps.onBucketChange( '' );
-			} );
-			expect( bucketParam() ).toBeNull();
-		} );
-
 		it( "opens a URL on the table's bucket, then moves the modal's alone", async () => {
 			const { container } = await openFromBucketedTable();
 
-			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+			expect( graphOpts().detailFilters.bucket ).toBe(
 				'2026-10-04-13-35'
 			);
 			expect( globalThis.__urlDetailProps.filters.bucket ).toBe(
@@ -2540,12 +2049,10 @@ describe( 'PerformanceDashboard', () => {
 					'2026-10-04-13-40'
 				);
 			} );
-			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+			expect( graphOpts().detailFilters.bucket ).toBe(
 				'2026-10-04-13-40'
 			);
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35'
-			);
+			expect( lastRead( 'eln/urls' ).buckets ).toBe( '2026-10-04-13-35' );
 			const facts = JSON.parse(
 				container.querySelector( '#newspack-nodes-page-facts' )
 					.textContent
@@ -2558,10 +2065,8 @@ describe( 'PerformanceDashboard', () => {
 			await act( async () => {
 				globalThis.__urlDetailProps.onBucketChange( '' );
 			} );
-			expect( mockGraphOpts.detailFilters.bucket ).toBe( '' );
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35'
-			);
+			expect( graphOpts().detailFilters.bucket ).toBe( '' );
+			expect( lastRead( 'eln/urls' ).buckets ).toBe( '2026-10-04-13-35' );
 			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
 		} );
 
@@ -2573,17 +2078,15 @@ describe( 'PerformanceDashboard', () => {
 					( held ) => `${ held }..2026-10-04-13-45`
 				);
 			} );
-			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+			expect( graphOpts().detailFilters.bucket ).toBe(
 				'2026-10-04-13-35..2026-10-04-13-45'
 			);
-			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35'
-			);
+			expect( lastRead( 'eln/urls' ).buckets ).toBe( '2026-10-04-13-35' );
 		} );
 
 		it( 'keeps the modal filters when a click names the bucket they hold', async () => {
 			await openFromBucketedTable();
-			const held = mockGraphOpts.detailFilters;
+			const held = graphOpts().detailFilters;
 			expect( held ).toEqual( {
 				bucket: '2026-10-04-13-35',
 			} );
@@ -2594,8 +2097,8 @@ describe( 'PerformanceDashboard', () => {
 				);
 			} );
 
-			// The same object, so the graph re-asks nothing.
-			expect( mockGraphOpts.detailFilters ).toBe( held );
+			// The same question, so the window re-asks nothing.
+			expect( graphOpts().detailFilters ).toEqual( held );
 		} );
 
 		it( 'forgets the modal bucket when the modal closes', async () => {
@@ -2604,14 +2107,14 @@ describe( 'PerformanceDashboard', () => {
 
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h4',
+				hash: 'a4',
 				url: '/linked',
 			};
 			await act( async () => {
 				rerender( dashboard() );
 			} );
 
-			expect( mockGraphOpts.detailFilters.bucket ).toBe( '' );
+			expect( graphOpts().detailFilters.bucket ).toBe( '' );
 			expect( globalThis.__urlDetailProps.filters.bucket ).toBe( '' );
 		} );
 
@@ -2623,7 +2126,7 @@ describe( 'PerformanceDashboard', () => {
 				);
 			} );
 			const target = document.createElement( 'div' );
-			target.setAttribute( 'data-ask', 'url:h7' );
+			target.setAttribute( 'data-ask', 'url:a7' );
 			document.body.appendChild( target );
 			await act( async () => {
 				globalThis.__overviewProps.ask.start();
@@ -2649,7 +2152,7 @@ describe( 'PerformanceDashboard', () => {
 		// or a request search cannot open on a list hiding what it sought.
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h9',
+			hash: 'a9',
 			url: '/erring',
 		};
 		mockNavState.selectedRequest = null;
@@ -2670,7 +2173,7 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {} );
 		await act( async () => {
 			globalThis.__urlTableProps.onSelect( {
-				hash: 'h9',
+				hash: 'a9',
 				url: '/erring',
 			} );
 		} );
@@ -2678,14 +2181,14 @@ describe( 'PerformanceDashboard', () => {
 
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h4',
+			hash: 'a4',
 			url: '/linked',
 		};
 		await act( async () => {
 			rerender( dashboard() );
 		} );
 
-		expect( mockGraphOpts.detailChart.chips ).toEqual( [] );
+		expect( graphOpts().detailChart.chips ).toEqual( [] );
 		expect( globalThis.__urlDetailProps.chart.chips ).toEqual( [] );
 		unmount();
 	} );
@@ -2694,7 +2197,7 @@ describe( 'PerformanceDashboard', () => {
 		// The request's row names its partition; a caller never supplies one.
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = null;
@@ -2716,7 +2219,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith(
 			'rid-kokako-41'
 		);
-		expect( mockGraphOpts ).not.toHaveProperty( 'requestPartition' );
+		expect( graphOpts() ).not.toHaveProperty( 'requestPartition' );
 		unmount();
 	} );
 
@@ -2730,16 +2233,38 @@ describe( 'PerformanceDashboard', () => {
 		const { unmount } = mountDash();
 		await flushEffects();
 
-		expect( mockGraphOpts.askActive ).toBe( false );
+		expect( graphOpts().held ).toEqual( {
+			held: false,
+			groups: [ 'overview' ],
+		} );
 
-		// OverviewSection is mocked here, so the trigger it renders is not on
+		// PerformanceHeader is mocked here, so the trigger it renders is not on
 		// the page: the picker is armed through the `ask` state the dashboard
 		// hands it, which is the same object the button calls `start` on.
 		await act( async () => {
 			globalThis.__overviewProps.ask.start();
 		} );
 
-		expect( mockGraphOpts.askActive ).toBe( true );
+		expect( graphOpts().held ).toEqual( {
+			held: true,
+			groups: [ 'overview' ],
+		} );
+		unmount();
+	} );
+
+	it( 'holds the page while a URL window stands over it, leaving the window asking', async () => {
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'beef7961',
+			url: '/kokako-7961',
+		};
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		expect( graphOpts().held ).toEqual( {
+			held: true,
+			groups: [ 'overview' ],
+		} );
 		unmount();
 	} );
 
@@ -2750,7 +2275,7 @@ describe( 'PerformanceDashboard', () => {
 		// the URL as its title over a blank panel.
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -2773,7 +2298,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'surfaces the reason a request detail failed', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -2800,7 +2325,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'renders the Request modal when a request is selected', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -2833,25 +2358,6 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'forwards UrlTable param changes to the graph handleUrlParamsChange', async () => {
-		mockView = loadedView();
-		const { unmount } = mountDash();
-		await flushEffects();
-		const params = {
-			search: 'foo',
-			sort: 'count',
-			order: 'desc',
-			offset: 0,
-		};
-		act( () => {
-			globalThis.__urlTableProps.onParamsChange( params );
-		} );
-		expect( mockGraph.handleUrlParamsChange ).toHaveBeenCalledWith(
-			params
-		);
-		unmount();
-	} );
-
 	it( 'searchRequest asks search_requests and selects what it answers', async () => {
 		mockView = loadedView();
 		const { unmount } = mountDash();
@@ -2862,11 +2368,11 @@ describe( 'PerformanceDashboard', () => {
 		expect( sentTo( SEARCH ) ).toContainEqual( [ 'r1' ] );
 
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h1', partition: 0 },
+			result: { url_hash: 'a1', partition: 0 },
 			args: [ 'r1' ],
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenCalledWith(
-			expect.objectContaining( { hash: 'h1' } )
+			expect.objectContaining( { hash: 'a1' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r1' );
 		unmount();
@@ -2881,21 +2387,21 @@ describe( 'PerformanceDashboard', () => {
 		const { unmount } = mountDash();
 		await flushEffects();
 		act( () => {
-			globalThis.__overviewProps.setServerFilter( 'edge-01' );
+			setQueryParams( { server: 'edge-01' || null } );
 		} );
 		await flushEffects();
-		expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
+		expect( lastRead( 'eln/urls' ).server ).toBe( 'edge-01' );
 
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( 'r1' );
 		} );
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h1', partition: 0 },
+			result: { url_hash: 'a1', partition: 0 },
 			args: [ 'r1' ],
 		} );
 		await flushEffects();
 
-		expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
+		expect( lastRead( 'eln/urls' ).server ).toBe( '' );
 		unmount();
 	} );
 
@@ -2921,7 +2427,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.deepLink = { requestId: 'rid-deep', subject: null };
 		mockView = loadedView( {
 			urls: {
-				data: [ { hash: 'h-known', url: '/known' } ],
+				data: [ { hash: 'c0de', url: '/known' } ],
 				total: 1,
 				loading: false,
 				error: null,
@@ -2932,11 +2438,11 @@ describe( 'PerformanceDashboard', () => {
 		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'rid-deep' ] );
 
 		answerCommand( DEEP_REQUEST, {
-			result: { rid: 'rid-deep', url_hash: 'h-known' },
+			result: { rid: 'rid-deep', url_hash: 'c0de' },
 			args: [ 'rid-deep' ],
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenCalledWith(
-			expect.objectContaining( { hash: 'h-known' } )
+			expect.objectContaining( { hash: 'c0de' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'rid-deep' );
 		expect( mockNavState.clearDeepLink ).toHaveBeenCalled();
@@ -2950,7 +2456,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.deepLink = { requestId: 'rid-offpage', subject: null };
 		mockView = loadedView( {
 			urls: {
-				data: [ { hash: 'h-known', url: '/known' } ],
+				data: [ { hash: 'c0de', url: '/known' } ],
 				total: 1,
 				loading: false,
 				error: null,
@@ -2959,18 +2465,18 @@ describe( 'PerformanceDashboard', () => {
 		const { unmount } = mountDash();
 		await flushEffects();
 		answerCommand( DEEP_REQUEST, {
-			result: { url_hash: 'h-offpage', partition: 3 },
+			result: { url_hash: '0ff9a9e', partition: 3 },
 			args: [ 'rid-offpage' ],
 		} );
-		expect( sentTo( LOOKUP ) ).toContainEqual( [ '--url=h-offpage' ] );
+		expect( sentTo( LOOKUP ) ).toContainEqual( [ '--url=0ff9a9e' ] );
 
 		answerCommand( LOOKUP, {
 			result: { stats: { url: '/quokka/census-2026' } },
-			args: [ '--url=h-offpage' ],
+			args: [ '--url=0ff9a9e' ],
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenLastCalledWith( {
 			field: 'url',
-			hash: 'h-offpage',
+			hash: '0ff9a9e',
 			url: '/quokka/census-2026',
 		} );
 		unmount();
@@ -2985,20 +2491,20 @@ describe( 'PerformanceDashboard', () => {
 		const { unmount } = mountDash();
 		await flushEffects();
 		answerCommand( DEEP_REQUEST, {
-			result: { url_hash: 'h-offpage', partition: 3 },
+			result: { url_hash: '0ff9a9e', partition: 3 },
 			args: [ 'rid-offpage' ],
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
 			field: 'url',
-			hash: 'h-offpage',
+			hash: '0ff9a9e',
 			url: 'Unknown URL',
 		} );
 
 		// A lookup that answers no url leaves the sentinel standing.
-		answerCommand( LOOKUP, { result: null, args: [ '--url=h-offpage' ] } );
+		answerCommand( LOOKUP, { result: null, args: [ '--url=0ff9a9e' ] } );
 		expect( mockNavState.selectSubject ).toHaveBeenLastCalledWith( {
 			field: 'url',
-			hash: 'h-offpage',
+			hash: '0ff9a9e',
 			url: 'Unknown URL',
 		} );
 		unmount();
@@ -3009,20 +2515,20 @@ describe( 'PerformanceDashboard', () => {
 	it( 'a ?url= deep link applies the sentinel, never a hash title', async () => {
 		mockNavState.deepLink = {
 			requestId: null,
-			subject: { field: 'url', hash: 'h-empty' },
+			subject: { field: 'url', hash: 'e3e3' },
 		};
 		mockView = loadedView();
 		const { unmount } = mountDash();
 		await flushEffects();
-		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=h-empty' ] );
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=e3e3' ] );
 
 		answerCommand( DEEP_URL, {
 			result: { stats: { url: '' } },
-			args: [ '--url=h-empty' ],
+			args: [ '--url=e3e3' ],
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( {
 			field: 'url',
-			hash: 'h-empty',
+			hash: 'e3e3',
 			url: 'Unknown URL',
 		} );
 		unmount();
@@ -3035,7 +2541,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.deepLink = { requestId: 'tqz9ldm3wp', subject: null };
 		mockView = loadedView( {
 			urls: {
-				data: [ { hash: 'h-omicron', url: '/deep/omicron' } ],
+				data: [ { hash: '0b1c', url: '/deep/omicron' } ],
 				total: 1,
 				loading: false,
 				error: null,
@@ -3051,7 +2557,7 @@ describe( 'PerformanceDashboard', () => {
 		await flushEffects();
 
 		answerCommand( DEEP_REQUEST, {
-			result: { url_hash: 'h-omicron', partition: 6 },
+			result: { url_hash: '0b1c', partition: 6 },
 			args: [ 'tqz9ldm3wp' ],
 		} );
 		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
@@ -3064,12 +2570,12 @@ describe( 'PerformanceDashboard', () => {
 	it( 'a ?url= reply that no longer matches the standing intent is dropped', async () => {
 		mockNavState.deepLink = {
 			requestId: null,
-			subject: { field: 'url', hash: 'h-sigma88' },
+			subject: { field: 'url', hash: '5a88' },
 		};
 		mockView = loadedView();
 		const { rerender, unmount } = mountDash();
 		await flushEffects();
-		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=h-sigma88' ] );
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ '--url=5a88' ] );
 
 		mockNavState.deepLink = { requestId: null, subject: null };
 		rerender( dashboard() );
@@ -3077,7 +2583,7 @@ describe( 'PerformanceDashboard', () => {
 
 		answerCommand( DEEP_URL, {
 			result: { stats: { url: '/deep/sigma' } },
-			args: [ '--url=h-sigma88' ],
+			args: [ '--url=5a88' ],
 		} );
 		expect( mockNavState.selectSubject ).not.toHaveBeenCalled();
 		unmount();
@@ -3234,7 +2740,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( globalThis.__overviewProps.searchQuery ).toBe( '' );
 
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h-moa', partition: 4 },
+			result: { url_hash: 'd0a', partition: 4 },
 			args: [ 'r-moa-3' ],
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r-moa-3' );
@@ -3275,7 +2781,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( globalThis.__overviewProps.searchQuery ).toBe( '/hoiho-12' );
 
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h-hoiho', partition: 6 },
+			result: { url_hash: 'b0b0', partition: 6 },
 			args: [ 'r-hoiho' ],
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r-hoiho' );
@@ -3344,7 +2850,7 @@ describe( 'PerformanceDashboard', () => {
 		answerCommand( SEARCH, { result: null, args: [ 'r-kaka-9' ] } );
 		expect( globalThis.__overviewProps.searchError ).toBeNull();
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h-kaka', partition: 5 },
+			result: { url_hash: 'caca', partition: 5 },
 			args: [ 'r-kaka-9' ],
 		} );
 		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
@@ -3379,7 +2885,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( sentTo( SEARCH ) ).toContainEqual( [ 'grep-rid' ] );
 
 		answerCommand( SEARCH, {
-			result: { url_hash: 'h9', partition: 0 },
+			result: { url_hash: 'a9', partition: 0 },
 			args: [ 'grep-rid' ],
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'grep-rid' );
@@ -3389,7 +2895,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'handleRequestSort flips dir + switches field via UrlDetailView callback', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockView = loadedView( {
@@ -3426,7 +2932,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'modal close clears both selected URL and selected request', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -3458,7 +2964,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'request-detail back button returns to URL detail without closing the URL modal', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -3503,7 +3009,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'raises the assembled brief above the modal that summoned it', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -3558,7 +3064,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'renders the Ask trigger immediately before the request-detail back button', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
-			hash: 'h1',
+			hash: 'a1',
 			url: '/foo',
 		};
 		mockNavState.selectedRequest = 'r1';
@@ -3591,7 +3097,7 @@ describe( 'PerformanceDashboard', () => {
 	describe( 'Log this URL affordance', () => {
 		// A URL-detail-loaded view model with the modal open on `url`.
 		function urlModalView( url = '/foo' ) {
-			mockNavState.selectedSubject = { field: 'url', hash: 'h1', url };
+			mockNavState.selectedSubject = { field: 'url', hash: 'a1', url };
 			mockNavState.selectedRequest = null;
 			return loadedView( {
 				urlDetail: {
@@ -3653,7 +3159,7 @@ describe( 'PerformanceDashboard', () => {
 		it( 'hides the button when a request is drilled in', async () => {
 			mockNavState.selectedSubject = {
 				field: 'url',
-				hash: 'h1',
+				hash: 'a1',
 				url: '/foo',
 			};
 			mockNavState.selectedRequest = 'r1';
@@ -3947,15 +3453,7 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	describe( 'pages and their shapes', () => {
-		/** A page of three shapes, and a page of one, as `urls` rows. */
-		const KOKAKO = {
-			page_hash: 'c4f7a2e19b05',
-			page: 'hoiho-5172.example/kokako-5172/',
-			server: 'hoiho-5172.example',
-			shapes: 3,
-			hash: null,
-			count: 44,
-		};
+		/** A page of one shape, as a `urls` row. */
 		const HIHI = {
 			page_hash: '0b9d3e6a5172',
 			page: 'hoiho-5172.example/hihi-5172/',
@@ -3964,99 +3462,6 @@ describe( 'PerformanceDashboard', () => {
 			hash: 'f1e2d3c45172',
 			count: 17,
 		};
-		const KOKAKO_KEY = 'c4f7a2e19b05:hoiho-5172.example';
-		const HIHI_KEY = '0b9d3e6a5172:hoiho-5172.example';
-
-		const pagesView = ( rows ) =>
-			loadedView( {
-				urls: { data: rows, rows: rows.length, loading: false },
-			} );
-		const expandedInBar = () =>
-			new URLSearchParams( window.location.search ).getAll( 'expand' );
-
-		it( 'keeps the expanded pages across a reload', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				`/wp-admin/admin.php?page=perf&expand=${ KOKAKO_KEY }&expand=not%20a%20page`
-			);
-			mockView = pagesView( [ KOKAKO, HIHI ] );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__urlTableProps.expanded ).toEqual( [
-				KOKAKO_KEY,
-			] );
-			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
-			expect( expandedInBar() ).toEqual( [ KOKAKO_KEY ] );
-			unmount();
-		} );
-
-		it( 'expands a page linked under its server in other capitals', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				'/wp-admin/admin.php?page=perf&expand=c4f7a2e19b05:Hoiho-5172.EXAMPLE'
-			);
-			mockView = pagesView( [ KOKAKO, HIHI ] );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__urlTableProps.expanded ).toEqual( [
-				KOKAKO_KEY,
-			] );
-			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
-			unmount();
-		} );
-
-		it( 'writes each toggle into the bar and hands the graph the page', async () => {
-			mockView = pagesView( [ KOKAKO, HIHI ] );
-			const { unmount } = mountDash();
-			await flushEffects();
-			expect( mockGraphOpts.expandedPages ).toEqual( [] );
-
-			act( () =>
-				globalThis.__urlTableProps.onToggleExpand( KOKAKO_KEY )
-			);
-			await flushEffects();
-			expect( expandedInBar() ).toEqual( [ KOKAKO_KEY ] );
-			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
-
-			act( () =>
-				globalThis.__urlTableProps.onToggleExpand( KOKAKO_KEY )
-			);
-			await flushEffects();
-			expect( expandedInBar() ).toEqual( [] );
-			expect( mockGraphOpts.expandedPages ).toEqual( [] );
-			unmount();
-		} );
-
-		it( 'asks the shapes of a listed page of several shapes alone', async () => {
-			window.history.replaceState(
-				null,
-				'',
-				`/wp-admin/admin.php?page=perf&expand=${ HIHI_KEY }&expand=9a9a9a9a9a9a:hoiho-5172.example&expand=${ KOKAKO_KEY }`
-			);
-			mockView = pagesView( [ HIHI, KOKAKO ] );
-			const { unmount } = mountDash();
-			await flushEffects();
-
-			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
-			unmount();
-		} );
-
-		it( 'counts the pages the table lists', async () => {
-			mockView = pagesView( [ KOKAKO, HIHI ] );
-			const { container, unmount } = mountDash();
-			await flushEffects();
-
-			expect( globalThis.__urlTableProps.totalRows ).toBe( 2 );
-			expect( container.textContent ).toContain(
-				'Pages by Request Count'
-			);
-			unmount();
-		} );
-
 		it( "titles a one-shape page's window, and its rule, by the URL dump_url names", async () => {
 			mockNavState.selectedSubject = { field: 'url', hash: HIHI.hash };
 			mockView = loadedView( {
@@ -4181,11 +3586,11 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( graphOpts().selectedSubject ).toEqual( TAKAHE_SUBJECT );
 			expect( globalThis.__urlTableProps.selectedSubject ).toEqual(
 				TAKAHE_SUBJECT
 			);
-			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			expect( graphOpts().detailChart.chips ).toEqual( [
 				'url=0ddba11c6610',
 				'method=PATCH',
 			] );
@@ -4221,7 +3626,7 @@ describe( 'PerformanceDashboard', () => {
 			act( () => globalThis.__modalOnRequestClose() );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toBeNull();
+			expect( graphOpts().selectedSubject ).toBeNull();
 			expect( window.location.search ).toBe( '?page=perf' );
 			unmount();
 		} );
@@ -4233,8 +3638,8 @@ describe( 'PerformanceDashboard', () => {
 			const { unmount } = mountDash();
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
-			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			expect( graphOpts().selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( graphOpts().detailChart.chips ).toEqual( [
 				'url=0ddba11c6611',
 			] );
 			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
@@ -4251,7 +3656,7 @@ describe( 'PerformanceDashboard', () => {
 			expect( sentTo( DEEP_URL ) ).toEqual( [
 				[ '--page=d00dfeed6612' ],
 			] );
-			expect( mockGraphOpts.selectedSubject ).toBeNull();
+			expect( graphOpts().selectedSubject ).toBeNull();
 
 			answerCommand( DEEP_URL, {
 				result: {
@@ -4264,7 +3669,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( {
+			expect( graphOpts().selectedSubject ).toEqual( {
 				field: 'page',
 				hash: 'd00dfeed6612',
 				url: 'https://hoiho-6610.example/weka-6612/',
@@ -4290,8 +3695,8 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
-			expect( mockGraphOpts.selectedRequest ).toBe( 'takahe6610rid' );
+			expect( graphOpts().selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( graphOpts().selectedRequest ).toBe( 'takahe6610rid' );
 			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
 			expect( param( 'url' ) ).toBeNull();
 			expect( param( 'request' ) ).toBe( 'takahe6610rid' );
@@ -4303,8 +3708,8 @@ describe( 'PerformanceDashboard', () => {
 			);
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( TAKAHE_SUBJECT );
-			expect( mockGraphOpts.selectedRequest ).toBeNull();
+			expect( graphOpts().selectedSubject ).toEqual( TAKAHE_SUBJECT );
+			expect( graphOpts().selectedRequest ).toBeNull();
 			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
 			expect( param( 'request' ) ).toBeNull();
 			unmount();
@@ -4323,7 +3728,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( {
+			expect( graphOpts().selectedSubject ).toEqual( {
 				field: 'page',
 				hash: 'd00dfeed6614',
 				url: 'Unknown URL',
@@ -4336,7 +3741,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( {
+			expect( graphOpts().selectedSubject ).toEqual( {
 				field: 'page',
 				hash: 'd00dfeed6614',
 				url: 'https://hoiho-6610.example/weka/',
@@ -4360,7 +3765,7 @@ describe( 'PerformanceDashboard', () => {
 				subject: '--url=d00dfeed6613',
 			} );
 			await flushEffects();
-			expect( mockGraphOpts.selectedSubject ).toBeNull();
+			expect( graphOpts().selectedSubject ).toBeNull();
 
 			answerCommand( DEEP_URL, {
 				result: { stats: { url: 'https://hoiho-6610.example/kea/' } },
@@ -4368,7 +3773,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 
-			expect( mockGraphOpts.selectedSubject ).toEqual( {
+			expect( graphOpts().selectedSubject ).toEqual( {
 				field: 'page',
 				hash: 'd00dfeed6613',
 				url: 'https://hoiho-6610.example/kea/',

@@ -55,20 +55,17 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-performance-loading',
 		'newspack-nodes-status',
 	],
-	'overview/PerformanceDashboard.js': [
-		'newspack-nodes-performance-loading',
-		'newspack-nodes-card',
-		'newspack-nodes-section-heading',
+	'overview/PerformancePage.js': [
+		'newspack-nodes-stats-grid',
+		'newspack-nodes-stat',
+		'newspack-nodes-stat-label',
 		'newspack-nodes-modal',
 		'newspack-nodes-status',
 		'is-error',
 	],
-	'overview/components/OverviewSection.js': [ 'newspack-nodes-card' ],
-	'overview/components/HeadlineStats.js': [
-		'newspack-nodes-stats-grid',
-		'newspack-nodes-stat',
-		'newspack-nodes-stat-value',
-		'newspack-nodes-stat-label',
+	'overview/blocks/url-table.js': [
+		'newspack-nodes-card',
+		'newspack-nodes-section-heading',
 	],
 	'overview/UrlTable.js': [
 		'newspack-nodes-table',
@@ -173,7 +170,7 @@ const INLINE_APPEARANCE_PROPERTY =
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	// @longform The `filter` tokens a URL modal's chips ask `ask` and the
 	// facts block under, as the `url:` brief names them: not a style.
-	[ 'overview/PerformanceDashboard.js', [ /filter: detailChart\.chips,/ ] ],
+	[ 'overview/PerformancePage.js', [ /filter: detailChart\.chips,/ ] ],
 	[ 'overview/pageFacts.js', [ /filter: detailChips,/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.

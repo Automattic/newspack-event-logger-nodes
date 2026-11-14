@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Performance dashboard is a composed page a curator rearranges.** It lays out the `newspack-event-logger-nodes/performance` context, whose default layout reproduces the page it replaces: the headline stats, now the substrate's `newspack-nodes/stats` block over `eln/urls`, whose caption names the stats window the server sets in the page data, or the server's refusal where `min_lifetime` is shorter than one bucket, then the breakdown bar, the aggregate chart, the category charts, the time breakdown with its owners and the URL table, each a block of this plugin's own. A `tune` reader opens **Edit layout** from the header's ⋯ menu, and the editor loads on `?edit=performance`. The page's state and its sources are declared once (`src/overview/sources.js`): blocks reading one source under equal params share one fetch, so the URL table and the headline totals read one `urls` fetch, and every link keeps its param, `?server=`, `?chip=`, `?bucket=`, `?metric=`, `?breakdown=`, `?then=`, `?sort=`, `?order=`, `?q=`, `?workers=`, `?paged=` and `?expand=`. The URL and request window belongs to the page, so `?url=`, `?page_hash=` and `?request=` open it on a layout holding no URL table; they are page state, so the one bar store keeps the window and Back in step. Each block shows its empty state for a null answer: the category charts, the time breakdown and the aggregate chart now say so where they drew nothing. The Peak Memory tile shows only where a request sampled memory.
+
 ### Changed
 
+- **The Performance page asks a new question as a new fetch.** A filter, a sort or a page turn asks `urls` afresh under its own key, and each block keeps the answer it showed while the new one loads. The URL table's search writes `?q=` once typing pauses for 300ms, and an emptied box at once.
+- **The URL window polls while it stands.** `dump_url` and the window's two charts ask on the same ticks at the page's cadence, and a new subject keeps nothing of the last. While the window stands, the page's own polls hold still.
+- **The ELN PHPUnit suite needs `WP_ABSPATH`.** The Performance page's composition tests load WordPress's block parser, so `pre-push.local` exports `WP_ABSPATH=/var/www/html`, as the substrate's and Intelligence's do.
 - **The overview table's numeric cell takes the shared `table-cell-numeric` mixin**, so its figures right-align on tabular digits and no longer shift as they change.
 
 ## [0.164.0] - 2026-11-12

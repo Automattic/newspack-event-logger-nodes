@@ -3,7 +3,8 @@
 	"entry": [
 		"src/*/index.js",
 		"src/error-log/ErrorLog.js",
-		"src/overview/PerformanceDashboard.js",
+		"src/overview/PerformancePage.js",
+		"src/overview/layout-editor.js",
 		"src/overview/FlameGraph.js",
 		"scripts/*.{js,mjs}"
 	],

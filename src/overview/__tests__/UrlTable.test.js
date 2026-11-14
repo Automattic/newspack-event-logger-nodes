@@ -20,11 +20,33 @@ jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	default: ( ...args ) => mockVirtualization( ...args ),
 } ) );
 
+// @longform Each expanded page's shapes read `eln/urls` by `--page`; the double
+// answers what `shapesView()` seeded for that page and records each read.
+const mockShapeModels = {};
+const mockShapeAsks = [];
+jest.mock( '@newspack-nodes/shared/sources', () => ( {
+	...jest.requireActual( '@newspack-nodes/shared/sources' ),
+	useSource: ( name, params ) => {
+		mockShapeAsks.push( params );
+		return (
+			mockShapeModels[ params.page ] ?? {
+				model: null,
+				error: null,
+				loading: true,
+				stale: false,
+			}
+		);
+	},
+} ) );
+
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
+import { PageStateProvider } from '@newspack-nodes/shared/composition/page/pageState';
+import '../sources';
+import { useFilter } from '../blocks/pageQuestions';
+import { useUrlTableQuestion } from '../blocks/url-table';
 import UrlTable from '../UrlTable';
 import { subjectOfRow } from '../detailSubject';
-import { views } from '../nodes/register';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import { slotsEndingAt } from '../../test-helpers/chartWire';
 
@@ -83,7 +105,88 @@ const URLS = [
 // The table writes its filters into the bar; a test never inherits another's.
 beforeEach( () => {
 	window.history.replaceState( null, '', '/wp-admin/admin.php?page=perf' );
+	mockShapeAsks.length = 0;
+	for ( const page of Object.keys( mockShapeModels ) ) {
+		delete mockShapeModels[ page ];
+	}
 } );
+
+/**
+ * The table as its block lays it out, on the page's state: a `server`,
+ * `chips` or `bucket` prop is the filter the bar wrote, and `onParamsChange`
+ * hears each question the table asks, as `{ search, sort, order, offset,
+ * includeWorkers, bucket }`.
+ *
+ * @param {Object} props The table's props, and the filters.
+ * @return {import('react').ReactElement} The table.
+ */
+function OnPage( props ) {
+	return (
+		<PageStateProvider>
+			<Questioned { ...props } />
+		</PageStateProvider>
+	);
+}
+
+/**
+ * @param {Object}   props                  `OnPage`'s props.
+ * @param {string}   [props.server]         The server filter the bar holds.
+ * @param {string[]} [props.chips]          Its chips.
+ * @param {string}   [props.bucket]         Its bucket selection.
+ * @param {Function} [props.onParamsChange] Hears each question asked.
+ * @return {import('react').ReactElement} The table.
+ */
+function Questioned( {
+	server = '',
+	chips = NO_CHIPS,
+	bucket = '',
+	onParamsChange,
+	...props
+} ) {
+	const [ question, onQuestion ] = useUrlTableQuestion();
+	const filters = {
+		server: [ server, ...useFilter( 'server' ) ],
+		chips: [ chips, ...useFilter( 'chips' ) ],
+		buckets: [ bucket, ...useFilter( 'buckets' ) ],
+	};
+	// A filter prop writes when it moves, and on mount where the bar differs.
+	const written = React.useRef( {} );
+	React.useEffect( () => {
+		for ( const [ key, [ wanted, held, set ] ] of Object.entries(
+			filters
+		) ) {
+			const spelled = JSON.stringify( wanted );
+			const moved = Object.hasOwn( written.current, key )
+				? written.current[ key ] !== spelled
+				: spelled !== JSON.stringify( held );
+			written.current[ key ] = spelled;
+			if ( moved ) {
+				set( wanted );
+			}
+		}
+	} );
+	React.useEffect( () => {
+		onParamsChange?.( {
+			search: question.q,
+			sort: question.sort,
+			order: question.order,
+			offset: ( question.paged - 1 ) * 100,
+			includeWorkers: question.workers,
+			bucket: question.buckets,
+		} );
+	}, [ question, onParamsChange ] );
+	return (
+		<UrlTable
+			question={ question }
+			onQuestion={ onQuestion }
+			onBucketChange={ filters.buckets[ 2 ] }
+			{ ...props }
+		/>
+	);
+}
+
+/** No chips, one array, so a prop left unset writes nothing. */
+const NO_CHIPS = [];
 
 function mount( overrides = {} ) {
 	const props = {
@@ -96,7 +199,7 @@ function mount( overrides = {} ) {
 	};
 	return {
 		props,
-		...renderComponent( React.createElement( UrlTable, props ) ),
+		...renderComponent( React.createElement( OnPage, props ) ),
 	};
 }
 
@@ -125,10 +228,14 @@ const type = ( container, text ) => {
 		window.HTMLInputElement.prototype,
 		'value'
 	).set;
+	// The box asks once typing pauses, which the test waits out.
+	jest.useFakeTimers();
 	act( () => {
 		setter.call( input, text );
 		input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 	} );
+	act( () => jest.advanceTimersByTime( 300 ) );
+	jest.useRealTimers();
 };
 
 describe( 'UrlTable', () => {
@@ -165,7 +272,7 @@ describe( 'UrlTable', () => {
 			totalRows: 800,
 		};
 		const { container, rerender, unmount } = renderComponent(
-			React.createElement( UrlTable, props )
+			React.createElement( OnPage, props )
 		);
 		const next = button( container, ( t ) => t.includes( 'Next' ) );
 		act( () => {
@@ -173,9 +280,7 @@ describe( 'UrlTable', () => {
 		} );
 		onParamsChange.mockClear();
 
-		rerender(
-			React.createElement( UrlTable, { ...props, totalRows: 30 } )
-		);
+		rerender( React.createElement( OnPage, { ...props, totalRows: 30 } ) );
 
 		expect(
 			onParamsChange.mock.calls.some( ( c ) => 0 === c[ 0 ].offset )
@@ -502,7 +607,7 @@ describe( 'UrlTable', () => {
 		function KeyboardSelectionHarness() {
 			const [ selectedSubject, setSelectedSubject ] =
 				React.useState( null );
-			return React.createElement( UrlTable, {
+			return React.createElement( OnPage, {
 				urls: URLS,
 				selectedSubject,
 				onSelect: ( row ) => setSelectedSubject( subjectOfRow( row ) ),
@@ -556,7 +661,7 @@ describe( 'UrlTable', () => {
 				( row ) => setSelectedSubject( subjectOfRow( row ) ),
 				[]
 			);
-			return React.createElement( UrlTable, {
+			return React.createElement( OnPage, {
 				urls,
 				selectedSubject,
 				onSelect,
@@ -597,7 +702,6 @@ describe( 'UrlTable', () => {
 			offset: 0,
 			includeWorkers: false,
 			bucket: '',
-			shapeOffsets: {},
 		} );
 		unmount();
 	} );
@@ -612,7 +716,7 @@ describe( 'UrlTable', () => {
 			expect.objectContaining( { bucket: '2026-10-04-13-35' } )
 		);
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				...props,
 				bucket: '2026-10-04-13-40',
 			} )
@@ -638,7 +742,7 @@ describe( 'UrlTable', () => {
 		onParamsChange.mockClear();
 
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				...props,
 				bucket: '2026-10-04-13-40',
 			} )
@@ -696,7 +800,7 @@ describe( 'UrlTable', () => {
 			let current = props;
 			const update = ( next ) => {
 				current = { ...current, ...next };
-				rerender( React.createElement( UrlTable, current ) );
+				rerender( React.createElement( OnPage, current ) );
 			};
 			act( () =>
 				button( container, ( t ) => t.includes( 'Next' ) ).click()
@@ -1117,7 +1221,6 @@ describe( 'the address bar', () => {
 			offset: 0,
 			includeWorkers: true,
 			bucket: '',
-			shapeOffsets: {},
 		} );
 		expect( container.querySelector( 'input' ).value ).toBe( 'wp-cron' );
 		expect( button( container, ( t ) => t.startsWith( 'Avg' ) ) ).toBe(
@@ -1219,7 +1322,9 @@ describe( 'the address bar', () => {
 	} );
 
 	it( 'opens a link naming a page, its filters and a bucket on that page', () => {
-		linkTo( 'paged=4&q=feed&sort=max_ms&order=asc&workers=1' );
+		linkTo(
+			'paged=4&q=feed&sort=max_ms&order=asc&workers=1&bucket=2026-10-04-13-35'
+		);
 		const onParamsChange = jest.fn();
 		const { unmount } = mount( {
 			onParamsChange,
@@ -1247,7 +1352,7 @@ describe( 'the address bar', () => {
 			totalRows: null,
 		};
 		const { container, rerender, unmount } = renderComponent(
-			React.createElement( UrlTable, props )
+			React.createElement( OnPage, props )
 		);
 		expect( param( 'paged' ) ).toBe( '4' );
 		expect(
@@ -1255,7 +1360,7 @@ describe( 'the address bar', () => {
 		).toBe( true );
 
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				...props,
 				urls: URLS,
 				totalRows: 800,
@@ -1394,10 +1499,14 @@ describe( 'pages and their shapes', () => {
 	 * @return {Object} The view node.
 	 */
 	const shapesView = ( name, model ) => {
-		const view = new views.UrlsView();
-		view.name = name;
-		view.setField( 'view', { ...view.view, ...model } );
-		return view;
+		const page = name.split( ':' )[ 1 ];
+		mockShapeModels[ page ] = {
+			model: 'error' in model ? null : { offset: 0, ...model },
+			error: model.error ?? null,
+			loading: false,
+			stale: false,
+		};
+		return mockShapeModels[ page ];
 	};
 
 	const rowsOf = ( container ) =>
@@ -1535,7 +1644,7 @@ describe( 'pages and their shapes', () => {
 		expect( onToggleExpand.mock.calls ).toEqual( [ [ PIWAKAWAKA_KEY ] ] );
 
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				...props,
 				expanded: [ PIWAKAWAKA_KEY ],
 			} )
@@ -1565,7 +1674,7 @@ describe( 'pages and their shapes', () => {
 		);
 
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				urls: [ PIWAKAWAKA ],
 				selectedSubject: { field: 'url', hash: 'b17e0a99c4d2' },
 				onSelect: jest.fn(),
@@ -1628,7 +1737,6 @@ describe( 'pages and their shapes', () => {
 	} );
 
 	it( 'says a page is asking for its shapes, and why it has none', () => {
-		const view = shapesView( PIWAKAWAKA_VIEW, { loading: true } );
 		const { container, rerender, unmount } = mount( {
 			urls: [ PIWAKAWAKA ],
 			totalRows: 1,
@@ -1638,15 +1746,11 @@ describe( 'pages and their shapes', () => {
 			'Loading URLs…'
 		);
 
-		act( () =>
-			view.setField( 'view', {
-				...view.view,
-				loading: false,
-				error: 'filter page=b17e0a99c4d2 refused',
-			} )
-		);
+		shapesView( PIWAKAWAKA_VIEW, {
+			error: 'filter page=b17e0a99c4d2 refused',
+		} );
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				urls: [ PIWAKAWAKA ],
 				selectedSubject: null,
 				onSelect: jest.fn(),
@@ -1747,18 +1851,21 @@ describe( 'pages and their shapes', () => {
 		};
 		scrollTo( 0, 30 );
 		const { container, rerender, unmount } = renderComponent(
-			React.createElement( UrlTable, props )
+			React.createElement( OnPage, props )
 		);
-		expect( onParamsChange.mock.lastCall[ 0 ].shapeOffsets ).toEqual( {
-			[ PIWAKAWAKA_KEY ]: 0,
+		expect( mockShapeAsks.at( -1 ) ).toMatchObject( {
+			page: PIWAKAWAKA.page_hash,
+			server: PIWAKAWAKA.server,
+			offset: 0,
 		} );
 
 		// Row 1 is the page; its shape 1700 is row 1701.
 		scrollTo( 1701, 30 );
-		act( () => rerender( React.createElement( UrlTable, props ) ) );
+		act( () => rerender( React.createElement( OnPage, props ) ) );
 
-		expect( onParamsChange.mock.lastCall[ 0 ].shapeOffsets ).toEqual( {
-			[ PIWAKAWAKA_KEY ]: 1500,
+		expect( mockShapeAsks.at( -1 ) ).toMatchObject( {
+			page: PIWAKAWAKA.page_hash,
+			offset: 1500,
 		} );
 		const [ first ] = rowsOf( container );
 		expect( first.textContent ).toContain( 'piwakawaka-3381/?k1700=?' );
@@ -1826,7 +1933,7 @@ describe( 'pages and their shapes', () => {
 		expect( busy[ 0 ].style.height ).toBe( '40px' );
 
 		rerender(
-			React.createElement( UrlTable, {
+			React.createElement( OnPage, {
 				urls: [ RURU, PIWAKAWAKA ],
 				selectedSubject: null,
 				onSelect: jest.fn(),

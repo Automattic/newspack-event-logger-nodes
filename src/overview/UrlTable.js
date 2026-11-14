@@ -7,24 +7,18 @@
  * caret expands it into its shapes, each a URL row beneath it that its own
  * slice answers, at most a page's worth and then how many more.
  *
- * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
- * `urls` command and this table draws the page it is handed, in the order it
- * arrives: the search box, the sort headers, the Include Workers toggle and
- * the pager are local state that only reports itself upward through
- * `onParamsChange`. Re-applying any of it here makes the footer's total
- * describe a different population than the rows, and `localeCompare` re-orders
- * a page the server already cut with PHP's byte-order `<=>`, so rows skip and
- * repeat across pages.
+ * The server owns the set. The `url-table` block reads the `eln/urls` source
+ * and this table draws the page it is handed, in the order it arrives: the
+ * search box, the sort headers, the Include Workers toggle and the pager
+ * write the question through `onQuestion`, and a new question is a new
+ * fetch. Re-applying any of it here makes the footer's total describe a
+ * different population than the rows, and `localeCompare` re-orders a page
+ * the server already cut with PHP's byte-order `<=>`, so rows skip and
+ * repeat across pages. The search box writes its text once typing pauses,
+ * and an emptied box at once.
  *
- * All of it also lives in the address bar — `?sort=`, `?order=`, `?q=`,
- * `?workers=` and `?paged=` — so a shared link opens on the same view. The
- * page is `?paged=`, WordPress's own name, because `?page=` names the admin
- * screen. It owns neither the server filter, nor the chart's chips, nor the
- * bucket selection its Time field and the charts above edit: the dashboard
- * holds all three, and the table reads them only to start a new set on its
- * first page.
- *
- * The dashboard owns which pages are expanded, and keeps that as `?expand=`.
+ * Each expanded page's shapes read `eln/urls` too, under `--page`, the
+ * window of them in view asked from the offset its first shape stands at.
  *
  * Pages and the shapes beneath them virtualize as one list against window
  * scroll, and each row's URL cell carries a background bar scaling the
@@ -41,7 +35,7 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { SearchControl, Spinner } from '@wordpress/components';
-import { useNodeField } from '@newspack-nodes/runtime';
+import { useSource } from '@newspack-nodes/shared/sources';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '@newspack-nodes/shared/components/DashboardShell';
 import SortHeaderButton from './components/SortHeaderButton';
@@ -52,23 +46,17 @@ import {
 	formatAge,
 	formatGroupedCount,
 } from '@newspack-nodes/shared/utils/formatters';
-import {
-	useQueryParamState,
-	useQueryParamChoice,
-	useQueryParamFlag,
-} from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { sameSubject, subjectDescriptor, subjectOfRow } from './detailSubject';
 import { requestedUrl } from '../log-table/urlIdentity';
+import { URLS_PER_ASK } from './questions';
 import {
 	BAR_CELL,
 	DEFAULT_CHART_METRIC,
 	NO_PAGE_KEYS,
 	barStyle,
 	SHAPES_PER_ASK,
-	SORT_ORDERS,
 	cellClass,
 	pageKey,
-	shapesSubject,
 } from './constants';
 
 /**
@@ -81,25 +69,12 @@ import {
 const ROW_HEIGHT = 40;
 
 /**
- * The page a `?paged=` value names: a positive whole number, else the first.
- *
- * @param {?string} raw The param's value; null when absent.
- * @return {number} The 1-based page.
- */
-const restorePage = ( raw ) => {
-	const n = Number( raw );
-	// Safe, or `1e21` reaches the wire as an exponent the command refuses.
-	return Number.isSafeInteger( n ) && n > 0 ? n : 1;
-};
-
-/**
  * Page size, in rows.
  *
- * `usePerformanceGraph` fixes the `urls` command's `limit` at 100 to match, since
- * every `offset` this table sends is derived from this number: the two are one
- * page size split across two files.
+ * The `urls` command's `limit` for a table page, from which the offset each
+ * page asks is derived.
  */
-const URLS_PER_PAGE = 100;
+const URLS_PER_PAGE = URLS_PER_ASK;
 
 /**
  * The last offset the `urls` command serves (`Stats_Query::MAX_OFFSET`); it
@@ -107,6 +82,9 @@ const URLS_PER_PAGE = 100;
  * and an expanded page's shapes at the window that starts here.
  */
 const URLS_MAX_OFFSET = 10000;
+
+/** How long typing pauses before the search box asks afresh, in ms. */
+const SEARCH_PAUSE_MS = 300;
 
 /**
  * How far apart the offsets an expanded page's shapes are asked from lie:
@@ -270,9 +248,9 @@ const GRID_TEMPLATE = gridTemplate(
  *
  * Every column but the `status` shares, which are not sort keys.
  */
-const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
-	( col ) => col.field
-);
+export const SORT_FIELDS = COLUMNS.filter(
+	( col ) => 'status' !== col.kind
+).map( ( col ) => col.field );
 
 /**
  * Render one column's cell for one URL.
@@ -580,31 +558,47 @@ const rowState = ( row, selected, busy ) => {
 };
 
 /**
+ * A page's chips less any on `page`, which its shapes' `--page` owns.
+ *
+ * @param {string[]} chips The table's chips.
+ * @return {string[]} Those its shapes ask under.
+ */
+const pageChips = ( chips ) =>
+	chips.filter(
+		( chip ) => 'page' !== chip.split( '=' )[ 0 ].replace( /!$/, '' )
+	);
+
+/**
  * One run of an expanded page's shape slots, filled from the window of shapes
- * its slice's view holds, each shape keyed by its hash; a slot outside that
- * window waits for the next, and until the view answers, the run's first
- * slot says it is loading or why it failed. Not memoized: the slice is built
- * after the row that reads it, so it re-reads its view on the table's next
- * render.
+ * its `eln/urls` read holds, each shape keyed by its hash: the table's
+ * question on the page's own server, naming the page by `--page`, from the
+ * offset the run's first slot stands at. A slot outside that window waits
+ * for the next, and until the read answers, the run's first slot says it is
+ * loading or why it failed.
  *
  * @param {Object}  props          Component props.
  * @param {Object}  props.page     The page row.
  * @param {number}  props.from     Its first slot in this run.
  * @param {number}  props.to       One past its last slot.
+ * @param {Object}  props.question The table's question, less its page.
  * @param {Object}  props.rowProps What every row takes from the table.
  * @param {?Object} props.selected The open window's subject, or null.
  * @param {?Object} props.busy     The subject a click waits on, or null.
  * @return {import('react').ReactElement[]} The rows.
  */
-function PageShapes( { page, from, to, rowProps, selected, busy } ) {
-	const model = useNodeField( `${ shapesSubject( page ) }:view`, 'view' );
-	// `rows` stays null until a reply counts the page's shapes, none included.
-	const unanswered = null === ( model?.rows ?? null );
-	const waiting = model?.error
+function PageShapes( { page, from, to, question, rowProps, selected, busy } ) {
+	const { model, error } = useSource( 'eln/urls', {
+		...question,
+		server: page.server,
+		chips: pageChips( question.chips ),
+		page: page.page_hash,
+		offset: shapesOffset( from ),
+	} );
+	const waiting = error
 		? sprintf(
 				// translators: %s: the error message.
 				__( 'Could not load URLs: %s', 'newspack-event-logger-nodes' ),
-				model.error
+				error
 		  )
 		: __( 'Loading URLs…', 'newspack-event-logger-nodes' );
 	return Array.from( { length: to - from }, ( _, at ) => {
@@ -621,7 +615,7 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
 		) : (
 			<NoteRow
 				key={ `#${ index }` }
-				text={ 0 === at && unanswered ? waiting : '' }
+				text={ 0 === at && ! model ? waiting : '' }
 			/>
 		);
 	} );
@@ -638,11 +632,9 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
  * @param {string[]}                   [props.expanded]       The keys of the expanded pages, as `pageKey()` spells them.
  * @param {?Object}                    [props.busy]           The subject a click waits on to open its one request; its row shows busy.
  * @param {(key: string) => void}      [props.onToggleExpand] Receives the key of a page of several shapes to expand or shut.
- * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `includeWorkers` and `bucket` whenever one of them changes.
- * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
+ * @param {Object}                     props.question         The `eln/urls` params the rows answer: `server`, `chips`, `buckets`, `sort`, `order`, `q`, `workers` and `paged`.
+ * @param {(patch: Object) => void}    props.onQuestion       Receives the controls this table moves, `sort`, `order`, `q`, `workers` or `paged`, to ask afresh.
  * @param {string[]|null}              [props.slots]          The charted bucket keys, newest first, which the Time field resolves a typed time against.
- * @param {string}                     [props.server]         The server the dashboard scoped the table to; '' for every server.
- * @param {string[]}                   [props.chips]          The chart's chips, which narrow the table's set server-side; a change starts the new set on page 1.
  * @param {(spelling: string) => void} [props.onBucketChange] Receives the selection the Time field leaves.
  * @param {?number}                    [props.totalRows]      The pages the server's filters left, which the pager pages over. Null until a reply has counted them.
  * @param {string}                     [props.metric]         Chart metric the row bars scale.
@@ -657,56 +649,42 @@ export default function UrlTable( {
 	expanded = NO_PAGE_KEYS,
 	onToggleExpand,
 	busy = null,
-	onParamsChange,
-	bucket = '',
+	question,
+	onQuestion,
 	slots = null,
-	server = '',
-	chips = [],
 	onBucketChange,
 	totalRows = null,
 	metric = DEFAULT_CHART_METRIC,
 	error = null,
 	loading = false,
 } ) {
-	const [ sortField, setSortField ] = useQueryParamChoice(
-		'sort',
-		SORT_FIELDS,
-		'count'
-	);
-	const [ sortOrder, setSortOrder ] = useQueryParamChoice(
-		'order',
-		SORT_ORDERS,
-		'desc'
-	);
-	// The request search owns `?search=`, so the table searches on `?q=`.
-	const [ searchTerm, setSearchTerm ] = useQueryParamState(
-		'q',
-		( raw ) => raw ?? '',
-		String
-	);
-	// Opts IN: workers are out by default.
-	const [ includeWorkers, setIncludeWorkers ] =
-		useQueryParamFlag( 'workers' );
-	const [ currentPage, setCurrentPage ] = useQueryParamState(
-		'paged',
-		restorePage,
-		( n ) => ( 1 === n ? null : String( n ) )
-	);
-	// A new set starts on page 1, in render: an ask never takes the old offset.
-	const filters = JSON.stringify( [
-		searchTerm,
-		sortField,
-		sortOrder,
-		includeWorkers,
-		bucket,
-		server,
-		chips,
-	] );
-	const [ pagedFilters, setPagedFilters ] = useState( filters );
-	if ( pagedFilters !== filters ) {
-		setPagedFilters( filters );
-		setCurrentPage( 1 );
+	const { sort: sortField, order: sortOrder, q, workers } = question;
+	const currentPage = question.paged;
+	const setCurrentPage = ( paged ) => onQuestion( { paged } );
+	// The box answers each key; the question moves once typing pauses.
+	const [ searchTerm, setSearchTerm ] = useState( q );
+	const [ typedFor, setTypedFor ] = useState( q );
+	if ( typedFor !== q ) {
+		setTypedFor( q );
+		setSearchTerm( q );
 	}
+	useEffect( () => {
+		if ( searchTerm === q ) {
+			return undefined;
+		}
+		const timer = setTimeout(
+			() => onQuestion( { q: searchTerm } ),
+			SEARCH_PAUSE_MS
+		);
+		return () => clearTimeout( timer );
+	}, [ searchTerm, q, onQuestion ] );
+	// An emptied box is one deliberate act, so it asks at once.
+	const changeSearch = ( next ) => {
+		setSearchTerm( next );
+		if ( '' === next ) {
+			onQuestion( { q: '' } );
+		}
+	};
 	const listRef = useRef( null );
 	const searchContainerRef = useRef( null );
 
@@ -737,14 +715,12 @@ export default function UrlTable( {
 	 *
 	 * @param {string} field Field to sort by.
 	 */
-	const handleSort = ( field ) => {
-		if ( sortField === field ) {
-			setSortOrder( sortOrder === 'asc' ? 'desc' : 'asc' );
-		} else {
-			setSortField( field );
-			setSortOrder( 'desc' );
-		}
-	};
+	const handleSort = ( field ) =>
+		onQuestion(
+			sortField === field
+				? { order: sortOrder === 'asc' ? 'desc' : 'asc' }
+				: { sort: field, order: 'desc' }
+		);
 
 	// Clamped on READ: a shrinking set strands the page, pager and all.
 	const total = totalRows ?? 0;
@@ -762,9 +738,9 @@ export default function UrlTable( {
 	// Move the state too, or a growing set springs the page back.
 	useEffect( () => {
 		if ( currentPage !== page ) {
-			setCurrentPage( page );
+			onQuestion( { paged: page } );
 		}
-	}, [ currentPage, page, setCurrentPage ] );
+	}, [ currentPage, page, onQuestion ] );
 
 	const expandedKeys = useMemo( () => new Set( expanded ), [ expanded ] );
 	const rows = useMemo(
@@ -809,40 +785,16 @@ export default function UrlTable( {
 			`.${ PAGE_CONTENT_CLASS }`
 		);
 	const visible = shapeRuns( rows.slice( startIndex, endIndex ) );
-	// Each expanded page in view, to the offset its shapes are asked from.
-	const windows = JSON.stringify(
-		Object.fromEntries(
-			visible
-				.filter( ( run ) => run.shapesOf )
-				.map( ( run ) => [
-					pageKey( run.shapesOf ),
-					shapesOffset( run.from ),
-				] )
-		)
-	);
-
-	useEffect( () => {
-		onParamsChange?.( {
-			search: searchTerm,
-			sort: sortField,
-			order: sortOrder,
-			offset,
-			includeWorkers,
-			bucket,
-			shapeOffsets: JSON.parse( windows ),
-		} );
-	}, [
-		searchTerm,
-		sortField,
-		sortOrder,
-		page,
-		offset,
-		includeWorkers,
-		bucket,
-		windows,
-		onParamsChange,
-	] );
-
+	// A page's shapes ask the table's question from offsets of their own.
+	const shapesQuestion = {
+		server: question.server,
+		chips: question.chips,
+		buckets: question.buckets,
+		sort: sortField,
+		order: sortOrder,
+		q,
+		workers,
+	};
 	const rowProps = {
 		onSelect,
 		onToggle: onToggleExpand,
@@ -873,20 +825,20 @@ export default function UrlTable( {
 							'newspack-event-logger-nodes'
 						) }
 						value={ searchTerm }
-						onChange={ setSearchTerm }
+						onChange={ changeSearch }
 					/>
 				</div>
 				<BucketField
-					value={ bucket }
+					value={ question.buckets }
 					slots={ slots }
 					onChange={ onBucketChange }
 				/>
 				<button
 					type="button"
-					className={ includeWorkers ? 'button is-active' : 'button' }
-					onClick={ () => setIncludeWorkers( ! includeWorkers ) }
+					className={ workers ? 'button is-active' : 'button' }
+					onClick={ () => onQuestion( { workers: ! workers } ) }
 				>
-					{ includeWorkers
+					{ workers
 						? __( 'Showing Workers', 'newspack-event-logger-nodes' )
 						: __(
 								'Include Workers',
@@ -953,6 +905,7 @@ export default function UrlTable( {
 										page={ row.shapesOf }
 										from={ row.from }
 										to={ row.to }
+										question={ shapesQuestion }
 										rowProps={ rowProps }
 										selected={ selectedSubject }
 										busy={ busy }
