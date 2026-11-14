@@ -49,7 +49,7 @@ export default function SelectorModal( {
 		<Modal
 			title={ title }
 			onRequestClose={ onClose }
-			className={ `${ className } event-logger-selector-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui`.trim() }
+			className={ `${ className } event-logger-selector-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui`.trim() }
 		>
 			<div className="event-logger-selector-modal__header">
 				<SearchControl

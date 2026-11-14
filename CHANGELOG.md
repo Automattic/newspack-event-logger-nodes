@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The hook and custom-event selector modals take the active skin.** `SelectorModal` carries `newspack-nodes-skin-root` beside the modal, theme and UI roots on its frame, which `@wordpress/components` portals onto `document.body`, outside the dashboard's skinned root, so the skin's `--paper` and `--ink` tokens resolve inside it rather than the light product values. `RuleEditModal` no longer prefixes the class onto the selectors it opens. The `modal-theme-class` gate requires the skin root on every `@wordpress/components` modal frame.
+
 ## [0.165.0] - 2026-11-14
 
 ### Added

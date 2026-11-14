@@ -1,4 +1,3 @@
-/* global globalThis */
 /**
  * RuleEditModal tests — the single-rule draft editor. Renders a @wordpress/components
  * Modal editing pattern / action / (for log rules) hooks / custom events /
@@ -16,8 +15,7 @@ jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 		{ length: 17 },
 		( _, i ) => `kea_7746_life_${ i }`
 	),
-	default: ( { isOpen, onSelect, onClose, className } ) => {
-		globalThis.__hookSelectorClassName = className;
+	default: ( { isOpen, onSelect, onClose } ) => {
 		return isOpen
 			? ( () => {
 					const el = require( 'react' ).createElement;
@@ -40,8 +38,7 @@ jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 
 jest.mock( '../../settings/settings/CustomEventSelectorModal', () => ( {
 	__esModule: true,
-	default: ( { isOpen, onSelect, onClose, className } ) => {
-		globalThis.__customSelectorClassName = className;
+	default: ( { isOpen, onSelect, onClose } ) => {
 		return isOpen
 			? ( () => {
 					const el = require( 'react' ).createElement;
@@ -205,12 +202,6 @@ describe( 'RuleEditModal — log rule fields', () => {
 			'newspack-nodes-ui',
 			'newspack-nodes-skin-root',
 		] );
-		expect( globalThis.__hookSelectorClassName ).toContain(
-			'newspack-nodes-skin-root'
-		);
-		expect( globalThis.__customSelectorClassName ).toContain(
-			'newspack-nodes-skin-root'
-		);
 	} );
 
 	test( 'labels the significant-events box and links its help', () => {

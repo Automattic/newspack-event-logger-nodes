@@ -89,6 +89,7 @@ describe( 'CustomEventSelectorModal', () => {
 		expect( frame ).toBeTruthy();
 		expect( productRootClasses( frame ) ).toEqual( [
 			'newspack-nodes-modal',
+			'newspack-nodes-skin-root',
 			'newspack-nodes-theme',
 			'newspack-nodes-ui',
 		] );

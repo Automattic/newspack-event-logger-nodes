@@ -751,14 +751,14 @@ export default function RuleEditModal( {
 				selected={ hooks }
 				onSelect={ setHooks }
 				mode="include"
-				className={ `newspack-nodes-skin-root ${ className }`.trim() }
+				className={ className }
 			/>
 			<CustomEventSelectorModal
 				isOpen={ isCustomOpen }
 				onClose={ () => setIsCustomOpen( false ) }
 				selected={ customEvents }
 				onSelect={ setCustomEvents }
-				className={ `newspack-nodes-skin-root ${ className }`.trim() }
+				className={ className }
 			/>
 		</Modal>
 	);

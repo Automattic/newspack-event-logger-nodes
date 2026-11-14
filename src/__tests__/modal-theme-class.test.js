@@ -8,7 +8,7 @@
  *
  * The walk finds every `<Modal>` in the source by its import, so a dialog
  * added later is held to the contract without being named here. A
- * `@wordpress/components` Modal carries the canonical modal, theme and UI
+ * `@wordpress/components` Modal carries the canonical modal, skin-root, theme and UI
  * classes on its own `className`; the substrate's shared Modal portals
  * through `ModalPortal`, whose host wears the skin, theme and UI roots.
  * Neither context borrows `.topology-app`.
@@ -29,6 +29,7 @@ const WP_MODAL = '@wordpress/components';
 const SHARED_MODAL = '@newspack-nodes/shared/components/Modal';
 const WP_MODAL_CLASSES = [
 	'newspack-nodes-modal',
+	'newspack-nodes-skin-root',
 	'newspack-nodes-theme',
 	'newspack-nodes-ui',
 ];
@@ -199,7 +200,7 @@ describe( 'dashboard Modal theme class', () => {
 		expect( strays ).toEqual( [] );
 	} );
 
-	it( 'puts the modal, theme and UI classes on every @wordpress Modal frame', () => {
+	it( 'puts the modal, skin-root, theme and UI classes on every @wordpress Modal frame', () => {
 		const missing = modals()
 			.filter( ( modal ) => WP_MODAL === modal.source )
 			.flatMap( ( modal ) =>

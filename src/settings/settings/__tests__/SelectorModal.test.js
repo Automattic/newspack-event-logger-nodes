@@ -68,6 +68,7 @@ describe( 'SelectorModal', () => {
 		expect( productRootClasses( frame ) ).toEqual( [
 			'theme-brass',
 			'newspack-nodes-modal',
+			'newspack-nodes-skin-root',
 			'newspack-nodes-theme',
 			'newspack-nodes-ui',
 		] );
@@ -79,7 +80,7 @@ describe( 'SelectorModal', () => {
 		expect(
 			document.querySelector( '.event-logger-instrument-modal' ).className
 		).toBe(
-			'components-modal__frame event-logger-instrument-modal event-logger-selector-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui'
+			'components-modal__frame event-logger-instrument-modal event-logger-selector-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
 	} );
 
