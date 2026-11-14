@@ -1102,3 +1102,21 @@ describe( 'the type scale floor', () => {
 		expect( offenders ).toEqual( [] );
 	} );
 } );
+
+// A numeric cell right-aligns on tabular digits, both from the shared mixin.
+describe( 'numeric cells', () => {
+	it( 'sets right-aligned tabular digits on the table cell', () => {
+		const declared = {};
+		postcss
+			.parse( compile( path.join( SRC, 'overview/styles/tables.scss' ) ) )
+			.walkRules( /event-logger-table__cell--numeric$/, ( rule ) => {
+				rule.walkDecls( ( decl ) => {
+					declared[ decl.prop ] = decl.value;
+				} );
+			} );
+		expect( declared ).toMatchObject( {
+			'font-variant-numeric': 'tabular-nums',
+			'text-align': 'right',
+		} );
+	} );
+} );

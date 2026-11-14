@@ -62,7 +62,7 @@
 	}
 
 	&--numeric {
-		text-align: right;
+		@include base.table-cell-numeric;
 	}
 
 	&--center,
