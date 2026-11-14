@@ -9,6 +9,7 @@
  */
 
 import { Modal, SearchControl } from '@wordpress/components';
+import { SKIN_ROOT_CLASSES } from '@newspack-nodes/shared/components/ThemedRoot';
 import '../styles/selector-modal.scss';
 
 /**
@@ -49,7 +50,7 @@ export default function SelectorModal( {
 		<Modal
 			title={ title }
 			onRequestClose={ onClose }
-			className={ `${ className } event-logger-selector-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui`.trim() }
+			className={ `${ className } event-logger-selector-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }`.trim() }
 		>
 			<div className="event-logger-selector-modal__header">
 				<SearchControl

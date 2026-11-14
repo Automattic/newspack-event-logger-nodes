@@ -39,9 +39,14 @@ import {
 } from '@wordpress/components';
 
 import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
+import { SKIN_ROOT_CLASSES } from '@newspack-nodes/shared/components/ThemedRoot';
 import HookSelectorModal, {
 	PLUGIN_TIME_HOOKS,
 } from '../settings/settings/HookSelectorModal';
+import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
+import TagInputField from '../settings/settings/TagInputField';
+
+import './rule-edit-modal.scss';
 
 /**
  * Every skin class this modal's own stylesheet needs.
@@ -52,12 +57,7 @@ import HookSelectorModal, {
  * optional `className` gives the same modal two layouts, one per tree that
  * mounts it.
  */
-const SKIN_CLASSES =
-	'event-logger-rule-edit-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui newspack-nodes-skin-root';
-import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
-import TagInputField from '../settings/settings/TagInputField';
-
-import './rule-edit-modal.scss';
+const SKIN_CLASSES = `event-logger-rule-edit-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }`;
 
 /**
  * Parse one numeric field, reading a blank or unparseable value as 0.

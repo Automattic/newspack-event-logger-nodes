@@ -11,7 +11,9 @@
  * `@wordpress/components` Modal carries the canonical modal, skin-root, theme and UI
  * classes on its own `className`; the substrate's shared Modal portals
  * through `ModalPortal`, whose host wears the skin, theme and UI roots.
- * Neither context borrows `.topology-app`.
+ * Neither context borrows `.topology-app`. The skin, theme and UI classes are
+ * the substrate's `SKIN_ROOT_CLASSES`, so a frame composes them from that
+ * import and spells none of the three by hand.
  */
 
 import fs from 'fs';
@@ -27,6 +29,39 @@ import {
 
 const WP_MODAL = '@wordpress/components';
 const SHARED_MODAL = '@newspack-nodes/shared/components/Modal';
+const THEMED_ROOT = '@newspack-nodes/shared/components/ThemedRoot';
+
+/**
+ * The substrate's `SKIN_ROOT_CLASSES`, read from the module that exports it.
+ *
+ * @return {string} The three skin classes.
+ */
+const skinRootClasses = () => {
+	let value = null;
+	visit(
+		parseCode(
+			fs.readFileSync(
+				path.join(
+					NEWSPACK_NODES_SRC,
+					'shared/components/ThemedRoot.js'
+				),
+				'utf8'
+			)
+		),
+		( node ) => {
+			if (
+				'VariableDeclarator' === node.type &&
+				'SKIN_ROOT_CLASSES' === node.id.name
+			) {
+				value = node.init.value;
+			}
+		}
+	);
+	return value;
+};
+
+const SKIN_ROOT_CLASSES = skinRootClasses();
+const SKIN = SKIN_ROOT_CLASSES.split( ' ' );
 const WP_MODAL_CLASSES = [
 	'newspack-nodes-modal',
 	'newspack-nodes-skin-root',
@@ -104,19 +139,39 @@ const isDialogBinding = ( spec, source ) => {
  */
 const dialogsIn = ( ast, file ) => {
 	const imported = {};
+	// Each constant twice: as it reads, and by its own words alone.
 	const constants = {};
+	const own = {};
 	for ( const statement of ast.program.body ) {
 		if ( 'ImportDeclaration' === statement.type ) {
 			for ( const spec of statement.specifiers ) {
 				if ( isDialogBinding( spec, statement.source.value ) ) {
 					imported[ spec.local.name ] = statement.source.value;
 				}
+				if (
+					THEMED_ROOT === statement.source.value &&
+					'ImportSpecifier' === spec.type &&
+					'SKIN_ROOT_CLASSES' === spec.imported.name
+				) {
+					constants[ spec.local.name ] = SKIN_ROOT_CLASSES;
+				}
 			}
 		}
 		if ( 'VariableDeclaration' === statement.type ) {
 			for ( const declarator of statement.declarations ) {
-				if ( 'StringLiteral' === declarator.init?.type ) {
-					constants[ declarator.id.name ] = declarator.init.value;
+				if (
+					[ 'StringLiteral', 'TemplateLiteral' ].includes(
+						declarator.init?.type
+					)
+				) {
+					constants[ declarator.id.name ] = staticText(
+						declarator.init,
+						constants
+					);
+					own[ declarator.id.name ] = staticText(
+						declarator.init,
+						own
+					);
 				}
 			}
 		}
@@ -139,6 +194,9 @@ const dialogsIn = ( ast, file ) => {
 			file: `${ file }:${ node.loc.start.line }`,
 			source: imported[ node.name.name ],
 			classes: staticText( classAttribute?.value, constants ),
+			spelled: staticText( classAttribute?.value, own )
+				.split( /\s+/ )
+				.filter( ( name ) => SKIN.includes( name ) ),
 		} );
 	} );
 	return found;
@@ -211,6 +269,42 @@ describe( 'dashboard Modal theme class', () => {
 		expect( missing ).toEqual( [] );
 	} );
 
+	it( 'takes the skin classes from SKIN_ROOT_CLASSES on every Modal frame', () => {
+		const spelled = modals().flatMap( ( modal ) =>
+			modal.spelled.map( ( name ) => `${ modal.file }:${ name }` )
+		);
+		expect( spelled ).toEqual( [] );
+	} );
+
+	it( 'reads a frame composed from the import, and fails one carrying neither', () => {
+		const [ composed, viaConstant, bare ] = dialogsIn(
+			parseCode(
+				[
+					"import { Modal } from '@wordpress/components';",
+					`import { SKIN_ROOT_CLASSES as SKIN } from '${ THEMED_ROOT }';`,
+					'const FRAME = `event-logger-kea-modal newspack-nodes-modal ${ SKIN }`;',
+					'export default () => <>',
+					'	<Modal className={ `event-logger-tui-modal newspack-nodes-modal ${ SKIN }` } />',
+					'	<Modal className={ FRAME } />',
+					'	<Modal className="event-logger-weka-modal newspack-nodes-modal" />',
+					'</>;',
+				].join( '\n' )
+			),
+			'fixture.js'
+		);
+		const missing = ( { classes } ) =>
+			WP_MODAL_CLASSES.filter(
+				( name ) => ! classes.split( /\s+/ ).includes( name )
+			);
+		expect( missing( composed ) ).toEqual( [] );
+		expect( missing( viaConstant ) ).toEqual( [] );
+		expect( [ composed.spelled, viaConstant.spelled ] ).toEqual( [
+			[],
+			[],
+		] );
+		expect( missing( bare ) ).toEqual( SKIN );
+	} );
+
 	it( 'borrows no topology layout root on any Modal frame', () => {
 		const borrowed = modals()
 			.filter( ( modal ) => /\btopology-app\b/.test( modal.classes ) )
@@ -227,9 +321,7 @@ describe( 'dashboard Modal theme class', () => {
 			shared.indexOf( 'export function ModalPortal' ),
 			shared.indexOf( 'export const ModalTitleId' )
 		);
-		expect( portal ).toContain(
-			'className="newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"'
-		);
+		expect( portal ).toContain( 'className={ SKIN_ROOT_CLASSES }' );
 		expect( portal ).toContain( 'document.body' );
 	} );
 

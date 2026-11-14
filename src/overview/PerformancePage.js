@@ -33,6 +33,7 @@ import {
 	useRef,
 } from '@wordpress/element';
 import { Modal } from '@wordpress/components';
+import { SKIN_ROOT_CLASSES } from '@newspack-nodes/shared/components/ThemedRoot';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { formatCommandArgs } from '@newspack-nodes/runtime';
@@ -1268,7 +1269,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 						selectSubject( null );
 						selectRequest( null );
 					} }
-					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
+					className={ `event-logger-performance-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }` }
 					headerActions={
 						selectedRequest ? (
 							<>
