@@ -4,7 +4,7 @@
  */
 
 import { LogPageShell } from '../log-pages';
-import { localizeLogPage } from './localizeLogPage';
+import { localizeComposedPage } from './localizeComposedPage';
 // The lazy page's modules load with this one, before any test runs.
 import '../log-pages/LogPage';
 
@@ -15,11 +15,11 @@ export { GyroscopeViewNode } from '../log-pages/nodes/gyroscope-view-node';
 /**
  * A page's shell on its default layout.
  *
- * @param {NonNullable<Window['NewspackEventLoggerLogPage']>['page']} page The page.
+ * @param {NonNullable<Window['NewspackEventLoggerComposedPage']>['page']} page The page.
  * @return {import('react').ReactElement} It.
  */
 const onDefault = ( page ) => {
-	localizeLogPage( page );
+	localizeComposedPage( page );
 	return <LogPageShell page={ page } />;
 };
 

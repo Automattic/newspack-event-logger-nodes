@@ -14,7 +14,6 @@
  */
 
 import { __, _n } from '@wordpress/i18n';
-import { SUBSTRATE_VIEWS } from '@newspack-nodes/shared/blocks';
 import { definePageState } from '@newspack-nodes/shared/composition/page/pageState';
 import { registerSource } from '@newspack-nodes/shared/sources';
 import { readStorage } from '@newspack-nodes/shared/utils/storage';
@@ -36,11 +35,22 @@ import {
 	uaCell,
 	urlCell,
 } from '../log-table/logTable';
+import { ADMITTED_VIEWS } from '../admittedBlocks';
 import { urlHash } from '../log-table/urlIdentity';
-import { GROUPS, STREAM_GLOBS } from '../overview/constants';
+import { GROUPS } from '../overview/constants';
 import { views as requestViews } from './nodes/request-log-view-node';
 import { views as errorViews } from './nodes/perf-errors-view-node';
 import { views as gyroscopeViews } from './nodes/gyroscope-view-node';
+
+/**
+ * The partition glob each log page's stream tails: its graph rides it, and
+ * its skipped-line notice sums the stamps it carries.
+ */
+const STREAM_GLOBS = {
+	errorLog: 'errors.*',
+	requestLog: 'completed.*',
+	gyroscope: 'gyroscope.*',
+};
 
 /**
  * The Gyroscope's cadences, each a number of SECONDS, which the picker and
@@ -425,8 +435,8 @@ registerSource( 'eln/gyroscope', {
 
 /**
  * Block name => its View and inspector Controls, for every block a log
- * page's layout may hold: the substrate's shared blocks.
+ * page's layout may hold: the shared blocks the pages admit.
  *
  * @type {Object<string,import('@newspack-nodes/shared/composition/CompositionView').CompositionBlockView>}
  */
-export const BLOCK_VIEWS = SUBSTRATE_VIEWS;
+export const BLOCK_VIEWS = ADMITTED_VIEWS;

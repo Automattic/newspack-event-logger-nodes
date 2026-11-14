@@ -12,7 +12,7 @@ import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCo
 import { steppedClock } from '@newspack-nodes/shared/test-utils/steppedClock';
 import { act, renderComponent, waitFor } from '../../test-helpers/renderHook';
 import { replyFor } from '../../test-helpers/logPagesWire';
-import { localizeLogPage } from '../../test-helpers/localizeLogPage';
+import { localizeComposedPage } from '../../test-helpers/localizeComposedPage';
 import { GyroscopeViewNode } from '../nodes/gyroscope-view-node';
 import LogPage from '../LogPage';
 
@@ -51,7 +51,7 @@ afterEach( () => {
  * @return {Promise<Object>} The mount.
  */
 async function mount( page, reader ) {
-	localizeLogPage( page, reader );
+	localizeComposedPage( page, reader );
 	const mounted = renderComponent( <LogPage page={ page } /> );
 	await clock.tick( 1 );
 	return mounted;
@@ -146,7 +146,7 @@ describe( 'the Gyroscope’s cadence', () => {
 			const { createElement } = require( 'react' );
 			const render = require( '../../test-helpers/renderHook' );
 			const page = require( '../LogPage' ).default;
-			require( '../../test-helpers/localizeLogPage' ).localizeLogPage(
+			require( '../../test-helpers/localizeComposedPage' ).localizeComposedPage(
 				'gyroscope'
 			);
 			const { container, unmount } = render.renderComponent(

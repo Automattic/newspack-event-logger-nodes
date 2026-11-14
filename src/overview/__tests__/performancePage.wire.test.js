@@ -31,9 +31,9 @@ import {
 	sentOn,
 } from '../../test-helpers/performanceWire';
 import {
-	DEFAULT_BLOCKS,
-	localizePerformancePage,
-} from '../../test-helpers/localizePerformancePage';
+	PERFORMANCE_BLOCKS,
+	localizeComposedPage,
+} from '../../test-helpers/localizeComposedPage';
 import { act, renderComponent } from '../../test-helpers/renderHook';
 import Page from '../PerformancePage';
 
@@ -155,7 +155,7 @@ beforeEach( () => {
 	window.history.replaceState( null, '', '/wp-admin/admin.php?page=x' );
 	jest.spyOn( Date, 'now' ).mockReturnValue( NOW_MS );
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
-	localizePerformancePage();
+	localizeComposedPage( 'performance' );
 	wire = installFakeCommandWire( ( m ) => {
 		const args = m[ VALUE ]?.arguments ?? [];
 		if (
@@ -227,8 +227,8 @@ it( 'filters the URL table by the slots a drag on the chart spans', async () => 
 } );
 
 it( 'opens a ?url= link on a layout that holds no URL table', async () => {
-	localizePerformancePage( {
-		blocks: DEFAULT_BLOCKS.filter(
+	localizeComposedPage( 'performance', {
+		blocks: PERFORMANCE_BLOCKS.filter(
 			( block ) => 'newspack-event-logger-nodes/url-table' !== block.name
 		),
 	} );
@@ -411,7 +411,7 @@ function pick( container, label, value ) {
 }
 
 it( 'titles the headline with the window the server names', async () => {
-	localizePerformancePage( { window: 18 } );
+	localizeComposedPage( 'performance', { window: 18 } );
 	const container = await rendered();
 	expect(
 		container.querySelector( '.newspack-nodes-stats-grid' ).title
@@ -421,7 +421,7 @@ it( 'titles the headline with the window the server names', async () => {
 } );
 
 it( 'titles the headline with the window refusal the server sends', async () => {
-	localizePerformancePage( {
+	localizeComposedPage( 'performance', {
 		window: { error: 'min_lifetime 120 is below the floor 7964' },
 	} );
 	const container = await rendered();
@@ -432,7 +432,7 @@ it( 'titles the headline with the window refusal the server sends', async () => 
 } );
 
 it( 'shows the headline totals when the category query fails', async () => {
-	localizePerformancePage( { window: 18 } );
+	localizeComposedPage( 'performance', { window: 18 } );
 	wire = installFakeCommandWire( ( m ) => {
 		const args = m[ VALUE ]?.arguments ?? [];
 		if ( 'query' === m[ VALUE ]?.name && 'timings' === args[ 0 ] ) {

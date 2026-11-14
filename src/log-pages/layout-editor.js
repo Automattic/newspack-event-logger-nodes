@@ -1,5 +1,5 @@
 /**
- * The log pages' layout editor, which `Log_Pages::enqueue()` loads on an edit
+ * The log pages' layout editor, which `Compositions::enqueue()` loads on an edit
  * load for a `tune` caller alone: the localized context's blocks against
  * this bundle's views, whose module declares the sources and the page state
  * the blocks read.
@@ -9,9 +9,10 @@ import { sprintf, __ } from '@wordpress/i18n';
 import { ComposedPage } from '@newspack-nodes/shared/composition/page';
 import { mountComposedEditor } from '@newspack-nodes/shared/composition/page/mountComposedEditor';
 import { BLOCK_VIEWS } from './sources';
-import { LOG_PAGES, logPage } from './logPageData';
+import { composedPage } from '../composedPageData';
+import { LOG_PAGES } from './logPageData';
 
-const { subtitle, group } = LOG_PAGES[ logPage().page ];
+const { subtitle, group } = LOG_PAGES[ composedPage().page ];
 
 mountComposedEditor(
 	/** @type {{NewspackNodesComposition: import('@newspack-nodes/shared/composition/page/mountComposedEditor').LocalizedComposition}} */ (

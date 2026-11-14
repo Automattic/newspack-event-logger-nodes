@@ -4,8 +4,8 @@
  *
  * Commands the live surfaces drive:
  *   - overview / urls / dump_url / search_requests / grep_requests /
- *     dump_request — the performance dashboard's per-slice graph
- *     (`src/overview/hooks/usePerformanceGraph.js`), plus the
+ *     dump_request — the Performance page, through the sources
+ *     `src/overview/sources.js` declares and its request search, plus the
  *     current-request overlay tab, which fetches `dump_request`.
  *   - query — one question over the stats rows in `Stats_Query`'s
  *     vocabulary, which MCP's `performance_query` fronts.

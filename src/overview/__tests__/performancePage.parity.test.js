@@ -13,7 +13,7 @@ import { roleTree } from '@newspack-nodes/shared/test-utils/roleTree';
 import { NOW_MS, replyFor } from '../../test-helpers/performanceWire';
 import { act, renderComponent } from '../../test-helpers/renderHook';
 import { PAGE_CONTENT_CLASS } from '@newspack-nodes/shared/components/DashboardShell';
-import { localizePerformancePage } from '../../test-helpers/localizePerformancePage';
+import { localizeComposedPage } from '../../test-helpers/localizeComposedPage';
 import Page from '../PerformancePage';
 
 /**
@@ -34,7 +34,7 @@ beforeEach( () => {
 	jest.spyOn( Date, 'now' ).mockReturnValue( NOW_MS );
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 	installFakeCommandWire( replyFor );
-	localizePerformancePage();
+	localizeComposedPage( 'performance' );
 } );
 
 afterEach( () => {

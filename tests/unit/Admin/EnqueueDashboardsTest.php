@@ -21,8 +21,6 @@ namespace {
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 	use Newspack_Event_Logger_Nodes\Admin\Compositions;
-	use Newspack_Event_Logger_Nodes\Admin\Log_Pages;
-	use Newspack_Event_Logger_Nodes\Admin\Performance_Page;
 	use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
 	use Newspack_Event_Logger_Nodes\Log_Manager;
 	use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -195,22 +193,22 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		}
 
 		/**
-		 * The Performance load sets the composed page's data before its
-		 * bundle; another dashboard's load sets none.
+		 * The Performance load sets its page data, stats window included,
+		 * before its bundle; a log page's data carries no window.
 		 */
 		public function test_the_overview_load_sets_the_performance_page_data(): void {
 			$GLOBALS['_current_user_can'] = true;
 			$_GET                         = [ 'page' => 'event-logger-overview' ];
 			$this->dispatch( 'nodes_page_event-logger-overview' );
-			$data = $this->window_json( 'newspack-nodes-overview', Performance_Page::GLOBAL );
-			$this->assertSame( [ 'canTune', 'canManage', 'compositions', 'window' ], \array_keys( $data ) );
+			$data = $this->window_json( 'newspack-nodes-overview', Compositions::GLOBAL );
+			$this->assertSame( [ 'page', 'canTune', 'canManage', 'compositions', 'window' ], \array_keys( $data ) );
+			$this->assertSame( 'performance', $data['page'] );
 			$this->assertArrayHasKey( 'newspack-event-logger-nodes/performance', $data['compositions'] );
 
 			$GLOBALS['_inline_scripts'] = [];
 			$_GET                       = [ 'page' => 'event-logger-errors' ];
 			$this->dispatch( 'nodes_page_event-logger-errors' );
-			$printed = \implode( "\n", \array_column( $GLOBALS['_inline_scripts'], 1 ) );
-			$this->assertStringNotContainsString( Performance_Page::GLOBAL, $printed );
+			$this->assertArrayNotHasKey( 'window', $this->window_json( 'newspack-nodes-log-pages', Compositions::GLOBAL ) );
 		}
 
 		/**
@@ -222,7 +220,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$GLOBALS['_current_user_can'] = true;
 			$_GET                         = [ 'page' => $page ];
 			$this->dispatch( "nodes_page_{$page}" );
-			$data = $this->window_json( 'newspack-nodes-log-pages', Log_Pages::GLOBAL );
+			$data = $this->window_json( 'newspack-nodes-log-pages', Compositions::GLOBAL );
 			$this->assertSame( [ 'page', 'canTune', 'canManage', 'compositions' ], \array_keys( $data ) );
 			$this->assertSame( $named, $data['page'] );
 			$this->assertArrayHasKey( "newspack-event-logger-nodes/{$named}", $data['compositions'] );

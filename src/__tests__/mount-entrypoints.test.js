@@ -22,6 +22,11 @@ jest.mock( '../log-pages/LogPage', () => ( {
 jest.mock( '../log-pages/nodes/request-log-view-node', () => ( {} ) );
 jest.mock( '../log-pages/nodes/perf-errors-view-node', () => ( {} ) );
 jest.mock( '../log-pages/nodes/gyroscope-view-node', () => ( {} ) );
+// The page table holds the Gyroscope's controls, which read its sources.
+jest.mock( '../log-pages/GyroscopeControls', () => ( {
+	GyroscopeLegend: () => null,
+	CadencePicker: () => null,
+} ) );
 jest.mock( '@newspack-nodes/shared/components/DashboardShell', () => ( {
 	__esModule: true,
 	default: ( { children } ) => children( undefined ),
@@ -45,7 +50,7 @@ describe( 'dashboard mount-entry points', () => {
 
 	it( 'log-pages/index.js mounts the page its data names into #event-logger-log-page', async () => {
 		const el = mountContainer( 'event-logger-log-page' );
-		window.NewspackEventLoggerLogPage = { page: 'gyroscope' };
+		window.NewspackEventLoggerComposedPage = { page: 'gyroscope' };
 		// The registry was reset, so act comes from the page's own React.
 		const was = global.IS_REACT_ACT_ENVIRONMENT;
 		global.IS_REACT_ACT_ENVIRONMENT = true;
@@ -62,7 +67,7 @@ describe( 'dashboard mount-entry points', () => {
 	} );
 
 	it( 'log-pages/index.js is a no-op without the container', () => {
-		delete window.NewspackEventLoggerLogPage;
+		delete window.NewspackEventLoggerComposedPage;
 		expect( () => require( '../log-pages' ) ).not.toThrow();
 	} );
 

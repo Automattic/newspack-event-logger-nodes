@@ -404,7 +404,7 @@ jest.mock( '@wordpress/components', () => ( {
 
 import * as React from 'react';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
-import { localizePerformancePage } from '../../test-helpers/localizePerformancePage';
+import { localizeComposedPage } from '../../test-helpers/localizeComposedPage';
 import PerformancePage from '../PerformancePage';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
@@ -490,7 +490,7 @@ const closeModal = async ( rerender ) => {
 describe( 'PerformancePage', () => {
 	beforeEach( () => {
 		mockView = null;
-		localizePerformancePage();
+		localizeComposedPage( 'performance' );
 		window.localStorage.clear();
 		// The page writes its filters into the bar; a test never inherits them.
 		window.history.replaceState(

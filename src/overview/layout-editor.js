@@ -1,5 +1,5 @@
 /**
- * The Performance layout editor's bundle, which `Performance_Page::enqueue()`
+ * The Performance layout editor's bundle, which `Compositions::enqueue()`
  * loads on an edit load for a `tune` caller alone: the localized context's
  * blocks against this bundle's views, whose module declares the sources and
  * the page state the blocks read.

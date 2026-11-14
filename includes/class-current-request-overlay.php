@@ -31,9 +31,6 @@ class Current_Request_Overlay {
 	/** Script handle for the tab bundle; also its style and inline-data anchor. */
 	private const HANDLE = 'newspack-eln-current-request';
 
-	/** The Performance page, the one dashboard outside the log pages. */
-	private const PERFORMANCE_PAGE = 'event-logger-overview';
-
 	/**
 	 * Enqueue the tab bundle on an overlay page this plugin is responsible for —
 	 * the station is the substrate filter's job. Every bundle registers into the same
@@ -133,15 +130,15 @@ class Current_Request_Overlay {
 
 	/**
 	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
-	 * the tab bundle themselves: the Performance page and every log page
-	 * (`Log_Pages::menu()`). The substrate's `station_tab_bundles` filter
+	 * the tab bundle themselves: every composed page
+	 * (`Admin\Compositions::menu()`). The substrate's `station_tab_bundles` filter
 	 * covers the station and nothing else, and the settings tree renders no
 	 * overlay, so its page is absent here.
 	 *
 	 * @return string[]
 	 */
 	private static function own_pages(): array {
-		return [ self::PERFORMANCE_PAGE, ...\array_keys( Admin\Log_Pages::menu() ) ];
+		return \array_keys( Admin\Compositions::menu() );
 	}
 
 	/**

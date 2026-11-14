@@ -21,7 +21,8 @@
 import { createRoot, lazy, Suspense } from '@wordpress/element';
 import DashboardShell from '@newspack-nodes/shared/components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
-import { LOG_PAGES, logPage } from './logPageData';
+import { composedPage } from '../composedPageData';
+import { LOG_PAGES } from './logPageData';
 import './nodes/request-log-view-node';
 import './nodes/perf-errors-view-node';
 import './nodes/gyroscope-view-node';
@@ -67,5 +68,5 @@ export function LogPageShell( { page } ) {
 
 const mount = document.getElementById( 'event-logger-log-page' );
 if ( mount ) {
-	createRoot( mount ).render( <LogPageShell page={ logPage().page } /> );
+	createRoot( mount ).render( <LogPageShell page={ composedPage().page } /> );
 }

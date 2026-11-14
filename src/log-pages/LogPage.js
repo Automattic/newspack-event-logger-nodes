@@ -2,20 +2,15 @@
  * A log page: the Request Log, the Error Log or the Gyroscope, each a composed
  * page whose default layout is one log-stream block over the page's stream,
  * its toolbar in the page header, in the one frame every composed page
- * wears, the ⋯ menu offering **Edit layout** to a `tune` reader. The
- * Gyroscope's header also holds its legend, and its stream's block the
- * cadence its snapshot is taken at.
+ * wears, the ⋯ menu offering **Edit layout** to a `tune` reader. A page's
+ * entry names what its header and its blocks stand beside the frame's own:
+ * the Gyroscope's legend, and the cadence its snapshot is taken at.
  */
 
 import ComposedPageFrame from '@newspack-nodes/shared/composition/page/ComposedPageFrame';
 import { BLOCK_VIEWS } from './sources';
-import { LOG_PAGES, logPage } from './logPageData';
-import { CadencePicker, GyroscopeLegend } from './GyroscopeControls';
-
-/** What the Gyroscope stands its blocks on: the cadence its stream's toolbar holds. */
-const GYROSCOPE_STANDING = {
-	sourceControls: { 'eln/gyroscope': <CadencePicker /> },
-};
+import { composedPage } from '../composedPageData';
+import { LOG_PAGES } from './logPageData';
 
 /**
  * @param {Object}   props
@@ -29,7 +24,7 @@ export default function LogPage( { page, headerControlsSlot } ) {
 	if ( ! entry ) {
 		throw new Error( `no log page is named '${ page }'` );
 	}
-	const { canTune, canManage, compositions } = logPage();
+	const { canTune, canManage, compositions } = composedPage();
 	return (
 		<ComposedPageFrame
 			context={ entry.context }
@@ -41,8 +36,8 @@ export default function LogPage( { page, headerControlsSlot } ) {
 			layout={ compositions[ entry.context ] }
 			views={ BLOCK_VIEWS }
 			headerControlsSlot={ headerControlsSlot }
-			controls={ 'gyroscope' === page ? <GyroscopeLegend /> : null }
-			standing={ 'gyroscope' === page ? GYROSCOPE_STANDING : undefined }
+			controls={ entry.controls ?? null }
+			standing={ entry.standing }
 		/>
 	);
 }

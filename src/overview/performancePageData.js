@@ -1,8 +1,6 @@
 /**
- * The Performance page's context, its edit-mode entry, and the page data a
- * Performance load sets as `NewspackEventLoggerPerformancePage`
- * (`Performance_Page::page_data()`). The page stands on one admin screen of
- * its own, so its edit link names no view.
+ * The Performance page's context and its edit-mode entry. The page stands on
+ * one admin screen of its own, so its edit link names no view.
  */
 
 /** The context the page lays out. */
@@ -30,19 +28,3 @@ export const PERFORMANCE_PAGES = {
  *   busySubject: ?Object,
  * }} PerformancePageValue
  */
-
-/**
- * The page data a Performance load set, as `types/globals.d.ts` declares it.
- *
- * @return {NonNullable<Window['NewspackEventLoggerPerformancePage']>} It.
- * @throws {Error} On a page that set none.
- */
-export function performancePage() {
-	const data = window.NewspackEventLoggerPerformancePage;
-	if ( ! data ) {
-		throw new Error(
-			'the Performance page reads NewspackEventLoggerPerformancePage, which a Performance load sets'
-		);
-	}
-	return data;
-}

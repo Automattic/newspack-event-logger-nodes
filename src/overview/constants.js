@@ -312,16 +312,6 @@ export const GROUPS = {
 };
 
 /**
- * The partition glob each streaming dashboard tails: its graph rides it, and
- * its skipped-line notice sums the stamps it carries.
- */
-export const STREAM_GLOBS = {
-	errorLog: 'errors.*',
-	requestLog: 'completed.*',
-	gyroscope: 'gyroscope.*',
-};
-
-/**
  * A `urls` page row's identity: its page hash and its server, because one
  * page served under two servers lists twice. The URL table keys its row by it
  * and the address bar names an expanded page by it, as `?expand=`.

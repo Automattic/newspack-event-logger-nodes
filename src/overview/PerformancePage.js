@@ -68,8 +68,8 @@ import {
 	PERFORMANCE_CONTEXT,
 	PERFORMANCE_PAGE,
 	PERFORMANCE_PAGES,
-	performancePage,
 } from './performancePageData';
+import { composedPage } from '../composedPageData';
 import useUrlNavigation from './hooks/useUrlNavigation';
 import {
 	findSubject,
@@ -323,7 +323,7 @@ export default function PerformancePage( props ) {
  * @return {import('react').ReactElement} The page.
  */
 function PerformanceSurface( { onError, headerControlsSlot } ) {
-	const { canTune, canManage, compositions } = performancePage();
+	const { canTune, canManage, compositions } = composedPage();
 	const urlsSlice = useSource( 'eln/urls', useUrlsParams() ).model;
 	const { servers: serverNames } = useSite();
 

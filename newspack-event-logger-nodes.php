@@ -340,24 +340,15 @@ function newspack_event_logger_nodes_register_admin_menu(): void {
 		'dashicons-chart-line',
 		80
 	);
-	\add_submenu_page(
-		'event-logger-overview',
-		'Performance Dashboard',
-		'Performance',
-		$manage_cap,
-		'event-logger-overview',
-		$performance_callback
-	);
-	$mount_html = '<div id="event-logger-log-page" class="event-logger-admin-page"></div>';
-	foreach ( \Newspack_Event_Logger_Nodes\Admin\Log_Pages::menu() as $slug => [ $title, $menu_title ] ) {
+	$log_page_callback = static fn () => print( $header_end . '<div id="event-logger-log-page" class="event-logger-admin-page"></div>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- hardcoded markup.
+	foreach ( \Newspack_Event_Logger_Nodes\Admin\Compositions::menu() as $slug => [ $title, $menu_title, $bundle ] ) {
 		\add_submenu_page(
 			'event-logger-overview',
 			$title,
 			$menu_title,
 			$manage_cap,
 			$slug,
-			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is the hardcoded mount markup above, not user input.
-			static fn () => print( $header_end . $mount_html )
+			'overview' === $bundle ? $performance_callback : $log_page_callback
 		);
 	}
 }
@@ -375,10 +366,9 @@ function newspack_event_logger_nodes_register_admin_menu(): void {
  * manifest, CSS sidecar, `NewspackNodesData` localize — and returns the script
  * handle, or null when it declined (wrong page, or no built bundle). The
  * `window.*` payloads below bind to that handle, so they only ship when the
- * bundle did. The Performance load also sets its composed page's data and,
- * on an edit load for a `tune` caller, its layout editor
- * (`Admin\Performance_Page::enqueue()`), and a log page's load its own
- * (`Admin\Log_Pages::enqueue()`).
+ * bundle did. A composed page's load also sets its page data and, on an
+ * edit load for a `tune` caller, its layout editor
+ * (`Admin\Compositions::enqueue()`).
  *
  * @api Hooked to `admin_enqueue_scripts` by the deferred bootstrap.
  * @param string $hook Current admin page hook suffix; unused, since the `page` slug gates instead.
@@ -389,10 +379,7 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 	}
 	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
 	$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
-	$page_to_tree = [
-		'event-logger-overview'       => 'overview',
-		'newspack-event-logger-nodes' => 'settings',
-	] + \array_fill_keys( \array_keys( \Newspack_Event_Logger_Nodes\Admin\Log_Pages::menu() ), 'log-pages' );
+	$page_to_tree = [ 'newspack-event-logger-nodes' => 'settings' ] + \array_map( static fn ( array $entry ): string => $entry[2], \Newspack_Event_Logger_Nodes\Admin\Compositions::menu() );
 	if ( ! \array_key_exists( $page, $page_to_tree ) ) {
 		return;
 	}
@@ -444,11 +431,8 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 	);
 
 	// A composed page reads its layout, and loads its editor on an edit.
-	if ( 'overview' === $tree ) {
-		\Newspack_Event_Logger_Nodes\Admin\Performance_Page::enqueue( $handle, NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/overview-editor', NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/overview-editor' );
-	}
-	if ( 'log-pages' === $tree ) {
-		\Newspack_Event_Logger_Nodes\Admin\Log_Pages::enqueue( $page, $handle, NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/log-pages-editor', NEWSPACK_EVENT_LOGGER_NODES_URL . 'build/log-pages-editor' );
+	if ( 'settings' !== $tree ) {
+		\Newspack_Event_Logger_Nodes\Admin\Compositions::enqueue( $page, $handle, NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build', NEWSPACK_EVENT_LOGGER_NODES_URL . 'build' );
 	}
 
 	// settings + overview both render pickers from these window lists.

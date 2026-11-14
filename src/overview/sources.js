@@ -29,7 +29,6 @@
 
 import { __, sprintf } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
-import { SUBSTRATE_VIEWS } from '@newspack-nodes/shared/blocks';
 import { definePageState } from '@newspack-nodes/shared/composition/page/pageState';
 import { registerSource } from '@newspack-nodes/shared/sources';
 import { readStorage } from '@newspack-nodes/shared/utils/storage';
@@ -37,7 +36,8 @@ import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 import { serverName } from '../log-table/urlIdentity';
 import { chipRefusal, chipsOf } from './components/BreakdownControls';
 import { windowSpan } from './chartSlots';
-import { performancePage } from './performancePageData';
+import { ADMITTED_VIEWS } from '../admittedBlocks';
+import { composedPage } from '../composedPageData';
 import {
 	CHART_BREAKDOWN_OPTIONS,
 	CHART_METRIC_OPTIONS,
@@ -289,7 +289,7 @@ registerSource( 'eln/urls', {
 	} ),
 	params: [ ...FILTERS, ...URL_PARAMS ],
 	caption: () => {
-		const { window: buckets } = performancePage();
+		const { window: buckets } = composedPage();
 		if ( 'number' !== typeof buckets ) {
 			return buckets?.error ?? null;
 		}
@@ -462,7 +462,7 @@ registerSource( 'eln/request-detail', {
  * @type {Object<string,import('@newspack-nodes/shared/composition/CompositionView').CompositionBlockView>}
  */
 export const BLOCK_VIEWS = {
-	...SUBSTRATE_VIEWS,
+	...ADMITTED_VIEWS,
 	'newspack-event-logger-nodes/breakdown-bar': breakdownBar,
 	'newspack-event-logger-nodes/aggregate-chart': aggregateChart,
 	'newspack-event-logger-nodes/category-chart': categoryChart,
