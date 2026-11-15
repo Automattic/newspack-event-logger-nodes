@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The release workflow builds with read-only permissions and publishes from a separate job; the newspack-nodes checkout is pinned by commit.
+
 ## [0.167.1] - 2026-11-15
 
 ### Fixed
