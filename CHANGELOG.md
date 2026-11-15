@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.167.0] - 2026-11-14
+
+### Fixed
+
+- **A layout editor's block switcher no longer previews an error.** The Performance and log pages' layout editors build against newspack-nodes 2.159.0, whose composition blocks mount no live view inside a block preview and whose editor hides the switcher's transform preview, which reported "This block has encountered an error" on white.
+
 ## [0.166.0] - 2026-11-14
 
 ### Changed
