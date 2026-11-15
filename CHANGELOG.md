@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.167.1] - 2026-11-15
+
 ### Fixed
 
 - **A request's record begins where PHP began it.** The profiler drop-in reads `request_ts` from `$_SERVER['REQUEST_TIME_FLOAT']` and backs `request_time` off by the time since, so `process (start)` and every span measured against it date from the request's start rather than from the drop-in's load. A SAPI that sets no float stamp keeps the drop-in's own load as the start.
