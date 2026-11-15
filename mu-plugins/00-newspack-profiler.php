@@ -36,7 +36,9 @@
  *
  * `request_time` is a monotonic nanosecond counter, the baseline downstream
  * delta math measures against. `request_ts` is the wall clock at that same
- * moment: Log_Manager stamps it onto the firehose `process (start)` entry, so
+ * moment, PHP's `REQUEST_TIME_FLOAT`, with `request_time` backed off by the
+ * time since; where the SAPI set no float stamp, both read this file's own
+ * load. Log_Manager stamps it onto the firehose `process (start)` entry, so
  * a request's record begins where PHP began rather than where Log_Manager
  * happened to emit its first line. Log_Manager's constructor consumes and
  * unsets both keys, which is what stops a nested job context from claiming
@@ -57,14 +59,24 @@
  * @var array{request_time:int,request_ts:float,plugins:list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>,php_errors:array<string,array{errno:int,message:string,file:string,line:int,silenced:bool,times:int,ts:float,frames:list<array{file:string,line:int}>}>|null,php_errors_dropped:int,php_error_handler:\Closure|null} $newspack_profiler
  */
 global $newspack_profiler;
+$newspack_profiler_hr    = \hrtime( true );
+$newspack_profiler_ts    = \microtime( true );
+// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- PHP's own stamp; is_float() admits nothing else.
+$newspack_profiler_began = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+// PHP's own stamp, where SAPI set one; else this file's load stands in.
+if ( \is_float( $newspack_profiler_began ) ) {
+	$newspack_profiler_hr -= (int) \round( ( $newspack_profiler_ts - $newspack_profiler_began ) * 1e9 );
+	$newspack_profiler_ts  = $newspack_profiler_began;
+}
 $newspack_profiler = [
-	'request_time'       => \hrtime( true ),
-	'request_ts'         => \microtime( true ),
+	'request_time'       => $newspack_profiler_hr,
+	'request_ts'         => $newspack_profiler_ts,
 	'plugins'            => [],
 	'php_errors'         => [],
 	'php_errors_dropped' => 0,
 	'php_error_handler'  => null,
 ];
+unset( $newspack_profiler_hr, $newspack_profiler_ts, $newspack_profiler_began );
 
 // Query Monitor's levels, every one but the fatals; `App\Php_Errors::MASK`.
 \defined( 'NEWSPACK_PROFILER_PHP_ERROR_MASK' ) || \define( 'NEWSPACK_PROFILER_PHP_ERROR_MASK', \E_ALL & ~( \E_ERROR | \E_PARSE | \E_COMPILE_ERROR | \E_USER_ERROR | \E_RECOVERABLE_ERROR ) );

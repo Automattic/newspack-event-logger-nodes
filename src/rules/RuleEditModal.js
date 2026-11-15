@@ -69,12 +69,23 @@ const SKIN_CLASSES = `event-logger-rule-edit-modal newspack-nodes-modal ${ SKIN_
  * the save.
  *
  * @param {string}                  value Raw field value.
- * @param {(raw: string) => number} parse `parseInt` or `parseFloat`, per field.
+ * @param {(raw: string) => number} parse `wholeNumber` or `parseFloat`, per field.
  * @return {number} The parsed value, or 0 when the parse is not finite.
  */
 function toNumber( value, parse ) {
 	const n = parse( value );
 	return Number.isFinite( n ) ? n : 0;
+}
+
+/**
+ * Read an integer field whole, as the number input shows it: `1e3` is 1000,
+ * where `parseInt` stops at the `e`, and a fraction is dropped.
+ *
+ * @param {string} value Raw field value.
+ * @return {number} The truncated value; NaN when it is not a number.
+ */
+function wholeNumber( value ) {
+	return Math.trunc( Number( value ) );
 }
 
 /**
@@ -268,7 +279,7 @@ export default function RuleEditModal( {
 			pattern: trimmed,
 			action,
 			auto_disable_threshold: isLog
-				? toNumber( autoDisable, ( v ) => parseInt( v, 10 ) )
+				? toNumber( autoDisable, wholeNumber )
 				: 0,
 			auto_protect_time_threshold: isLog
 				? toNumber( autoProtect, parseFloat )
@@ -290,9 +301,7 @@ export default function RuleEditModal( {
 			trace_hooks: isLog && traceHooks,
 			// The count refines the caller label, so unticking retires both.
 			trace_callers:
-				isLog && traceHooks
-					? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
-					: 0,
+				isLog && traceHooks ? toNumber( traceCallers, wholeNumber ) : 0,
 			sample_rate: isLog ? rate : 1,
 			group_paths: isLog && groupPaths,
 		};

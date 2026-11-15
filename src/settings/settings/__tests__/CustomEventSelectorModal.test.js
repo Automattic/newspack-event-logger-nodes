@@ -48,13 +48,16 @@ describe( 'CustomEventSelectorModal', () => {
 	} );
 
 	it( 'renders nothing when isOpen=false', () => {
-		const { container } = mount( {
+		mount( {
 			isOpen: false,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		expect( container.textContent ).toBe( '' );
+		// The modal portals to document.body, so the container proves nothing.
+		expect(
+			document.body.querySelector( '.event-logger-custom-event-modal' )
+		).toBeNull();
 	} );
 
 	it( 'renders each event with its name as a checkbox label', () => {

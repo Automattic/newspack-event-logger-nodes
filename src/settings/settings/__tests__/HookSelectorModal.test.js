@@ -73,13 +73,16 @@ describe( 'HookSelectorModal', () => {
 	} );
 
 	it( 'renders nothing when isOpen=false', () => {
-		const { container } = mount( {
+		mount( {
 			isOpen: false,
 			onClose: jest.fn(),
 			selected: [],
 			onSelect: jest.fn(),
 		} );
-		expect( container.textContent ).toBe( '' );
+		// The modal portals to document.body, so the container proves nothing.
+		expect(
+			document.body.querySelector( '.event-logger-hook-selector-modal' )
+		).toBeNull();
 	} );
 
 	it( 'passes isOpen through to useHookCatalogGraph', () => {
@@ -221,9 +224,11 @@ describe( 'HookSelectorModal', () => {
 		act( () => {
 			apply.click();
 		} );
-		expect( onSelect ).toHaveBeenCalledWith(
-			expect.arrayContaining( [ 'init', 'shutdown' ] )
-		);
+		// The seeded rest_api_init goes: Recommended replaces, never adds.
+		expect( [ ...onSelect.mock.calls[ 0 ][ 0 ] ].sort() ).toEqual( [
+			'init',
+			'shutdown',
+		] );
 	} );
 
 	it( 'expands a category and toggles individual hook checkboxes', () => {
@@ -259,7 +264,7 @@ describe( 'HookSelectorModal', () => {
 		expect( onSelect ).toHaveBeenCalledWith( [ 'init' ] );
 	} );
 
-	it( 'Select All adds visible hooks; Clear Matches removes filtered subset', () => {
+	it( 'Select All adds every visible hook', () => {
 		global.__hookcatalogMockModel = {
 			hooksByCategory: HOOKS,
 			loading: false,
@@ -284,15 +289,48 @@ describe( 'HookSelectorModal', () => {
 		act( () => {
 			apply.click();
 		} );
-		const args = onSelect.mock.calls[ 0 ][ 0 ];
-		expect( args ).toEqual(
-			expect.arrayContaining( [
-				'init',
-				'shutdown',
-				'wp_loaded',
-				'rest_api_init',
-			] )
+		expect( [ ...onSelect.mock.calls[ 0 ][ 0 ] ].sort() ).toEqual( [
+			'init',
+			'rest_api_init',
+			'shutdown',
+			'wp_loaded',
+		] );
+	} );
+
+	it( 'Clear Matches removes only the hooks the search leaves visible', () => {
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			loading: false,
+		};
+		const onSelect = jest.fn();
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [ 'init', 'rest_api_init' ],
+			onSelect,
+		} );
+		const { act } = require( '../../../test-helpers/renderHook' );
+		const input = document.querySelector( 'input[type="search"], input' );
+		act( () => {
+			Object.getOwnPropertyDescriptor(
+				window.HTMLInputElement.prototype,
+				'value'
+			).set.call( input, 'rest' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		const clearMatches = Array.from(
+			document.querySelectorAll( 'button' )
+		).find( ( b ) => 'Clear Matches' === b.textContent );
+		act( () => {
+			clearMatches.click();
+		} );
+		const apply = Array.from( document.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Apply' )
 		);
+		act( () => {
+			apply.click();
+		} );
+		expect( onSelect ).toHaveBeenCalledWith( [ 'init' ] );
 	} );
 
 	it( 'unchecks a pre-selected hook on click; Clear All wipes everything', () => {
@@ -364,9 +402,11 @@ describe( 'HookSelectorModal', () => {
 		act( () => {
 			apply.click();
 		} );
-		expect( onSelect ).toHaveBeenLastCalledWith(
-			expect.arrayContaining( [ 'init', 'shutdown', 'wp_loaded' ] )
-		);
+		expect( [ ...onSelect.mock.calls.at( -1 )[ 0 ] ].sort() ).toEqual( [
+			'init',
+			'shutdown',
+			'wp_loaded',
+		] );
 
 		onSelect.mockClear();
 		act( () => {

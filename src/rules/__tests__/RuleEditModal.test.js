@@ -635,6 +635,33 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 7 );
 	} );
 
+	test( 'an exponent in an integer field saves its whole value', () => {
+		// parseInt would read 1e3 as 1; 1000 is neither that nor either seed.
+		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 20 } );
+		setInput(
+			inDialog( 'input[name="rule-auto-disable-threshold"]' ),
+			'1e3'
+		);
+		setInput( inDialog( 'input[name="rule-trace-callers"]' ), '1e3' );
+		click( saveButton() );
+		const draft = onSave.mock.calls[ 0 ][ 0 ];
+		expect( draft.auto_disable_threshold ).toBe( 1000 );
+		expect( draft.trace_callers ).toBe( 1000 );
+	} );
+
+	test( 'an integer field drops a fraction and reads garbage as off', () => {
+		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 20 } );
+		setInput(
+			inDialog( 'input[name="rule-auto-disable-threshold"]' ),
+			'12.9'
+		);
+		setInput( inDialog( 'input[name="rule-trace-callers"]' ), 'kea' );
+		click( saveButton() );
+		const draft = onSave.mock.calls[ 0 ][ 0 ];
+		expect( draft.auto_disable_threshold ).toBe( 12 );
+		expect( draft.trace_callers ).toBe( 0 );
+	} );
+
 	test( 'the backtrace count is hidden until caller tracing is on', () => {
 		mount( LOG_RULE );
 		expect( inDialog( 'input[name="rule-trace-callers"]' ) ).toBeNull();

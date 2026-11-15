@@ -1013,12 +1013,12 @@ A ruleset save needs no restart. It asks every worker to re-read its config, the
 | `newspack_nodes/config_reset` | `Config::reset_local_cache` (not `reset()`, which would re-enter the substrate) |
 | `newspack_nodes/job_worker/before_job` (filter) | `App\Overview_Prefetch::admit` at priority 5, which declines an overtaken overview-prefetch job and passes one the tick could not have queued to its handler to refuse; then `Log_Manager::begin_job_context_filter` at 10 |
 | `newspack_nodes/job_worker/after_job` (action) | `Log_Manager::end_job_context` |
-| `newspack_nodes/before_reconcile` / `after_reconcile` | An anonymous pair sharing an `$entered` flag, so an unmatched `after` never pops a snapshot it did not push |
+| `newspack_nodes/before_reconcile` / `after_reconcile` | An anonymous pair sharing an `$entered` flag, so an unmatched `after` never pops a snapshot it did not push; registered by the deferred bootstrap |
 | `newspack_nodes/settings_sync/value` (filter) | `newspack_event_logger_nodes_resolve_settings_sync_value` |
-| `newspack_nodes/registered_log_producers` (filter) | `newspack_event_logger_nodes_register_log_producers` — adds the firehose dir template, so the log GC declares and the Workers dashboard catalogs the dirs `Log_Manager` writes with no topology Partition behind them |
+| `newspack_nodes/registered_log_producers` (filter) | `newspack_event_logger_nodes_register_log_producers` — adds the firehose dir template, so the log GC declares and the Workers dashboard catalogs the dirs `Log_Manager` writes with no topology Partition behind them; registered at file load, because the log GC runs on a dormant install too |
 | `newspack_nodes/stderr` | `Diagnostics_Bridge::on_stderr` |
 | `Command_Interpreter_Node::$around_dispatch` (static seam, not a hook) | `Diagnostics_Bridge::install()`, called by the deferred bootstrap, which wraps the value already there |
-| `newspack_nodes/request_graph_ready` | `newspack_event_logger_nodes_mount_service_cis` |
+| `newspack_nodes/request_graph_ready` | `newspack_event_logger_nodes_mount_service_cis`, registered by the deferred bootstrap |
 | `newspack_nodes/station_tab_bundles` (filter) | `Current_Request_Overlay::register_bundle` |
 
 **Read but never bound here:** `newspack_nodes/job_handlers` and `newspack_nodes/remote_job_handlers` are the substrate `Job_Worker_Node`'s registries — `Job_Router_Node` never reads either. `newspack_nodes/periodic` is the substrate's minute-cadence pass, which this plugin's job contexts bracket but do not subscribe to.

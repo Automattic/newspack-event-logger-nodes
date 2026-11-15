@@ -27,10 +27,10 @@
  *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` at
  *    `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY` and gated on the substrate
  *    being present AND new enough.
- * 3. Hooks whose actions only ever fire from substrate code — the
- *    `newspack_nodes/` log-producer, stderr, reconcile and request-graph-ready
- *    hooks — register at file scope. Without the substrate the action never
- *    fires, so a presence guard would be dead weight.
+ * 3. The log-producer filter, which the substrate's log GC reads whether or
+ *    not this plugin booted, registers at file scope, so a dormant install's
+ *    firehose is never swept as an orphan. Every other hook does work only for
+ *    a booted plugin, so a substrate below the floor leaves it unregistered.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -132,6 +132,12 @@ function newspack_event_logger_nodes_boot(): void {
 
 	// A spawn request learns which worker it became after it began logging.
 	\add_action( 'newspack_nodes/worker_identified', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'identify_worker' ], 10, 2 );
+
+	// Each minute's reconcile pass logs under its own job context.
+	\newspack_event_logger_nodes_bracket_reconcile();
+
+	// Every command door builds the request graph; the CIs hang off it.
+	\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 	// Every command and substrate span opens its own span in the record.
 	\Newspack_Event_Logger_Nodes\Diagnostics_Bridge::install();
@@ -265,8 +271,10 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
  * The shared `$entered` flag keeps the pair honest: an `after` with no matching
  * `before` would resume a context this never suspended, and pop a `$_SERVER`
  * snapshot it never pushed.
+ *
+ * @api Called by the deferred bootstrap.
  */
-( static function (): void {
+function newspack_event_logger_nodes_bracket_reconcile(): void {
 	$entered = false;
 	\add_action(
 		'newspack_nodes/before_reconcile',
@@ -285,7 +293,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 			$entered = false;
 		}
 	);
-} )();
+}
 
 /**
  * Mount the three application service CIs onto the request-scope command
@@ -300,6 +308,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
  * the deferred bootstrap registered; the second argument is the node name the
  * dashboards address commands to.
  *
+ * @api Hooked to `newspack_nodes/request_graph_ready` by the deferred bootstrap.
  * @param \Newspack_Nodes\Command_Interpreter_Node $base_interpreter Request-scope CI.
  */
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
@@ -307,7 +316,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
 	$base_interpreter->make_node( 'Rules_CI',       'rules' );
 }
-\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 /**
  * Register the Event Logger admin menu: a top-level Performance page plus one

@@ -14,6 +14,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use PHPUnit\Framework\Attributes\TestWith;
 
 class ProfilerMuPluginTest extends TestCase {
 
@@ -22,6 +23,9 @@ class ProfilerMuPluginTest extends TestCase {
 
 	/** @var callable|null The error handler the test began under. */
 	private $handler;
+
+	/** @var mixed The `REQUEST_TIME_FLOAT` the test began under. */
+	private $request_time_float;
 
 	/** The directory WordPress's layouts stand in under, for the class. */
 	private static string $base = '';
@@ -52,6 +56,7 @@ class ProfilerMuPluginTest extends TestCase {
 		$GLOBALS['_wp_options']['home']                = 'https://kea-5108.test';
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
+		$this->request_time_float = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
 		// Beneath the drop-in's handler, so an error it chains never reaches PHPUnit's.
 		\set_error_handler( static fn (): bool => true );
 	}
@@ -61,6 +66,7 @@ class ProfilerMuPluginTest extends TestCase {
 			\restore_error_handler();
 		}
 		$GLOBALS['_wp_actions'] = $this->actions;
+		$_SERVER['REQUEST_TIME_FLOAT'] = $this->request_time_float;
 		unset( $GLOBALS['newspack_profiler'], $GLOBALS['newspack_profiler_body'], $GLOBALS['newspack_profiler_loaded'], $GLOBALS['_wp_options']['permalink_structure'], $GLOBALS['_wp_options']['home'] );
 		Log_Manager::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
@@ -76,6 +82,44 @@ class ProfilerMuPluginTest extends TestCase {
 		$this->assertCount( 1, $GLOBALS['_wp_actions']['plugins_loaded'] ?? [], 'only the stand-down, which writes nothing' );
 		$this->assertSame( [ 'request_time', 'request_ts', 'plugins', 'php_errors', 'php_errors_dropped', 'php_error_handler' ], \array_keys( $profiler ) );
 		$this->assertSame( $profiler['php_error_handler'], self::top_handler(), 'the drop-in catches errors from its own load on' );
+	}
+
+	/** The request starts where PHP stamped it, on both clocks. */
+	public function test_the_drop_in_reads_the_start_php_stamped(): void {
+		$_SERVER['REQUEST_TIME_FLOAT'] = 1700000000.25;
+		self::load_drop_in();
+		$profiler = $GLOBALS['newspack_profiler'];
+		$expected = \hrtime( true ) - (int) \round( ( \microtime( true ) - 1700000000.25 ) * 1e9 );
+
+		$this->assertSame( 1700000000.25, $profiler['request_ts'] );
+		$this->assertIsInt( $profiler['request_time'] );
+		$this->assertEqualsWithDelta( $expected, $profiler['request_time'], 1e8, 'hrtime backed off by the time since PHP began' );
+	}
+
+	/**
+	 * Without a float start from PHP, the drop-in's own load is the start.
+	 *
+	 * @param mixed $stamp What `REQUEST_TIME_FLOAT` holds; null unsets it.
+	 */
+	#[TestWith( [ null ] )]
+	#[TestWith( [ '1700000000.25' ] )]
+	public function test_the_drop_in_falls_back_to_its_own_load( $stamp ): void {
+		if ( null === $stamp ) {
+			unset( $_SERVER['REQUEST_TIME_FLOAT'] );
+		} else {
+			$_SERVER['REQUEST_TIME_FLOAT'] = $stamp;
+		}
+		$before_ts = \microtime( true );
+		$before_hr = \hrtime( true );
+		self::load_drop_in();
+		$after_hr = \hrtime( true );
+		$after_ts = \microtime( true );
+		$profiler = $GLOBALS['newspack_profiler'];
+
+		$this->assertGreaterThanOrEqual( $before_ts, $profiler['request_ts'] );
+		$this->assertLessThanOrEqual( $after_ts, $profiler['request_ts'] );
+		$this->assertGreaterThanOrEqual( $before_hr, $profiler['request_time'] );
+		$this->assertLessThanOrEqual( $after_hr, $profiler['request_time'] );
 	}
 
 	/** The drop-in counts repeats, flags what `@` hid, and chains. */

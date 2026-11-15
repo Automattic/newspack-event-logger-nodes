@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A request's record begins where PHP began it.** The profiler drop-in reads `request_ts` from `$_SERVER['REQUEST_TIME_FLOAT']` and backs `request_time` off by the time since, so `process (start)` and every span measured against it date from the request's start rather than from the drop-in's load. A SAPI that sets no float stamp keeps the drop-in's own load as the start.
+- **A substrate below the floor leaves the plugin dormant.** The service-CI mount on `newspack_nodes/request_graph_ready` and the reconcile pass's `/jobs/newspack-nodes` context register in the deferred bootstrap, so a refused install builds no CI on a `/command` POST or MCP request and opens no job context each minute. The config-key declaration and the log-producer filter stay at file scope: the substrate reads the first before the bootstrap runs, and its log GC reads the second whether or not it ran, so a dormant install's firehose is not swept as an orphan.
+- **The rule editor reads an integer field whole.** The auto-disable threshold and the caller-backtrace count parse with `Number`, so `1e3` saves 1000 where `parseInt` saved 1; a fraction is dropped, and a value that is not a number still saves as 0.
+
 ## [0.167.0] - 2026-11-14
 
 ### Fixed

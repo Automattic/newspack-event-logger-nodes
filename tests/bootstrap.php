@@ -600,6 +600,9 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 	\dirname( __DIR__, 2 ) . '/newspack-nodes/topologies'
 );
 \Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
+// The deferred closure mounts the service CIs on every request graph; replayed
+// after the snapshot above, which holds a refused install that mounts none.
+\add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
 
 // The named index formatter the flame-builder .tsl `with_index` leg and
 // Performance_CI's flame lookup resolve by name, replayed from the same deferred
