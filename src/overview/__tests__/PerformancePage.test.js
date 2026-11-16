@@ -10,7 +10,9 @@
  * in `mockReads`. The layout and the header are mocked at the module
  * boundary as stubs that record their props: `__layoutPage` is the page the
  * layout's blocks stand on, `__urlTableProps` the URL table's view of it,
- * and `__overviewProps` the header's.
+ * `__windows` each window's layout by its name, `url-detail` or
+ * `request-detail`, and `__overviewProps` the header's. A window's own
+ * controls are page state, which a test reads and writes on the bar.
  */
 
 // Per-source view model, by the source a read names.
@@ -85,26 +87,25 @@ jest.mock( '@newspack-nodes/shared/sources', () => ( {
 
 /**
  * What the page asked the window and the table, as the graph once took it:
- * the table's server filter and chips, the window's subject, narrowing and
- * chart, the request, and whether the page holds its sources still.
+ * the table's server filter and chips, the window's subject and narrowing,
+ * the chart the bar names for it, the request, and whether the page holds
+ * its sources still.
  *
  * @param {(name: string) => ?Object} read The read of one source to take.
  * @return {Object} The question.
  */
 const questionOf = ( read ) => {
 	const detail = read( 'eln/url-detail' );
-	const chart = mockReads
-		.filter( ( one ) => 'eln/url-chart' === one.name )
-		.at( -1 )?.params;
+	const bar = new URLSearchParams( window.location.search );
 	return {
 		serverFilter: read( 'eln/urls' )?.server,
 		chartChips: read( 'eln/urls' )?.chips,
 		selectedSubject: globalThis.__layoutPage?.selectedSubject ?? null,
-		detailFilters: { bucket: detail?.buckets ?? '' },
+		detailFilters: { bucket: detail?.url_buckets ?? '' },
 		detailChart: {
-			breakdown: chart?.breakdown ?? 'status_class',
-			thenBy: chart?.then ?? '',
-			chips: detail?.chips ?? [],
+			breakdown: bar.get( 'url_breakdown' ) ?? 'status_class',
+			thenBy: bar.get( 'url_then' ) ?? '',
+			chips: detail?.url_chips ?? [],
 		},
 		selectedRequest: read( 'eln/request-detail' )?.request ?? null,
 		held: mockHolds.at( -1 ) ?? null,
@@ -142,13 +143,38 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 	nodesData: () => ( { restUrl: '/wp-json/', nonce: 'NONCE' } ),
 } ) );
 
-// The frame records the page its blocks stand on, and the table's view of it.
+// The frame records the page its blocks stand on, the table's view of it,
+// and each window's layout, which stands as its name.
 jest.mock(
 	'@newspack-nodes/shared/composition/page/ComposedPageFrame',
 	() => ( {
 		__esModule: true,
-		default: ( { standing, controls, children } ) => {
+		default: function MockFrame( props ) {
+			const { page, standing, controls, children } = props;
 			const React = require( 'react' );
+			const shown = 'performance' !== page;
+			if ( shown ) {
+				globalThis.__windowRenders[ page ] =
+					( globalThis.__windowRenders[ page ] ?? 0 ) + 1;
+			}
+			React.useEffect( () => {
+				if ( ! shown ) {
+					return undefined;
+				}
+				( globalThis.__windows ??= {} )[ page ] = props;
+				return () => {
+					if ( globalThis.__windows[ page ] === props ) {
+						delete globalThis.__windows[ page ];
+					}
+				};
+			}, [ shown, page, props ] );
+			if ( shown ) {
+				return React.createElement(
+					'div',
+					{ 'data-testid': `window-${ page }` },
+					page
+				);
+			}
 			globalThis.__layoutPage = standing;
 			globalThis.__urlTableProps = {
 				onSelect: standing.openSubject,
@@ -323,32 +349,6 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => true,
 } ) );
 
-jest.mock( '../components/UrlDetailView', () => ( {
-	...jest.requireActual( '../components/UrlDetailView' ),
-	__esModule: true,
-	default: ( props ) => {
-		const React = require( 'react' );
-		globalThis.__urlDetailProps = props;
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'url-detail' },
-			'UrlDetailView'
-		);
-	},
-} ) );
-
-jest.mock( '../components/RequestDetailView', () => ( {
-	__esModule: true,
-	default: () => {
-		const React = require( 'react' );
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'request-detail' },
-			'RequestDetailView'
-		);
-	},
-} ) );
-
 // Stub RuleEditModal: capture props to assert prefill + drive onSave.
 jest.mock( '../../rules/RuleEditModal', () => ( {
 	__esModule: true,
@@ -407,7 +407,7 @@ import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { localizeComposedPage } from '../../test-helpers/localizeComposedPage';
 import PerformancePage from '../PerformancePage';
 import { renderComponent, act } from '../../test-helpers/renderHook';
-import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
+import { slotsEndingAt } from '../../test-helpers/chartWire';
 
 /**
  * Flush React's async passive effects inside `act` so state updates settle
@@ -487,8 +487,23 @@ const closeModal = async ( rerender ) => {
 	await act( async () => rerender( dashboard() ) );
 };
 
+/**
+ * The URL window's layout as the frame took it; undefined while it is shut.
+ *
+ * @return {?Object} The frame's props.
+ */
+const urlWindow = () => globalThis.__windows?.[ 'url-detail' ];
+
+/**
+ * Set the URL window's own controls on the bar, as its blocks write them.
+ *
+ * @param {Object<string,*>} params Each `url_` param to its value.
+ */
+const setWindowBar = ( params ) => act( () => setQueryParams( params ) );
+
 describe( 'PerformancePage', () => {
 	beforeEach( () => {
+		globalThis.__windowRenders = {};
 		mockView = null;
 		localizeComposedPage( 'performance' );
 		window.localStorage.clear();
@@ -573,50 +588,32 @@ describe( 'PerformancePage', () => {
 		unmount();
 	} );
 
-	it( 'hands the URL modal its chart slices and its chart question, and resets it on close', async () => {
+	it( 'opens the URL window on its chart defaults, and resets its chart on close', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
 			hash: 'beef7743',
 			url: '/huia',
 		};
-		const urlChart = {
-			data: rowsWire( [ 'bucket', 'method', 'count' ], [] ),
-			loading: false,
-			error: null,
-		};
-		const urlCategories = { data: null, loading: true, error: null };
 		mockView = loadedView( {
 			urlDetail: {
 				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
-			urlChart,
-			urlCategories,
 		} );
 		const { rerender, unmount } = mountDash();
 		await flushEffects();
 
-		expect( globalThis.__urlDetailProps.chartSlice ).toEqual( urlChart );
-		expect( globalThis.__urlDetailProps.categoriesSlice ).toEqual(
-			urlCategories
-		);
+		expect( urlWindow() ).toBeDefined();
 		expect( graphOpts().detailChart ).toEqual( {
 			breakdown: 'status_class',
 			thenBy: '',
 			chips: [],
 		} );
 
-		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
+		setWindowBar( { url_breakdown: 'ja4' } );
 		await flushEffects();
 		expect( graphOpts().detailChart.breakdown ).toBe( 'ja4' );
-		expect( globalThis.__urlDetailProps.chart.breakdown ).toBe( 'ja4' );
-
-		// The same value asks the same question, so the window asks nothing.
-		const held = graphOpts().detailChart;
-		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
-		await flushEffects();
-		expect( graphOpts().detailChart ).toEqual( held );
 
 		await closeModal( rerender );
 		expect(
@@ -863,11 +860,7 @@ describe( 'PerformancePage', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				act( () =>
-					globalThis.__urlDetailProps.onChipsChange( [
-						'method=PURGE',
-					] )
-				);
+				setWindowBar( { url_chip: [ 'method=PURGE' ] } );
 				await flushEffects();
 
 				expect( graphOpts().detailChart.chips ).toEqual( [
@@ -990,20 +983,34 @@ describe( 'PerformancePage', () => {
 			} );
 
 			/**
-			 * What the open window draws, read off the graph and the view.
+			 * What the open window asks and draws, read off the graph and
+			 * the bar its blocks read.
 			 *
 			 * @param {Object} opts The graph options to read.
-			 * @return {Object} Its filters, chart, metric, sort and rows.
+			 * @return {Object} Its filters, chart, metric and sort.
 			 */
 			const windowState = ( opts ) => ( {
 				filters: opts.detailFilters,
 				chart: opts.detailChart,
-				metric: globalThis.__urlDetailProps.metric,
-				sort: globalThis.__urlDetailProps.requestSort,
-				rows: globalThis.__urlDetailProps.sortedRequests.map(
-					( req ) => req.rid
-				),
+				metric: param( 'url_metric' ) ?? 'volume',
+				sort: {
+					field: param( 'url_sort' ) ?? 'timestamp',
+					dir: param( 'url_order' ) ?? 'desc',
+				},
 			} );
+			/**
+			 * The subject the open window's body names to the picker.
+			 *
+			 * @return {?string} Its descriptor; null while it is shut.
+			 */
+			const windowAsk = () =>
+				urlWindow()
+					? document
+							.querySelector(
+								'[data-testid="window-url-detail"]'
+							)
+							.parentElement.getAttribute( 'data-ask' )
+					: null;
 			const LINKED_STATE = {
 				filters: { bucket: '2026-09-29-14-30' },
 				chart: {
@@ -1013,12 +1020,7 @@ describe( 'PerformancePage', () => {
 				},
 				metric: 'memory',
 				sort: { field: 'duration_ms', dir: 'asc' },
-				rows: [ 'r2', 'r3', 'r1' ],
 			};
-
-			beforeEach( () => {
-				globalThis.__urlDetailProps = null;
-			} );
 
 			it( 'reopens a linked URL on its own chips, Time, chart and sort', async () => {
 				mockRealNavigation = true;
@@ -1027,10 +1029,7 @@ describe( 'PerformancePage', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( globalThis.__urlDetailProps.subject ).toMatchObject( {
-					field: 'url',
-					hash: 'beef7743',
-				} );
+				expect( windowAsk() ).toBe( 'url:beef7743' );
 				expect( windowState( graphOpts() ) ).toEqual( LINKED_STATE );
 				// The first ask already carries the link: no default fetch.
 				expect( firstGraphOpts().detailFilters ).toEqual(
@@ -1055,7 +1054,7 @@ describe( 'PerformancePage', () => {
 				expect( sentTo( DEEP_URL ) ).toEqual( [
 					[ '--url=beef7743' ],
 				] );
-				expect( globalThis.__urlDetailProps ).toBeNull();
+				expect( urlWindow() ).toBeUndefined();
 				expect( windowParams() ).toEqual( RESTORED );
 
 				answerCommand( DEEP_URL, {
@@ -1064,10 +1063,7 @@ describe( 'PerformancePage', () => {
 				} );
 				await flushEffects();
 
-				expect( globalThis.__urlDetailProps.subject ).toMatchObject( {
-					field: 'url',
-					hash: 'beef7743',
-				} );
+				expect( windowAsk() ).toBe( 'url:beef7743' );
 				expect( windowState( graphOpts() ) ).toEqual( LINKED_STATE );
 				expect( windowParams() ).toEqual( RESTORED );
 				unmount();
@@ -1081,15 +1077,12 @@ describe( 'PerformancePage', () => {
 				await flushEffects();
 				expect( windowParams() ).toEqual( {} );
 
-				const view = () => globalThis.__urlDetailProps;
-				act( () => view().onBucketChange( '2026-09-29-14-30' ) );
-				act( () => view().onBreakdownChange( 'ja4' ) );
-				act( () => view().onThenByChange( 'country' ) );
-				act( () =>
-					view().onChipsChange( [ 'method=PURGE', 'country=SG' ] )
-				);
-				act( () => view().onMetricChange( 'avg' ) );
-				act( () => view().onRequestSort( 'duration_ms' ) );
+				setWindowBar( { url_bucket: '2026-09-29-14-30' } );
+				setWindowBar( { url_breakdown: 'ja4' } );
+				setWindowBar( { url_then: 'country' } );
+				setWindowBar( { url_chip: [ 'method=PURGE', 'country=SG' ] } );
+				setWindowBar( { url_metric: 'avg' } );
+				setWindowBar( { url_sort: 'duration_ms' } );
 				expect( windowParams() ).toEqual( {
 					url_bucket: [ '2026-09-29-14-30' ],
 					url_breakdown: [ 'ja4' ],
@@ -1106,11 +1099,9 @@ describe( 'PerformancePage', () => {
 					thenBy: 'country',
 					chips: [ 'method=PURGE', 'country=SG' ],
 				} );
-				expect( view().metric ).toBe( 'avg' );
-
-				act( () => view().onRequestSort( 'duration_ms' ) );
+				setWindowBar( { url_order: 'asc' } );
 				expect( param( 'url_order' ) ).toBe( 'asc' );
-				act( () => view().onMetricChange( 'volume' ) );
+				setWindowBar( { url_metric: null } );
 				expect( param( 'url_metric' ) ).toBeNull();
 
 				act( () => globalThis.__modalOnRequestClose() );
@@ -1122,11 +1113,11 @@ describe( 'PerformancePage', () => {
 					globalThis.__urlTableProps.onSelect( ROW );
 				} );
 				await flushEffects();
-				expect( view().requestSort ).toEqual( {
+				expect( windowState( graphOpts() ).sort ).toEqual( {
 					field: 'duration_ms',
 					dir: 'asc',
 				} );
-				expect( view().metric ).toBe( 'volume' );
+				expect( param( 'url_metric' ) ).toBeNull();
 				expect( graphOpts().detailChart.breakdown ).toBe(
 					'status_class'
 				);
@@ -1165,7 +1156,6 @@ describe( 'PerformancePage', () => {
 					},
 					metric: 'volume',
 					sort: { field: 'timestamp', dir: 'desc' },
-					rows: [ 'r3', 'r2', 'r1' ],
 				} );
 				expect( window.location.search ).toBe(
 					'?page=perf&url=beef7743&url_chip=method%3DPURGE'
@@ -1173,35 +1163,16 @@ describe( 'PerformancePage', () => {
 				unmount();
 			} );
 
-			it( 'drops a linked Then by that repeats the Breakdown', async () => {
-				mockNavState.selectedSubject = ROW;
-				linkTo( 'url=beef7743&url_breakdown=ja4&url_then=ja4' );
-				mockView = detailView( urlsOf( [] ) );
-				const { unmount } = mountDash();
-				await flushEffects();
-
-				expect( firstGraphOpts().detailChart ).toEqual( {
-					breakdown: 'ja4',
-					thenBy: '',
-					chips: [],
-				} );
-				expect( windowParams() ).toEqual( {
-					url_breakdown: [ 'ja4' ],
-				} );
-				unmount();
-			} );
-
 			/**
 			 * Narrow the open window by every control, as an operator would.
 			 */
 			const narrowWindow = () => {
-				const view = globalThis.__urlDetailProps;
-				act( () => view.onBucketChange( '2026-09-29-14-30' ) );
-				act( () => view.onBreakdownChange( 'ja4' ) );
-				act( () => view.onThenByChange( 'country' ) );
-				act( () => view.onChipsChange( [ 'status_class=5' ] ) );
-				act( () => view.onMetricChange( 'memory' ) );
-				act( () => view.onRequestSort( 'duration_ms' ) );
+				setWindowBar( { url_bucket: '2026-09-29-14-30' } );
+				setWindowBar( { url_breakdown: 'ja4' } );
+				setWindowBar( { url_then: 'country' } );
+				setWindowBar( { url_chip: [ 'status_class=5' ] } );
+				setWindowBar( { url_metric: 'memory' } );
+				setWindowBar( { url_sort: 'duration_ms' } );
 			};
 			const DEFAULT_WINDOW = {
 				filters: { bucket: '' },
@@ -1211,7 +1182,7 @@ describe( 'PerformancePage', () => {
 			const openWindow = ( opts ) => ( {
 				filters: opts.detailFilters,
 				chart: opts.detailChart,
-				metric: globalThis.__urlDetailProps.metric,
+				metric: param( 'url_metric' ) ?? 'volume',
 			} );
 
 			it( 'forgets a window closed other than by its X, but keeps its sort', async () => {
@@ -1232,10 +1203,8 @@ describe( 'PerformancePage', () => {
 				await act( async () => rerender( dashboard() ) );
 
 				expect( openWindow( graphOpts() ) ).toEqual( DEFAULT_WINDOW );
-				expect( globalThis.__urlDetailProps.requestSort ).toEqual( {
-					field: 'duration_ms',
-					dir: 'desc',
-				} );
+				expect( param( 'url_sort' ) ).toBe( 'duration_ms' );
+				expect( param( 'url_order' ) ).toBeNull();
 				unmount();
 			} );
 
@@ -1501,26 +1470,26 @@ describe( 'PerformancePage', () => {
 		} );
 		const { container, rerender } = mountDash();
 		await flushEffects();
-		const view = container.querySelector( '[data-testid="url-detail"]' );
+		const view = container.querySelector(
+			'[data-testid="window-url-detail"]'
+		);
 		const stats = container.querySelector( '.event-logger-header-stats' );
-		expect( globalThis.__urlDetailProps.listing ).toBe( false );
 
 		mockView = loadedView( {
 			urlDetail: { data: held, loading: true, error: null },
 		} );
 		await act( async () => {
-			globalThis.__urlDetailProps.onChipsChange( [ 'status_class=5' ] );
+			setQueryParams( { url_chip: [ 'status_class=5' ] } );
 		} );
 
 		expect( graphOpts().detailChart.chips ).toEqual( [ 'status_class=5' ] );
-		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
-			view
-		);
+		expect(
+			container.querySelector( '[data-testid="window-url-detail"]' )
+		).toBe( view );
 		expect( container.querySelector( '.event-logger-header-stats' ) ).toBe(
 			stats
 		);
 		expect( container.textContent ).not.toContain( 'Loading URL' );
-		expect( globalThis.__urlDetailProps.listing ).toBe( true );
 		expect( stats.textContent ).toContain( '431ms' );
 
 		mockView = loadedView( {
@@ -1535,20 +1504,127 @@ describe( 'PerformancePage', () => {
 		} );
 		rerender( dashboard() );
 
-		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
-			view
-		);
-		expect( globalThis.__urlDetailProps.listing ).toBe( false );
 		expect(
-			globalThis.__urlDetailProps.sortedRequests.map( ( r ) => r.rid )
-		).toEqual( [ 'r-fatal' ] );
-		expect( globalThis.__urlDetailProps.listError ).toBeNull();
+			container.querySelector( '[data-testid="window-url-detail"]' )
+		).toBe( view );
+	} );
+
+	it( 'sorts the URL window’s list descending by a new column, and flips the column sorted descending', async () => {
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'a7936',
+			url: '/kea-7936',
+		};
+		mockView = loadedView( {
+			urlDetail: {
+				data: { stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = mountDash();
+		await flushEffects();
+		const bar = () => new URLSearchParams( window.location.search );
+
+		await act( async () =>
+			urlWindow().standing.sortRequests( 'duration_ms' )
+		);
+		expect( urlWindow().standing.requestSort ).toEqual( {
+			field: 'duration_ms',
+			dir: 'desc',
+		} );
+		expect( bar().get( 'url_sort' ) ).toBe( 'duration_ms' );
+
+		await act( async () =>
+			urlWindow().standing.sortRequests( 'duration_ms' )
+		);
+		expect( urlWindow().standing.requestSort.dir ).toBe( 'asc' );
+		expect( bar().get( 'url_order' ) ).toBe( 'asc' );
+		unmount();
+	} );
+
+	it( 'renders no window layout again for a poll of the page behind it', async () => {
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'a7937',
+			url: '/kea-7937',
+		};
+		const detail = {
+			data: { stats: { avg_ms: 7937 }, requests: [] },
+			loading: false,
+			error: null,
+		};
+		mockView = loadedView( { urlDetail: detail } );
+		const { rerender, unmount } = mountDash();
+		await flushEffects();
+		const renders = globalThis.__windowRenders[ 'url-detail' ];
+		const standing = urlWindow().standing;
 
 		mockView = loadedView( {
-			urlDetail: { data: held, loading: false, error: 'egret refused' },
+			urlDetail: detail,
+			urls: {
+				data: [ { hash: 'b7937', url: '/ruru-7937', count: 37 } ],
+				loading: false,
+				error: null,
+			},
 		} );
-		rerender( dashboard() );
-		expect( globalThis.__urlDetailProps.listError ).toBe( 'egret refused' );
+		await act( async () => rerender( dashboard() ) );
+		expect( urlWindow().standing ).toBe( standing );
+		expect( globalThis.__windowRenders[ 'url-detail' ] ).toBe( renders );
+		unmount();
+	} );
+
+	it( 'keeps each window’s layout standing while its detail is refused, and says why', async () => {
+		mockNavState.selectedSubject = {
+			field: 'url',
+			hash: 'a7934',
+			url: '/kea-7934',
+		};
+		mockView = loadedView( {
+			urlDetail: {
+				data: { stats: { avg_ms: 7934 }, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { container, rerender, unmount } = mountDash();
+		await flushEffects();
+		const layout = container.querySelector(
+			'[data-testid="window-url-detail"]'
+		);
+		expect( layout ).not.toBeNull();
+
+		mockView = loadedView( {
+			urlDetail: {
+				data: null,
+				loading: false,
+				error: 'kea 7934 refused',
+			},
+		} );
+		await act( async () => rerender( dashboard() ) );
+		expect(
+			container.querySelector( '[data-testid="window-url-detail"]' )
+		).toBe( layout );
+		expect( container.textContent ).toContain(
+			'Could not load this URL: kea 7934 refused'
+		);
+
+		mockNavState.selectedRequest = 'rid-kea-7934';
+		mockView = loadedView( {
+			requestDetail: {
+				data: null,
+				loading: false,
+				error: 'kea 7935 refused',
+			},
+		} );
+		await act( async () => rerender( dashboard() ) );
+		expect(
+			container.querySelector( '[data-testid="window-request-detail"]' )
+		).not.toBeNull();
+		expect( container.textContent ).toContain(
+			'Could not load this request: kea 7935 refused'
+		);
+		unmount();
 	} );
 
 	it( 'renders the URL modal when a URL is selected and detail is present', async () => {
@@ -1574,7 +1650,9 @@ describe( 'PerformancePage', () => {
 		const { container, unmount } = mountDash();
 		await flushEffects();
 		expect( container.textContent ).toContain( '/foo' );
-		expect( container.textContent ).toContain( 'UrlDetailView' );
+		expect(
+			container.querySelector( '[data-testid="window-url-detail"]' )
+		).not.toBeNull();
 		expect( container.textContent ).toContain( 'req/s' );
 		const modal = container.querySelector( '[data-testid="modal"]' );
 		expect( modal ).toBeTruthy();
@@ -1785,10 +1863,6 @@ describe( 'PerformancePage', () => {
 				'status_class=5',
 				'country=Kiribati',
 			] );
-			expect( globalThis.__urlDetailProps.chart.chips ).toEqual( [
-				'status_class=5',
-				'country=Kiribati',
-			] );
 		} );
 
 		it( 'leaves a URL chip behind, since the detail is one URL', async () => {
@@ -1804,11 +1878,7 @@ describe( 'PerformancePage', () => {
 				'status_class=5',
 				'country=Kiribati',
 			] );
-			await act( async () => {
-				globalThis.__urlDetailProps.onChipsChange( [
-					'country=Kiribati',
-				] );
-			} );
+			setWindowBar( { url_chip: [ 'country=Kiribati' ] } );
 
 			expect( graphOpts().detailChart.chips ).toEqual( [
 				'country=Kiribati',
@@ -1866,11 +1936,7 @@ describe( 'PerformancePage', () => {
 
 		it( "asks a url: brief under the detail's chips, not the table's", async () => {
 			await openFromChippedTable( [ 'method=POST' ] );
-			await act( async () => {
-				globalThis.__urlDetailProps.onChipsChange( [
-					'status_class=Unknown',
-				] );
-			} );
+			setWindowBar( { url_chip: [ 'status_class=Unknown' ] } );
 			await pickUrl();
 
 			const asked = sentTo( 'ask' ).at( -1 );
@@ -1878,60 +1944,6 @@ describe( 'PerformancePage', () => {
 			expect( asked ).not.toContain( '--filter=method=POST' );
 		} );
 	} );
-
-	it.each( [
-		[ 'desc', [ 'slow', 'quick', 'tout', 'abort' ] ],
-		[ 'asc', [ 'quick', 'slow', 'tout', 'abort' ] ],
-	] )(
-		'sorts an unmeasured duration last by %s duration, never as the fastest or the slowest',
-		async ( dir, order ) => {
-			mockNavState.selectedSubject = {
-				field: 'url',
-				hash: 'a1',
-				url: '/foo',
-			};
-			mockView = loadedView( {
-				urlDetail: {
-					data: {
-						stats: {},
-						requests: [
-							{
-								rid: 'tout',
-								timestamp: 3,
-								duration_ms: null,
-								error_status: 'T',
-							},
-							{ rid: 'slow', timestamp: 1, duration_ms: 300 },
-							{
-								rid: 'abort',
-								timestamp: 4,
-								duration_ms: null,
-								error_status: 'A',
-							},
-							{ rid: 'quick', timestamp: 2, duration_ms: 100 },
-						],
-					},
-					loading: false,
-					error: null,
-				},
-			} );
-			mountDash();
-			await flushEffects();
-			// The first click sorts descending, the second ascending.
-			for ( const step of [ 'desc', 'asc' ] ) {
-				act( () => {
-					globalThis.__urlDetailProps.onRequestSort( 'duration_ms' );
-				} );
-				if ( step === dir ) {
-					break;
-				}
-			}
-
-			expect(
-				globalThis.__urlDetailProps.sortedRequests.map( ( r ) => r.rid )
-			).toEqual( order );
-		}
-	);
 
 	describe( 'the five-minute bucket', () => {
 		const bucketParam = () =>
@@ -2040,15 +2052,7 @@ describe( 'PerformancePage', () => {
 			expect( graphOpts().detailFilters.bucket ).toBe(
 				'2026-10-04-13-35'
 			);
-			expect( globalThis.__urlDetailProps.filters.bucket ).toBe(
-				'2026-10-04-13-35'
-			);
-
-			await act( async () => {
-				globalThis.__urlDetailProps.onBucketChange(
-					'2026-10-04-13-40'
-				);
-			} );
+			setWindowBar( { url_bucket: '2026-10-04-13-40' } );
 			expect( graphOpts().detailFilters.bucket ).toBe(
 				'2026-10-04-13-40'
 			);
@@ -2062,26 +2066,10 @@ describe( 'PerformancePage', () => {
 				bucket: '2026-10-04-13-40',
 			} );
 
-			await act( async () => {
-				globalThis.__urlDetailProps.onBucketChange( '' );
-			} );
+			setWindowBar( { url_bucket: null } );
 			expect( graphOpts().detailFilters.bucket ).toBe( '' );
 			expect( lastRead( 'eln/urls' ).buckets ).toBe( '2026-10-04-13-35' );
 			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
-		} );
-
-		it( "applies an updater the modal hands to the modal's held bucket", async () => {
-			await openFromBucketedTable();
-
-			await act( async () => {
-				globalThis.__urlDetailProps.onBucketChange(
-					( held ) => `${ held }..2026-10-04-13-45`
-				);
-			} );
-			expect( graphOpts().detailFilters.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45'
-			);
-			expect( lastRead( 'eln/urls' ).buckets ).toBe( '2026-10-04-13-35' );
 		} );
 
 		it( 'keeps the modal filters when a click names the bucket they hold', async () => {
@@ -2091,11 +2079,7 @@ describe( 'PerformancePage', () => {
 				bucket: '2026-10-04-13-35',
 			} );
 
-			await act( async () => {
-				globalThis.__urlDetailProps.onBucketChange(
-					'2026-10-04-13-35'
-				);
-			} );
+			setWindowBar( { url_bucket: '2026-10-04-13-35' } );
 
 			// The same question, so the window re-asks nothing.
 			expect( graphOpts().detailFilters ).toEqual( held );
@@ -2115,16 +2099,11 @@ describe( 'PerformancePage', () => {
 			} );
 
 			expect( graphOpts().detailFilters.bucket ).toBe( '' );
-			expect( globalThis.__urlDetailProps.filters.bucket ).toBe( '' );
 		} );
 
 		it( "asks under the modal's bucket, not the table's", async () => {
 			await openFromBucketedTable();
-			await act( async () => {
-				globalThis.__urlDetailProps.onBucketChange(
-					'2026-10-04-13-40'
-				);
-			} );
+			setWindowBar( { url_bucket: '2026-10-04-13-40' } );
 			const target = document.createElement( 'div' );
 			target.setAttribute( 'data-ask', 'url:a7' );
 			document.body.appendChild( target );
@@ -2189,7 +2168,6 @@ describe( 'PerformancePage', () => {
 		} );
 
 		expect( graphOpts().detailChart.chips ).toEqual( [] );
-		expect( globalThis.__urlDetailProps.chart.chips ).toEqual( [] );
 		unmount();
 	} );
 
@@ -2213,7 +2191,7 @@ describe( 'PerformancePage', () => {
 		await act( async () => {} );
 
 		await act( async () => {
-			globalThis.__urlDetailProps.onSelectRequest( 'rid-kokako-41' );
+			urlWindow().standing.selectRequest( 'rid-kokako-41' );
 		} );
 
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith(
@@ -2353,7 +2331,7 @@ describe( 'PerformancePage', () => {
 		const { container, unmount } = mountDash();
 		await flushEffects();
 		expect(
-			container.querySelector( '[data-testid="request-detail"]' )
+			container.querySelector( '[data-testid="window-request-detail"]' )
 		).toBeTruthy();
 		unmount();
 	} );
@@ -2892,43 +2870,6 @@ describe( 'PerformancePage', () => {
 		unmount();
 	} );
 
-	it( 'handleRequestSort flips dir + switches field via UrlDetailView callback', async () => {
-		mockNavState.selectedSubject = {
-			field: 'url',
-			hash: 'a1',
-			url: '/foo',
-		};
-		mockView = loadedView( {
-			urlDetail: {
-				data: {
-					stats: {},
-					requests: [
-						{ rid: 'r1', timestamp: 1, duration_ms: 100 },
-						{ rid: 'r2', timestamp: 2, duration_ms: 50 },
-					],
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-		expect( globalThis.__urlDetailProps ).toBeTruthy();
-		act( () => {
-			globalThis.__urlDetailProps.onRequestSort( 'timestamp' );
-		} );
-		act( () => {
-			globalThis.__urlDetailProps.onRequestSort( 'timestamp' );
-		} );
-		act( () => {
-			globalThis.__urlDetailProps.onRequestSort( 'duration' );
-		} );
-		act( () => {
-			globalThis.__urlDetailProps.onSelectRequest( 'r1' );
-		} );
-		unmount();
-	} );
-
 	it( 'modal close clears both selected URL and selected request', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
@@ -3396,7 +3337,9 @@ describe( 'PerformancePage', () => {
 			const { container, unmount } = mountDash();
 			await flushEffects();
 			expect(
-				container.querySelector( '[data-testid="request-detail"]' )
+				container.querySelector(
+					'[data-testid="window-request-detail"]'
+				)
 			).toBeTruthy();
 			unmount();
 		} );
@@ -3594,9 +3537,11 @@ describe( 'PerformancePage', () => {
 				'url=0ddba11c6610',
 				'method=PATCH',
 			] );
-			expect( globalThis.__urlDetailProps.subject ).toEqual(
-				TAKAHE_SUBJECT
-			);
+			expect(
+				container
+					.querySelector( '[data-testid="window-url-detail"]' )
+					.parentElement.getAttribute( 'data-ask' )
+			).toBe( `page:${ TAKAHE_SUBJECT.hash }` );
 			expect(
 				container.querySelector( '[data-testid="modal"] h2' )
 					.textContent
@@ -3856,7 +3801,7 @@ describe( 'PerformancePage', () => {
 			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
 			await act( async () => rerender( dashboard() ) );
 			expect(
-				container.querySelector( '[data-testid="url-detail"]' )
+				container.querySelector( '[data-testid="window-url-detail"]' )
 			).toBeNull();
 			expect( container.textContent ).toContain( 'Loading request' );
 			unmount();
@@ -3884,7 +3829,7 @@ describe( 'PerformancePage', () => {
 			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
 			await act( async () => rerender( dashboard() ) );
 			expect(
-				container.querySelector( '[data-testid="url-detail"]' )
+				container.querySelector( '[data-testid="window-url-detail"]' )
 			).toBeNull();
 			unmount();
 		} );
@@ -3989,7 +3934,7 @@ describe( 'PerformancePage', () => {
 				'kiwi5108new'
 			);
 			expect(
-				container.querySelector( '[data-testid="url-detail"]' )
+				container.querySelector( '[data-testid="window-url-detail"]' )
 			).toBeTruthy();
 			unmount();
 		} );
@@ -4021,7 +3966,7 @@ describe( 'PerformancePage', () => {
 
 			expect( mockNavState.selectedRequest ).toBeNull();
 			expect(
-				container.querySelector( '[data-testid="url-detail"]' )
+				container.querySelector( '[data-testid="window-url-detail"]' )
 			).toBeTruthy();
 			unmount();
 		} );

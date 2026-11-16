@@ -763,11 +763,17 @@ export default function LogEntriesTable( {
 		[ pairForPath, entries, allPairIds ]
 	);
 
-	// Hand reveal to the parent; the flame graph calls it on Cmd-click.
+	// Hand reveal to the parent while mounted; the flame calls it on Cmd-click.
 	useEffect( () => {
-		if ( revealRef ) {
-			revealRef.current = reveal;
+		if ( ! revealRef ) {
+			return undefined;
 		}
+		revealRef.current = reveal;
+		return () => {
+			if ( revealRef.current === reveal ) {
+				revealRef.current = null;
+			}
+		};
 	}, [ revealRef, reveal ] );
 
 	/**

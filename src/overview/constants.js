@@ -291,9 +291,10 @@ export const CATEGORY_MEASURES = [ 'ms', 'calls' ];
  * The groups this plugin's commands travel, each through its own
  * `<group>:shell` Tap so `connect <group>:shell` watches one family alone.
  * The Performance page's sources ask under `overview`, `url` and `request`,
- * and its layout's commands go under `performance`; `PerformancePage`,
- * `UrlDetailView` and `AskPanel` send their one-shot commands under `url`,
- * `request`, `performance` and `rules`; the rules editor
+ * and its layout's commands go under `performance`, each window layout's
+ * under `url` and `request`; `PerformancePage` and `AskPanel` send their
+ * one-shot commands under `url`, `request`, `performance` and `rules`; the
+ * rules editor
  * sends under `rules`, the hook picker under `hooks`, the current-request tab
  * under `currentRequest`, and the request, error and gyroscope pages under
  * `requestLog`, `errorLog` and `gyroscope`.

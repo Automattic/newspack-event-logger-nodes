@@ -25,21 +25,7 @@ import {
 	getQueryParam,
 	setQueryParams,
 } from '@newspack-nodes/shared/utils/queryParams';
-import { findSubject, subjectLink } from '../detailSubject';
-
-/**
- * The subject the page state names, or null for none.
- *
- * @param {string} url  The `url` key.
- * @param {string} page The `page_hash` key.
- * @return {?{field: string, hash: string}} The subject.
- */
-const linkedOf = ( url, page ) => {
-	if ( url ) {
-		return { field: 'url', hash: url };
-	}
-	return page ? { field: 'page', hash: page } : null;
-};
+import { findSubject, subjectLink, subjectOfLink } from '../detailSubject';
 
 /**
  * A subject's key in the hook's records.
@@ -81,8 +67,9 @@ export default function useUrlNavigation( urls ) {
 		getQueryParam( 'search' )
 	);
 
-	const shown = pending ?? { url, page, request };
-	const linked = linkedOf( shown.url, shown.page );
+	// A write names what it moves; the rest reads as the page state holds it.
+	const shown = { url, page, request, ...pending };
+	const linked = subjectOfLink( shown.url, shown.page );
 
 	const selectedSubject = useMemo( () => {
 		if ( ! linked ) {

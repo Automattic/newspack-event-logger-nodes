@@ -3201,7 +3201,7 @@ describe( 'the rows under an armed Ask picker', () => {
 				{ type: 'button', 'data-ask-trigger': '', onClick: start },
 				'ask'
 			),
-			// The request the table sits in, as RequestDetailView renders it.
+			// The request the table sits in, as the request window renders it.
 			React.createElement(
 				'div',
 				{ 'data-ask': 'request:r9' },

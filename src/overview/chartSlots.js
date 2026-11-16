@@ -589,14 +589,45 @@ export const activeChart = ( {
 };
 
 /**
+ * A Then by under a Breakdown: none where it repeats the Breakdown, which
+ * adds no dimension. Every chart's question, its pickers and the `then`
+ * and `url_then` parses read it.
+ *
+ * @param {string} breakdown The Breakdown.
+ * @param {string} then      The Then by.
+ * @return {string} The Then by kept.
+ */
+export const thenUnder = ( breakdown, then ) =>
+	then === breakdown ? '' : then;
+
+/**
+ * A Breakdown picker's setter: it writes the Breakdown, and clears a Then by
+ * the new Breakdown repeats in the same event, before any chart asks again.
+ *
+ * @param {(next: string) => void} writeBreakdown Writes the Breakdown.
+ * @param {(next: string) => void} writeThen      Writes the Then by.
+ * @param {string}                 then           The Then by held.
+ * @return {(next: string) => void} The setter.
+ */
+export const breakdownSetter =
+	( writeBreakdown, writeThen, then ) => ( next ) => {
+		writeBreakdown( next );
+		if ( thenUnder( next, then ) !== then ) {
+			writeThen( '' );
+		}
+	};
+
+/**
  * The dimensions a chart breaks down by: its first, and its second where one
  * is chosen and differs from the first.
  *
  * @param {{breakdown: string, thenBy: string}} chart The chart's dimensions.
  * @return {string[]} One or two field names.
  */
-export const chartDims = ( { breakdown, thenBy } ) =>
-	thenBy && thenBy !== breakdown ? [ breakdown, thenBy ] : [ breakdown ];
+export const chartDims = ( { breakdown, thenBy } ) => {
+	const then = thenUnder( breakdown, thenBy );
+	return then ? [ breakdown, then ] : [ breakdown ];
+};
 
 /**
  * Decode a `query` answer grouped by `bucket` and `dims` into one series per

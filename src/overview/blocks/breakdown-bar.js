@@ -15,6 +15,7 @@ import { useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { usePageState } from '@newspack-nodes/shared/composition/page/pageState';
 import { BreakdownBar } from '../components/BreakdownControls';
+import { breakdownSetter } from '../chartSlots';
 import {
 	CHART_BREAKDOWN_OPTIONS,
 	FILTER_FIELD_OPTIONS,
@@ -57,13 +58,7 @@ function View() {
 	const [ metric, setMetric ] = usePageState( 'metric', { writes: true } );
 	const [ , writeBreakdown ] = usePageState( 'breakdown', { writes: true } );
 	const [ then, setThen ] = usePageState( 'then', { writes: true } );
-	// A Breakdown taking the Then by's value leaves it no second dimension.
-	const setBreakdown = ( next ) => {
-		writeBreakdown( next );
-		if ( next === then ) {
-			setThen( '' );
-		}
-	};
+	const setBreakdown = breakdownSetter( writeBreakdown, setThen, then );
 	const { servers } = useSite();
 	const { params, canBreakDownByServer } = useChartQuestion();
 	const serverOptions = useMemo(

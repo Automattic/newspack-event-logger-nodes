@@ -601,6 +601,23 @@ describe( 'the aggregate chart’s dimensions', () => {
 		expect( thenBy.value ).toBe( '' );
 	} );
 
+	it( 'reads a linked Then by repeating the Breakdown as none, on the page and the bar', async () => {
+		window.history.replaceState(
+			null,
+			'',
+			'/wp-admin/admin.php?page=x&breakdown=status_class&then=status_class'
+		);
+		const container = await rendered();
+		const thenBy = [ ...container.querySelectorAll( 'select' ) ].find(
+			( one ) =>
+				[ ...one.options ].some( ( entry ) => 'None' === entry.text )
+		);
+		expect( thenBy.value ).toBe( '' );
+		expect(
+			new URLSearchParams( window.location.search ).get( 'then' )
+		).toBeNull();
+	} );
+
 	it( 'clears the Then by when the Breakdown takes its value', async () => {
 		window.history.replaceState(
 			null,

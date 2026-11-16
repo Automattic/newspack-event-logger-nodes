@@ -81,7 +81,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 	// The two status modifiers belong to errorStatus.js: the views that paint
 	// an error_status read their tone from it rather than spelling it.
 	'components/errorStatus.js': [ 'is-warning', 'is-error' ],
-	'overview/components/UrlDetailView.js': [
+	'overview/components/RequestTable.js': [
 		'newspack-nodes-section-heading event-logger-heading-row',
 		'newspack-nodes-table',
 		'newspack-nodes-table__header',
@@ -89,7 +89,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-empty-state',
 		'newspack-nodes-status',
 	],
-	'overview/components/RequestDetailView.js': [
+	'overview/blocks/request-window.js': [
 		'newspack-nodes-badge',
 		'newspack-nodes-no-selection',
 		'newspack-nodes-status',
@@ -164,7 +164,7 @@ const INLINE_APPEARANCE_PROPERTY =
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	// @longform The `filter` tokens a URL modal's chips ask `ask` and the
 	// facts block under, as the `url:` brief names them: not a style.
-	[ 'overview/PerformancePage.js', [ /filter: detailChart\.chips,/ ] ],
+	[ 'overview/PerformancePage.js', [ /filter: detailChips,/ ] ],
 	[ 'overview/pageFacts.js', [ /filter: detailChips,/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.

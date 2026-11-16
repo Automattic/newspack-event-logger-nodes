@@ -41,5 +41,79 @@
 			"attributes": {},
 			"inner": []
 		}
+	],
+	"newspack-event-logger-nodes/url-detail": [
+		{
+			"name": "newspack-event-logger-nodes/url-narrowing",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-chart",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-category-chart",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-response-times",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-trace",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-flame-cut",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-profile",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/url-requests",
+			"attributes": {},
+			"inner": []
+		}
+	],
+	"newspack-event-logger-nodes/request-detail": [
+		{
+			"name": "newspack-event-logger-nodes/request-summary",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/request-findings",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/request-trace",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/request-flame-cut",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/request-profile",
+			"attributes": {},
+			"inner": []
+		},
+		{
+			"name": "newspack-event-logger-nodes/request-entries",
+			"attributes": {},
+			"inner": []
+		}
 	]
 }

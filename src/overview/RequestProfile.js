@@ -4,8 +4,8 @@
  * opens a category to the origins that raised it.
  *
  * One component serves two shapes. A single request supplies its own record,
- * and `RequestDetailView` and `CurrentRequestTab` mount `RequestProfile`
- * directly. The two averaged views — the Overview card and the URL modal — go
+ * and the request window's profile block and `CurrentRequestTab` mount
+ * `RequestProfile` directly. The two averaged views — the Overview card and the URL modal — go
  * through `ProfileWithCaption`, which captions the same panel with how many
  * requests the average covers.
  */

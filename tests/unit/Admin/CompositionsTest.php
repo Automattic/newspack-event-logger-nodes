@@ -2,7 +2,8 @@
 /**
  * CompositionsTest: the plugin's four composed pages — Performance, the
  * Request Log, the Error Log and the Gyroscope — off the one page table:
- * their contexts and the blocks Performance owns, the default layouts the
+ * their contexts, the URL and request windows Performance lays out beside
+ * its own, the blocks Performance owns, the default layouts the
  * browser's tests read from `tests/fixtures/`, the menu each page registers,
  * and what each page's load sets before its bundle, under one global.
  *
@@ -30,6 +31,30 @@ final class CompositionsTest extends TestCase {
 
 	/** The Performance page's context. */
 	private const PERFORMANCE = 'newspack-event-logger-nodes/performance';
+
+	/** The URL window's context, which the Performance page lays out too. */
+	private const URL_WINDOW = 'newspack-event-logger-nodes/url-detail';
+
+	/** The request window's context, likewise. */
+	private const REQUEST_WINDOW = 'newspack-event-logger-nodes/request-detail';
+
+	/** Each window block => the window it stands on. */
+	private const WINDOW_BLOCKS = [
+		'url-narrowing'      => self::URL_WINDOW,
+		'url-chart'          => self::URL_WINDOW,
+		'url-category-chart' => self::URL_WINDOW,
+		'url-response-times' => self::URL_WINDOW,
+		'url-trace'          => self::URL_WINDOW,
+		'url-flame-cut'      => self::URL_WINDOW,
+		'url-profile'        => self::URL_WINDOW,
+		'url-requests'       => self::URL_WINDOW,
+		'request-summary'    => self::REQUEST_WINDOW,
+		'request-findings'   => self::REQUEST_WINDOW,
+		'request-trace'      => self::REQUEST_WINDOW,
+		'request-flame-cut'  => self::REQUEST_WINDOW,
+		'request-profile'    => self::REQUEST_WINDOW,
+		'request-entries'    => self::REQUEST_WINDOW,
+	];
 
 	/** Each log page's admin slug => its context. */
 	private const LOG_CONTEXTS = [
@@ -100,17 +125,17 @@ final class CompositionsTest extends TestCase {
 		return (array) \json_decode( \substr( $script, \strlen( $prefix ), -1 ), true );
 	}
 
-	public function test_one_callback_declares_the_four_pages_and_the_blocks_performance_owns(): void {
+	public function test_one_callback_declares_the_four_pages_the_two_windows_and_the_blocks_performance_owns(): void {
 		$declared = Composition::declarations();
 		$this->assertSame(
-			[ self::PERFORMANCE, ...\array_values( self::LOG_CONTEXTS ) ],
+			[ self::PERFORMANCE, self::URL_WINDOW, self::REQUEST_WINDOW, ...\array_values( self::LOG_CONTEXTS ) ],
 			\array_values( \array_filter( \array_keys( $declared['contexts'] ), static fn ( string $name ): bool => \str_starts_with( $name, 'newspack-event-logger-nodes/' ) ) )
 		);
 		$this->assertArrayHasKey( 'newspack-event-logger-nodes/url-table', $declared['blocks'] );
 	}
 
-	public function test_every_page_admits_the_shared_blocks_but_the_table(): void {
-		foreach ( [ self::PERFORMANCE, ...\array_values( self::LOG_CONTEXTS ) ] as $context ) {
+	public function test_every_page_and_window_admits_the_shared_blocks_but_the_table(): void {
+		foreach ( [ self::PERFORMANCE, self::URL_WINDOW, self::REQUEST_WINDOW, ...\array_values( self::LOG_CONTEXTS ) ] as $context ) {
 			$this->assertSame(
 				[
 					'newspack-nodes/stats',
@@ -125,8 +150,10 @@ final class CompositionsTest extends TestCase {
 		}
 	}
 
-	public function test_performance_holds_sixty_four_blocks_and_a_log_page_sixteen(): void {
+	public function test_performance_holds_sixty_four_blocks_a_window_thirty_two_and_a_log_page_sixteen(): void {
 		$this->assertSame( 64, Composition::context_of( self::PERFORMANCE )['max_blocks'] );
+		$this->assertSame( 32, Composition::context_of( self::URL_WINDOW )['max_blocks'] );
+		$this->assertSame( 32, Composition::context_of( self::REQUEST_WINDOW )['max_blocks'] );
 		foreach ( self::LOG_CONTEXTS as $context ) {
 			$this->assertSame( 16, Composition::context_of( $context )['max_blocks'], $context );
 		}
@@ -139,10 +166,38 @@ final class CompositionsTest extends TestCase {
 			$trees[ $context ] = Composition::validate( $context, Composition::default_markup( $context ) );
 		}
 		$this->assertSame( $trees, \json_decode( (string) \file_get_contents( "{$fixtures}/log-page-layouts.json" ), true ) );
+		$performance = [];
+		foreach ( [ self::PERFORMANCE, self::URL_WINDOW, self::REQUEST_WINDOW ] as $context ) {
+			$performance[ $context ] = Composition::validate( $context, Composition::default_markup( $context ) );
+		}
+		$this->assertSame( $performance, \json_decode( (string) \file_get_contents( "{$fixtures}/performance-layout.json" ), true ) );
+	}
+
+	public function test_each_window_default_lays_out_its_blocks_once_in_the_order_the_window_showed_them(): void {
+		$names = static fn ( string $context ): array => \array_column( Composition::validate( $context, Composition::default_markup( $context ) ), 'name' );
 		$this->assertSame(
-			[ self::PERFORMANCE => Composition::validate( self::PERFORMANCE, Composition::default_markup( self::PERFORMANCE ) ) ],
-			\json_decode( (string) \file_get_contents( "{$fixtures}/performance-layout.json" ), true )
+			\array_map( static fn ( string $name ): string => "newspack-event-logger-nodes/{$name}", \array_keys( \array_filter( self::WINDOW_BLOCKS, static fn ( string $context ): bool => self::URL_WINDOW === $context ) ) ),
+			$names( self::URL_WINDOW )
 		);
+		$this->assertSame(
+			\array_map( static fn ( string $name ): string => "newspack-event-logger-nodes/{$name}", \array_keys( \array_filter( self::WINDOW_BLOCKS, static fn ( string $context ): bool => self::REQUEST_WINDOW === $context ) ) ),
+			$names( self::REQUEST_WINDOW )
+		);
+	}
+
+	public function test_each_window_block_stands_once_and_only_on_its_window(): void {
+		$blocks = Composition::declarations()['blocks'];
+		foreach ( self::WINDOW_BLOCKS as $name => $context ) {
+			$block = $blocks[ "newspack-event-logger-nodes/{$name}" ];
+			$this->assertSame( [ $context ], $block['contexts'], $name );
+			$this->assertFalse( $block['multiple'], $name );
+		}
+	}
+
+	public function test_a_window_block_is_refused_on_the_page(): void {
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'newspack-event-logger-nodes/url-requests' );
+		Composition::validate( self::PERFORMANCE, '<!-- wp:newspack-event-logger-nodes/url-requests /-->' );
 	}
 
 	public function test_the_performance_default_opens_on_the_headline_and_closes_on_the_url_table(): void {
@@ -220,7 +275,14 @@ final class CompositionsTest extends TestCase {
 		$data = Compositions::page_data( 'performance' );
 		$this->assertSame( [ 'page', 'canTune', 'canManage', 'compositions', 'window' ], \array_keys( $data ) );
 		$this->assertSame( 'performance', $data['page'] );
-		$this->assertSame( [ self::PERFORMANCE => Composition_Store::read( self::PERFORMANCE ) ], $data['compositions'] );
+		$this->assertSame(
+			[
+				self::PERFORMANCE    => Composition_Store::read( self::PERFORMANCE ),
+				self::URL_WINDOW     => Composition_Store::read( self::URL_WINDOW ),
+				self::REQUEST_WINDOW => Composition_Store::read( self::REQUEST_WINDOW ),
+			],
+			$data['compositions']
+		);
 		$this->assertSame( 18, $data['window'] );
 	}
 
@@ -256,8 +318,10 @@ final class CompositionsTest extends TestCase {
 	/** @return array<string, array{string, string, string, string}> Slug, page, editor bundle and handle. */
 	public static function editors(): array {
 		return [
-			'performance' => [ 'event-logger-overview', 'performance', 'overview-editor', 'newspack-event-logger-nodes-overview-editor' ],
-			'gyroscope'   => [ 'event-logger-gyroscope', 'gyroscope', 'log-pages-editor', 'newspack-event-logger-nodes-log-pages-editor' ],
+			'performance'    => [ 'event-logger-overview', 'performance', 'overview-editor', 'newspack-event-logger-nodes-overview-editor' ],
+			'url-detail'     => [ 'event-logger-overview', 'url-detail', 'overview-editor', 'newspack-event-logger-nodes-overview-editor' ],
+			'request-detail' => [ 'event-logger-overview', 'request-detail', 'overview-editor', 'newspack-event-logger-nodes-overview-editor' ],
+			'gyroscope'      => [ 'event-logger-gyroscope', 'gyroscope', 'log-pages-editor', 'newspack-event-logger-nodes-log-pages-editor' ],
 		];
 	}
 
@@ -274,6 +338,12 @@ final class CompositionsTest extends TestCase {
 		$this->assertContains( $handle, \array_column( $GLOBALS['_enqueued_scripts'], 0 ) );
 		$this->assertSame( "https://kea-7983.test/build/{$bundle}/layout-editor.js", $GLOBALS['_registered_scripts'][ $handle ]['src'] );
 		$this->assertSame( "newspack-event-logger-nodes/{$page}", $GLOBALS['_localized_scripts'][ $handle ]['data']['context'] );
+	}
+
+	public function test_a_window_is_no_page_of_its_own(): void {
+		$this->expectException( \LogicException::class );
+		$this->expectExceptionMessage( 'url-detail' );
+		Compositions::page_data( 'url-detail' );
 	}
 
 	public function test_an_edit_naming_another_page_mounts_no_editor(): void {

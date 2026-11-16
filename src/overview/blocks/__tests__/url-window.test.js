@@ -1,14 +1,18 @@
 /* global globalThis, KeyboardEvent */
 /**
- * Tests for UrlDetailView — heavy child components mocked at the
- * module boundary. We exercise:
- *   - sortable column headers fire onRequestSort
+ * The URL window's blocks, laid out as the window's default layout reads,
+ * over their components; heavy children mocked at the module boundary. The
+ * data seam is the source: `mockSources` answers each window source, as
+ * the window's `dump_url` and its two `query` charts. The state seam is page
+ * state: `mockState` holds each key a block reads, and `mockSetters` the
+ * setter each key's writes land in, so a test hands a block the window's
+ * question and reads the edits it makes. We exercise:
+ *   - sortable column headers write the list's order
  *   - no "Errors Only" toggle; the chart's chips narrow the header and list
- *   - clicking a request row fires onSelectRequest
+ *   - clicking a request row opens it through the page the window stands on
  *   - aggregate flame / breakdown / category time series sections
- *     mount when their data is present, each chart drawn from the answer
- *     its owner's graph asked
- *   - the chart's selects and chips hand their edits to the owner
+ *     mount when their data is present, each chart drawn from its source
+ *   - the chart's selects and chips write their page state
  */
 
 // Mock useVirtualization: no modal ancestor in tests → real hook crashes.
@@ -76,17 +80,70 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 	},
 } ) );
 
+/** Each window source's state, by source name. */
+let mockSources = {};
+/** Every source read, oldest first: `{ name, params }`. */
+const mockReads = [];
+/** Each page-state key's value, by key. */
+let mockState = {};
+/** Each page-state key's setter, by key. */
+let mockSetters = {};
+
+jest.mock( '@newspack-nodes/shared/sources', () => ( {
+	...jest.requireActual( '@newspack-nodes/shared/sources' ),
+	useSource: ( name, params ) => {
+		mockReads.push( { name, params } );
+		return (
+			mockSources[ name ] ?? {
+				model: null,
+				loading: true,
+				error: null,
+				stale: false,
+			}
+		);
+	},
+} ) );
+
+jest.mock( '@newspack-nodes/shared/composition/page/pageState', () => ( {
+	...jest.requireActual(
+		'@newspack-nodes/shared/composition/page/pageState'
+	),
+	usePageState: ( key ) => [
+		mockState[ key ],
+		( value ) => mockSetters[ key ]?.( value ),
+	],
+} ) );
+
 import * as React from 'react';
-import UrlDetailView from '../UrlDetailView';
-const NO_DETAIL_CHART = { breakdown: 'status_class', thenBy: '', chips: [] };
+import {
+	ComposedLayout,
+	ComposedPage,
+	providedViews,
+} from '@newspack-nodes/shared/composition/page';
+import { sourceDeclaration } from '@newspack-nodes/shared/sources';
+import { BLOCK_VIEWS } from '../../sources';
 import { SERIES_MEASURES } from '../../constants';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 import {
 	compileLocal,
 	compileShared,
+	resolved,
 	winning,
 } from '../../../test-helpers/cascade';
 import { rowsWire } from '../../../test-helpers/chartWire';
+import * as chartSlots from '../../chartSlots';
+import PERFORMANCE_LAYOUTS from '../../../../tests/fixtures/performance-layout.json';
+
+const NO_DETAIL_CHART = { breakdown: 'status_class', thenBy: '', chips: [] };
+
+/** The URL window's default layout. */
+const URL_WINDOW = {
+	context: 'newspack-event-logger-nodes/url-detail',
+	source: 'default',
+	blocks: PERFORMANCE_LAYOUTS[ 'newspack-event-logger-nodes/url-detail' ],
+	saved_ts: null,
+	actor: null,
+};
 
 /**
  * A view slice holding a `query` answer, as `useNodeField` hands one over.
@@ -161,6 +218,82 @@ beforeEach( () => {
 	globalThis.__categoryData = undefined;
 } );
 
+/**
+ * A source's state holding a slice's answer, as a poll publishes one.
+ *
+ * @param {Object} slice `{ data, loading, error }`.
+ * @return {Object} The source state.
+ */
+const stateOf = ( slice ) => ( {
+	model: { data: slice.data },
+	loading: !! slice.loading,
+	error: slice.error ?? null,
+	stale: false,
+} );
+
+/**
+ * Hand the window's blocks the question and answers `props` name, in the
+ * shape the window view once took them.
+ *
+ * @param {Object} props The window's question, answers and callbacks.
+ */
+function seed( props ) {
+	mockSources = {
+		'eln/url-detail': stateOf( {
+			data: { ...props.urlDetail, requests: props.sortedRequests },
+			loading: props.listing,
+			error: props.listError,
+		} ),
+		'eln/url-chart': stateOf( props.chartSlice ),
+		'eln/url-categories': stateOf( props.categoriesSlice ),
+	};
+	mockState = {
+		url: 'url' === props.subject.field ? props.subject.hash : '',
+		page_hash: 'page' === props.subject.field ? props.subject.hash : '',
+		server: '',
+		url_buckets: props.filters.bucket,
+		url_chips: props.chart.chips,
+		url_breakdown: props.chart.breakdown,
+		url_then: props.chart.thenBy,
+		url_metric: props.metric,
+	};
+	mockSetters = {
+		url_buckets: props.onBucketChange,
+		url_breakdown: props.onBreakdownChange,
+		url_then: props.onThenByChange,
+		url_chips: props.onChipsChange,
+		url_metric: props.onMetricChange,
+	};
+}
+
+/**
+ * The window's layout under the page it stands on.
+ *
+ * @param {Object} props The window's question, answers and callbacks.
+ * @return {import('react').ReactElement} The layout.
+ */
+const windowOf = ( props ) => {
+	seed( props );
+	return (
+		<div className="event-logger-sections">
+			<ComposedLayout
+				layout={ URL_WINDOW }
+				views={ BLOCK_VIEWS }
+				page={ {
+					group: 'url',
+					canTune: false,
+					onRestored: () => {},
+					selectRequest: props.onSelectRequest,
+					revealRef: { current: null },
+					requestSort: props.requestSort,
+					sortRequests: props.onRequestSort,
+					windowAsks: true,
+				} }
+			/>
+		</div>
+	);
+};
+
 function mount( overrides = {} ) {
 	const props = {
 		urlDetail: baseUrlDetail,
@@ -181,9 +314,11 @@ function mount( overrides = {} ) {
 		onMetricChange: jest.fn(),
 		...overrides,
 	};
+	const mounted = renderComponent( windowOf( props ) );
 	return {
 		props,
-		...renderComponent( React.createElement( UrlDetailView, props ) ),
+		...mounted,
+		rerender: ( next ) => mounted.rerender( windowOf( next ) ),
 	};
 }
 
@@ -206,32 +341,7 @@ const dropdownLabels = ( container ) =>
 		( label ) => label.textContent
 	);
 
-describe( 'UrlDetailView', () => {
-	it( 'marks its whole body as the URL for the ask picker, with each request row nested inside', () => {
-		// The picker walks [data-ask] ancestors innermost first, so a click on
-		// the body asks about the URL and a click on a row still asks about
-		// that request.
-		const { container, unmount } = mount( {
-			subject: { field: 'url', hash: 'cafe0123beef' },
-		} );
-		const root = container.firstElementChild;
-		expect( root.getAttribute( 'data-ask' ) ).toBe( 'url:cafe0123beef' );
-		const row = container.querySelector( '[data-ask^="request:"]' );
-		expect( row ).not.toBeNull();
-		expect( root.contains( row ) ).toBe( true );
-		unmount();
-	} );
-
-	it( 'names a page window to the ask picker as its page', () => {
-		const { container, unmount } = mount( {
-			subject: { field: 'page', hash: 'bead5a1e6604' },
-		} );
-		expect( container.firstElementChild.getAttribute( 'data-ask' ) ).toBe(
-			'page:bead5a1e6604'
-		);
-		unmount();
-	} );
-
+describe( 'the URL window blocks', () => {
 	it( 'offers a page window a chip on its URLs, and a URL window none on its own', () => {
 		const chart = { ...NO_DETAIL_CHART, chips: [ 'url=fade0bee6604' ] };
 		const page = mount( {
@@ -611,7 +721,7 @@ describe( 'UrlDetailView', () => {
 			'2026-10-04-13-30',
 			'2026-10-04-13-35',
 		] );
-		expect( globalThis.__categorySelected ).toBe(
+		expect( globalThis.__categorySelected ).toEqual(
 			globalThis.__aggregateSelected
 		);
 		unmount();
@@ -742,18 +852,54 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'fires onRequestSort when a sort header is clicked', () => {
+	it( 'hands the page the column a sortable heading names', () => {
 		const onRequestSort = jest.fn();
 		const { container, unmount } = mount( { onRequestSort } );
-		const durationHeader = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent.includes( 'Duration' ) );
-		act( () => {
-			durationHeader.click();
-		} );
+		act( () =>
+			Array.from( container.querySelectorAll( 'button' ) )
+				.find( ( b ) => b.textContent.includes( 'Duration' ) )
+				.click()
+		);
 		expect( onRequestSort ).toHaveBeenCalledWith( 'duration_ms' );
 		unmount();
 	} );
+
+	it.each( [
+		[ 'desc', [ 'slow', 'quick', 'tout', 'abort' ] ],
+		[ 'asc', [ 'quick', 'slow', 'tout', 'abort' ] ],
+	] )(
+		'sorts an unmeasured duration last by %s duration, never as the fastest or the slowest',
+		( dir, order ) => {
+			const { container, unmount } = mount( {
+				requestSort: { field: 'duration_ms', dir },
+				sortedRequests: [
+					{
+						rid: 'tout',
+						timestamp: 3,
+						duration_ms: null,
+						error_status: 'T',
+					},
+					{ rid: 'slow', timestamp: 1, duration_ms: 300 },
+					{
+						rid: 'abort',
+						timestamp: 4,
+						duration_ms: null,
+						error_status: 'A',
+					},
+					{ rid: 'quick', timestamp: 2, duration_ms: 100 },
+				],
+			} );
+			expect(
+				Array.from(
+					container.querySelectorAll(
+						'.event-logger-table__row code'
+					),
+					( code ) => code.textContent
+				)
+			).toEqual( order );
+			unmount();
+		}
+	);
 
 	it( 'fires onSelectRequest when a row is clicked', () => {
 		const onSelectRequest = jest.fn();
@@ -766,6 +912,106 @@ describe( 'UrlDetailView', () => {
 		} );
 		// The rid alone names the request; its row names the rest.
 		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
+		unmount();
+	} );
+
+	it( 'reads each window source with exactly the page state it declares', () => {
+		mockReads.length = 0;
+		const { unmount } = mount();
+		const named = [ ...new Set( mockReads.map( ( read ) => read.name ) ) ];
+		expect( named.sort() ).toEqual( [
+			'eln/url-categories',
+			'eln/url-chart',
+			'eln/url-detail',
+		] );
+		for ( const { name, params } of mockReads ) {
+			expect( Object.keys( params ).sort() ).toEqual(
+				[ ...sourceDeclaration( name ).params ].sort()
+			);
+		}
+		unmount();
+	} );
+
+	it.each( [
+		'url-narrowing',
+		'url-chart',
+		'url-category-chart',
+		'url-requests',
+	] )( 'reads the request chart once a render in the %s block', ( name ) => {
+		const props = {
+			urlDetail: baseUrlDetail,
+			sortedRequests: REQUESTS,
+			requestSort: { field: 'timestamp', dir: 'desc' },
+			subject: { field: 'url', hash: 'deadbeef' },
+			filters: { bucket: '2026-10-04-13-35' },
+			chartSlice: TWELVE_SLOTS,
+			categoriesSlice: sliceOf( null ),
+			chart: NO_DETAIL_CHART,
+			metric: 'volume',
+		};
+		seed( props );
+		const { View } =
+			providedViews( BLOCK_VIEWS )[
+				`newspack-event-logger-nodes/${ name }`
+			];
+		mockReads.length = 0;
+		const { unmount } = renderComponent(
+			<ComposedPage.Provider
+				value={ {
+					group: 'url',
+					canTune: false,
+					onRestored: () => {},
+					selectRequest: () => {},
+					requestSort: props.requestSort,
+					sortRequests: () => {},
+					windowAsks: true,
+				} }
+			>
+				<View attributes={ {} } editing={ false } />
+			</ComposedPage.Provider>
+		);
+		expect(
+			mockReads.filter( ( read ) => 'eln/url-chart' === read.name )
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( 'opens no request from a row while its layout is edited', () => {
+		const onSelectRequest = jest.fn();
+		seed( {
+			urlDetail: baseUrlDetail,
+			sortedRequests: REQUESTS,
+			requestSort: { field: 'timestamp', dir: 'desc' },
+			subject: { field: 'url', hash: 'deadbeef' },
+			filters: { bucket: '' },
+			chartSlice: sliceOf( null ),
+			categoriesSlice: sliceOf( null ),
+			chart: NO_DETAIL_CHART,
+			metric: 'volume',
+		} );
+		const { View } =
+			providedViews( BLOCK_VIEWS )[
+				'newspack-event-logger-nodes/url-requests'
+			];
+		const { container, unmount } = renderComponent(
+			<ComposedPage.Provider
+				value={ {
+					group: 'url',
+					canTune: false,
+					onRestored: () => {},
+					selectRequest: onSelectRequest,
+					requestSort: { field: 'timestamp', dir: 'desc' },
+					sortRequests: () => {},
+					windowAsks: true,
+				} }
+			>
+				<View attributes={ {} } editing />
+			</ComposedPage.Provider>
+		);
+		act( () =>
+			container.querySelector( '.event-logger-table__row' ).click()
+		);
+		expect( onSelectRequest ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
@@ -868,9 +1114,7 @@ describe( 'UrlDetailView', () => {
 			globalThis.__categorySlots,
 		];
 
-		rerender(
-			React.createElement( UrlDetailView, { ...props, listing: true } )
-		);
+		rerender( { ...props, listing: true } );
 
 		expect( globalThis.__aggregateSlots ).toBe( aggregate );
 		expect( globalThis.__categorySlots ).toBe( category );
@@ -919,6 +1163,41 @@ describe( 'UrlDetailView', () => {
 			[ 'chips', [] ],
 		] );
 		unmount();
+	} );
+
+	it( 'clears the Then by in the event the Breakdown takes its value', () => {
+		const onBreakdownChange = jest.fn();
+		const onThenByChange = jest.fn();
+		const { container, unmount } = mount( {
+			chart: { breakdown: 'status_class', thenBy: 'ja4', chips: [] },
+			onBreakdownChange,
+			onThenByChange,
+		} );
+		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		selectOption( breakdown, 'ja4' );
+		expect( onBreakdownChange ).toHaveBeenCalledWith( 'ja4' );
+		expect( onThenByChange ).toHaveBeenCalledWith( '' );
+		unmount();
+	} );
+
+	it( 'derives each chart answer’s buckets once, however many blocks and mounts read them', () => {
+		const answerSlots = jest.spyOn( chartSlots, 'answerSlots' );
+		// Fresh answers, so an earlier test cannot have derived their buckets.
+		const chartSlice = sliceOf(
+			classAnswer( [], '2026-10-04-13-05..2026-10-04-14-05' )
+		);
+		const categoriesSlice = sliceOf(
+			classAnswer( [], '2026-10-04-12-05..2026-10-04-13-05' )
+		);
+		mount( { chartSlice, categoriesSlice } ).unmount();
+		const again = mount( { chartSlice, categoriesSlice } );
+		for ( const answer of [ chartSlice.data, categoriesSlice.data ] ) {
+			expect(
+				answerSlots.mock.calls.filter( ( [ one ] ) => one === answer )
+			).toHaveLength( 1 );
+		}
+		answerSlots.mockRestore();
+		again.unmount();
 	} );
 
 	it( 'draws the metric its owner holds, and hands it a Metric edit', () => {
@@ -982,26 +1261,11 @@ describe( 'UrlDetailView', () => {
 				total_time: 13,
 			},
 		};
-		const props = {
+		const { props, container, rerender, unmount } = mount( {
 			urlDetail,
-			sortedRequests: REQUESTS,
-			requestSort: { field: 'timestamp', dir: 'desc' },
-			onRequestSort: jest.fn(),
-			onSelectRequest: jest.fn(),
-			subject: { field: 'url', hash: 'deadbeef' },
-			filters: { bucket: '' },
-			onBucketChange: jest.fn(),
-			listing: false,
 			chartSlice: sliceOf( classAnswer( [] ) ),
 			categoriesSlice: sliceOf( classAnswer( [] ) ),
-			chart: NO_DETAIL_CHART,
-			onBreakdownChange: jest.fn(),
-			onThenByChange: jest.fn(),
-			onChipsChange: jest.fn(),
-		};
-		const { container, rerender, unmount } = renderComponent(
-			React.createElement( UrlDetailView, props )
-		);
+		} );
 		await act( async () => {} );
 		/**
 		 * The whole-URL elements, each the deepest one holding its text.
@@ -1031,13 +1295,11 @@ describe( 'UrlDetailView', () => {
 			);
 		expect( rows() ).toHaveLength( 3 );
 
-		rerender(
-			React.createElement( UrlDetailView, {
-				...props,
-				filters: { bucket: '2026-10-04-13-35' },
-				listing: true,
-			} )
-		);
+		rerender( {
+			...props,
+			filters: { bucket: '2026-10-04-13-35' },
+			listing: true,
+		} );
 		await act( async () => {} );
 
 		expect( wholeUrl() ).toEqual( before );
@@ -1048,15 +1310,12 @@ describe( 'UrlDetailView', () => {
 		).toBe( 'Loading requests…' );
 
 		const fatal = REQUESTS[ 1 ];
-		rerender(
-			React.createElement( UrlDetailView, {
-				...props,
-				urlDetail: { ...urlDetail, requests: [ fatal ] },
-				sortedRequests: [ fatal ],
-				filters: { bucket: '2026-10-04-13-35' },
-				listing: false,
-			} )
-		);
+		rerender( {
+			...props,
+			sortedRequests: [ fatal ],
+			filters: { bucket: '2026-10-04-13-35' },
+			listing: false,
+		} );
 		await act( async () => {} );
 
 		wholeUrl().forEach( ( el, i ) => expect( el ).toBe( before[ i ] ) );
@@ -1116,12 +1375,7 @@ describe( 'UrlDetailView', () => {
 		const first = global.__urlDetailFlameProps.order;
 
 		act( () =>
-			view.rerender(
-				React.createElement( UrlDetailView, {
-					...view.props,
-					onSelectRequest: jest.fn(),
-				} )
-			)
+			view.rerender( { ...view.props, onSelectRequest: jest.fn() } )
 		);
 
 		expect( global.__urlDetailFlameProps.order ).toBe( first );
@@ -1285,7 +1539,9 @@ describe( 'UrlDetailView', () => {
 				],
 			},
 		} );
-		const stack = container.querySelector( '.event-logger-sections' );
+		const stack = container.querySelector(
+			'.event-logger-sections > .newspack-nodes-composed-layout'
+		);
 		expect( stack ).not.toBeNull();
 		const owner = [ ...stack.children ].find( ( child ) =>
 			child.textContent.includes( 'Time By Owner' )
@@ -1295,6 +1551,14 @@ describe( 'UrlDetailView', () => {
 			expect( child.style.marginTop ).toBe( '' );
 			expect( child.style.marginBottom ).toBe( '' );
 		}
+		// The layout's own box gives way, so its blocks stack on the window's gap.
+		const sheets = [
+			compileShared( 'styles/_components.scss' ),
+			compileLocal( 'overview/styles/base.scss' ),
+		];
+		container.classList.add( 'newspack-nodes-ui' );
+		expect( resolved( stack, sheets ).display ).toBe( 'contents' );
+		expect( resolved( stack.parentElement, sheets ).gap ).toBe( '32px' );
 		unmount();
 	} );
 
@@ -1337,7 +1601,7 @@ describe( 'UrlDetailView', () => {
 	} );
 } );
 
-describe( 'UrlDetailView breakdown and owners', () => {
+describe( 'the URL window profile', () => {
 	const urlDetail = ( owners ) => ( {
 		...baseUrlDetail,
 		stats: { avg_ms: 41 },
@@ -1361,7 +1625,9 @@ describe( 'UrlDetailView breakdown and owners', () => {
 		const { container, unmount } = mount( {
 			urlDetail: urlDetail( OWNERS ),
 		} );
-		const stack = container.querySelector( '.event-logger-sections' );
+		const stack = container.querySelector(
+			'.newspack-nodes-composed-layout'
+		);
 		const section = [ ...stack.children ].find( ( child ) =>
 			child.textContent.includes( 'Time Breakdown' )
 		);

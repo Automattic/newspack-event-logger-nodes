@@ -13,8 +13,23 @@
  * on any layout. A URL table opens it through the page it stands on, whose
  * `openSubject`, `selectedSubject` and `busySubject` this page provides.
  *
- * The window's own controls live in the address bar under a `url_` prefix
- * while it is open, as `docs/dashboards.md` lists. The page runs every
+ * The window's body is a composed layout too: the URL window's is the
+ * `url-detail` context's, the request window's the `request-detail`
+ * context's, each standing for as long as its view does, under a status line
+ * while its detail loads or is refused. Their blocks read the window's page
+ * state and sources (`./blocks/url-window`, `./blocks/request-window`), and
+ * open a request and sort the list through `selectRequest`, `requestSort`
+ * and `sortRequests`.
+ * The window's header actions are its chrome — the figures, Ask, the
+ * logging-rule button and Back — and a `tune` reader finds **Edit layout**
+ * beside them, which edits the window's layout on the subject it stands on.
+ * A load editing the URL window's layout drops any request the link names
+ * and opens the editor on the URL window. While its editor holds a change,
+ * every leave of the window asks first: its close, Back to the URL, the
+ * browser's Back, a search and a table row.
+ *
+ * The window's own controls are page state under a `url_` prefix, which a
+ * shut window resets, as `docs/dashboards.md` lists. The page runs every
  * command whose reply sets that state: the `?url=` / `?page_hash=` and
  * `?request=` deep-link resolvers, the title lookup for a hash the loaded
  * table page does not carry, the search box's exact-rid lookup and its
@@ -26,6 +41,7 @@
  */
 
 import {
+	memo,
 	useState,
 	useEffect,
 	useMemo,
@@ -39,7 +55,11 @@ import { __, sprintf } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import ComposedPageFrame from '@newspack-nodes/shared/composition/page/ComposedPageFrame';
-import { PageStateProvider } from '@newspack-nodes/shared/composition/page/pageState';
+import { editTarget } from '@newspack-nodes/shared/composition/page/editMode';
+import {
+	PageStateProvider,
+	usePageState,
+} from '@newspack-nodes/shared/composition/page/pageState';
 import {
 	SourcesProvider,
 	useSource,
@@ -50,25 +70,30 @@ import {
 	namedFields,
 	display,
 } from '@newspack-nodes/shared/blocks/sourceBlock';
+import { DEFAULT_CHART_METRIC, GROUPS, SORT_ORDERS } from './constants';
 import {
-	computeIndentedEntries,
-	spliceFoldedSpans,
-} from './utils/logEntryUtils';
+	DEFAULT_REQUEST_SORT,
+	REQUEST_SORT_FIELDS,
+	nextSort,
+} from './components/RequestTable';
+import { useQueryParamChoice } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import {
-	CHART_METRIC_OPTIONS,
-	DEFAULT_CHART_METRIC,
-	GROUPS,
-	SCOPED_BREAKDOWN_OPTIONS,
-	SORT_ORDERS,
-	SUBJECT_CHIP_OPTIONS,
-} from './constants';
-import { BLOCK_VIEWS, NO_CHIPS, RULES_CI, SERVER } from './sources';
-import { isValidHash, isValidRequestId } from './questions';
+	BLOCK_VIEWS,
+	NO_CHIPS,
+	RULES_CI,
+	SERVER,
+	WINDOW_BREAKDOWN,
+} from './sources';
 import { useFilter, useSite, useUrlsParams } from './blocks/pageQuestions';
+import { useRequestDetail, useUrlDetail } from './blocks/windowQuestions';
 import {
 	PERFORMANCE_CONTEXT,
 	PERFORMANCE_PAGE,
 	PERFORMANCE_PAGES,
+	REQUEST_WINDOW,
+	REQUEST_WINDOW_CONTEXT,
+	URL_WINDOW,
+	URL_WINDOW_CONTEXT,
 } from './performancePageData';
 import { composedPage } from '../composedPageData';
 import useUrlNavigation from './hooks/useUrlNavigation';
@@ -77,23 +102,16 @@ import {
 	linkedSubject,
 	sameSubject,
 	subjectArgs,
+	subjectDescriptor,
 	subjectLink,
 	subjectOfRow,
 } from './detailSubject';
 import {
-	useQueryParamChoice,
-	useQueryParamList,
-	useQueryParamState,
-} from '@newspack-nodes/shared/hooks/useQueryParamState';
-import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
+	holdPop,
+	setQueryParams,
+} from '@newspack-nodes/shared/utils/queryParams';
 import { requestedUrl, rulePath } from '../log-table/urlIdentity';
 import { useDismissable } from '@newspack-nodes/shared/hooks/useDismissable';
-import { chipRefusal, chipsOf } from './components/BreakdownControls';
-import UrlDetailView, {
-	DEFAULT_REQUEST_SORT,
-	REQUEST_SORT_FIELDS,
-} from './components/UrlDetailView';
-import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
 import PerformanceHeader, {
 	SearchFindings,
@@ -118,6 +136,9 @@ import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
 
+/** A window's layout, rendered again only when what it stands on moves. */
+const WindowFrame = memo( ComposedPageFrame );
+
 /** A held click has no element of its own, so only Escape dismisses it. */
 const NO_ELEMENT = { current: null };
 
@@ -132,35 +153,6 @@ function HeldClick( { onCancel } ) {
 	useDismissable( NO_ELEMENT, onCancel );
 	return null;
 }
-
-/**
- * Order two request rows by one column in one direction. A null duration,
- * one `dump_url` measured none of (decision 24), ranks LAST either way, as
- * the `urls` command ranks a URL without a timed request; such rows keep their
- * order among themselves. A row missing any other field counts as 0.
- *
- * @param {Object}                       a    A `dump_url` request row.
- * @param {Object}                       b    Another.
- * @param {{field: string, dir: string}} sort The column and `asc` or `desc`.
- * @return {number} The comparator's answer.
- */
-const compareRequests = ( a, b, { field, dir } ) => {
-	if ( 'duration_ms' === field ) {
-		const aMeasured = 'number' === typeof a.duration_ms;
-		if ( aMeasured !== ( 'number' === typeof b.duration_ms ) ) {
-			return aMeasured ? -1 : 1;
-		}
-		if ( ! aMeasured ) {
-			return 0;
-		}
-	}
-	const aVal = a[ field ] ?? 0;
-	const bVal = b[ field ] ?? 0;
-	if ( aVal === bVal ) {
-		return 0;
-	}
-	return ( aVal > bVal ? 1 : -1 ) * ( 'asc' === dir ? 1 : -1 );
-};
 
 /**
  * A search box with nothing answered under it: the lookup's miss or the grep's
@@ -183,92 +175,6 @@ const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
  * to 50.
  */
 const GREP_RESULT_LIMIT = 20;
-
-/**
- * The URL window chart's question until someone changes it: its status
- * classes, no second dimension and no chip.
- */
-const NO_DETAIL_CHART = {
-	breakdown: 'status_class',
-	thenBy: '',
-	chips: NO_CHIPS,
-};
-
-// The address-bar whitelists: what the dropdowns offer.
-const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
-const DETAIL_BREAKDOWNS = SCOPED_BREAKDOWN_OPTIONS.map(
-	( option ) => option.value
-);
-
-/**
- * The Then by choices under a Breakdown, as its select offers them: none, or
- * any other dimension.
- *
- * @param {string[]} breakdowns Every dimension the chart offers.
- * @param {string}   breakdown  The Breakdown chosen.
- * @return {string[]} The Then by whitelist.
- */
-const thenBysUnder = ( breakdowns, breakdown ) => [
-	'',
-	...breakdowns.filter( ( axis ) => axis !== breakdown ),
-];
-
-/**
- * The linked chip values the chip editor would take, spelled as it commits
- * them and each once; the rest drop, a `server=` among them, since the
- * Server select owns the server.
- *
- * @param {string[]}                              raw     Every value the
- *                                                        param holds, each
- *                                                        `field=value`.
- * @param {Array<{label: string, value: string}>} options The fields the
- *                                                        editor offers.
- * @return {string[]} The chips kept, or `NO_CHIPS` for none.
- */
-const restoreChips = ( raw, options ) => {
-	const kept = chipsOf(
-		raw.filter( ( chip ) => null === chipRefusal( chip, options ) )
-	);
-	return kept.length ? kept : NO_CHIPS;
-};
-
-/**
- * The window's charts: the subject's requests by the window chart's
- * dimensions, and its categories, each read only while the URL view shows.
- *
- * @param {Omit<Parameters<typeof UrlDetailView>[0], 'chartSlice'|'categoriesSlice'> & {serverFilter: string}} props `UrlDetailView`'s props, less the two chart slices, and the page's server filter.
- * @return {import('react').ReactElement} The URL view.
- */
-function UrlWindow( { serverFilter, ...props } ) {
-	const { subject, chart } = props;
-	const scope = { field: subject.field, hash: subject.hash };
-	const series = useSource( 'eln/url-chart', {
-		subject: scope,
-		server: serverFilter,
-		chips: chart.chips,
-		breakdown: chart.breakdown,
-		then: chart.thenBy,
-	} );
-	const categories = useSource( 'eln/url-categories', {
-		subject: scope,
-		server: serverFilter,
-	} );
-	return (
-		<UrlDetailView
-			{ ...props }
-			chartSlice={ {
-				data: series.model?.data ?? null,
-				loading: series.loading,
-				error: series.error,
-			} }
-			categoriesSlice={ {
-				data: categories.model?.data ?? null,
-				loading: categories.loading,
-				error: categories.error,
-			} }
-		/>
-	);
-}
 
 /**
  * The window's header figures, each one `eln/url-detail` declares shown for
@@ -325,6 +231,16 @@ export default function PerformancePage( props ) {
  */
 function PerformanceSurface( { onError, headerControlsSlot } ) {
 	const { canTune, canManage, compositions } = composedPage();
+	// Editing the URL window's layout opens no request: drop it unread.
+	useState( () => {
+		if (
+			canTune &&
+			URL_WINDOW ===
+				editTarget( window.location.search, PERFORMANCE_PAGES )?.page
+		) {
+			setQueryParams( { request: null } );
+		}
+	} );
 	const urlsSlice = useSource( 'eln/urls', useUrlsParams() ).model;
 	const { servers: serverNames } = useSite();
 
@@ -379,106 +295,99 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		deepLink.subject ||
 		deepLink.requestId
 	);
-	// The window's state stays off the bar while it is shut.
-	const windowParam = { written: windowOpen };
-	const [ detailBucket, setDetailBucket ] = useQueryParamState(
-		'url_bucket',
-		( raw ) => raw ?? '',
-		String,
-		windowParam
-	);
-	const [ detailMetric, setDetailMetric ] = useQueryParamChoice(
-		'url_metric',
-		CHART_METRICS,
-		DEFAULT_CHART_METRIC,
-		windowParam
-	);
-	const [ detailBreakdown, setDetailBreakdown ] = useQueryParamChoice(
-		'url_breakdown',
-		DETAIL_BREAKDOWNS,
-		NO_DETAIL_CHART.breakdown,
-		windowParam
-	);
-	const [ detailThenBy, setDetailThenBy ] = useQueryParamChoice(
-		'url_then',
-		thenBysUnder( DETAIL_BREAKDOWNS, detailBreakdown ),
-		NO_DETAIL_CHART.thenBy,
-		windowParam
-	);
-	// A linked window's chips are judged by the field its link keys on.
-	const [ detailChips, setDetailChips ] = useQueryParamList(
-		'url_chip',
-		( raw ) =>
-			restoreChips(
-				raw,
-				SUBJECT_CHIP_OPTIONS[ linkedSubject()?.field ?? 'url' ]
-			),
-		( chips ) => chips,
-		windowParam
-	);
+	// The list's order outlives the window, kept off the bar while it is shut.
+	const sortParam = { written: windowOpen };
 	const [ sortField, setSortField ] = useQueryParamChoice(
 		'url_sort',
 		REQUEST_SORT_FIELDS,
 		DEFAULT_REQUEST_SORT.field,
-		windowParam
+		sortParam
 	);
 	const [ sortDir, setSortDir ] = useQueryParamChoice(
 		'url_order',
 		SORT_ORDERS,
 		DEFAULT_REQUEST_SORT.dir,
-		windowParam
-	);
-	// Same values, same object: the graph re-asks on a new one.
-	const detailFilters = useMemo(
-		() => ( { bucket: detailBucket } ),
-		[ detailBucket ]
-	);
-	const detailChart = useMemo(
-		() => ( {
-			breakdown: detailBreakdown,
-			thenBy: detailThenBy,
-			chips: detailChips,
-		} ),
-		[ detailBreakdown, detailThenBy, detailChips ]
+		sortParam
 	);
 	const requestSort = useMemo(
 		() => ( { field: sortField, dir: sortDir } ),
 		[ sortField, sortDir ]
 	);
-
-	// @longform The window's reads, asking nothing while it is shut: the URL's
-	// answer stays on screen while a narrowed one is asked, but never under
-	// another subject's title, and a hash or rid no command may carry shows
-	// as the window's refusal instead of asking.
-	const detailRead = useSource( 'eln/url-detail', {
-		subject: selectedSubject && {
-			field: selectedSubject.field,
-			hash: selectedSubject.hash,
+	/**
+	 * Sort the URL window's list by one column, as `nextSort()` orders it.
+	 *
+	 * @param {string} field Field key to sort by.
+	 */
+	const sortRequests = useCallback(
+		( field ) => {
+			const next = nextSort( requestSort, field );
+			setSortDir( next.dir );
+			setSortField( next.field );
 		},
-		server: serverFilter,
-		buckets: detailBucket,
-		chips: detailChips,
-	} );
-	const badHash = !! selectedSubject && ! isValidHash( selectedSubject.hash );
-	const urlDetailSlice = useMemo(
-		() => ( {
-			data: badHash ? null : detailRead.model?.data ?? null,
-			loading: detailRead.loading,
-			error: badHash ? 'Invalid URL hash format' : detailRead.error,
-		} ),
-		[ badHash, detailRead.model, detailRead.loading, detailRead.error ]
+		[ requestSort, setSortField, setSortDir ]
 	);
-	const requestRead = useSource( 'eln/request-detail', {
-		request: selectedRequest,
+	// What a window leave asks while the window's editor holds a change.
+	const windowGuard = useRef( null );
+	/**
+	 * Hold every leave of the window — its close, Back to the URL, the
+	 * browser's Back, a search or a table row — to what `guard` answers,
+	 * until the returned release runs.
+	 *
+	 * @param {(next: {leave: () => void}) => boolean} guard What a leave is told.
+	 * @return {() => void} Withdraws it.
+	 */
+	const guardWindowLeave = useCallback( ( guard ) => {
+		windowGuard.current = guard;
+		const releasePop = holdPop(
+			( incoming, proceed ) => ! guard( { leave: proceed } )
+		);
+		return () => {
+			releasePop();
+			if ( windowGuard.current === guard ) {
+				windowGuard.current = null;
+			}
+		};
+	}, [] );
+	/**
+	 * Leave the window as `leave` does, once its guard, if one stands, agrees;
+	 * where it asks the curator first, `leave` runs on a Discard alone.
+	 *
+	 * @param {() => void} leave The leave.
+	 */
+	const leaveWindow = useCallback( ( leave ) => {
+		const guard = windowGuard.current;
+		if ( ! guard || guard( { leave } ) ) {
+			leave();
+		}
+	}, [] );
+	// The window's narrowing and chart, which a new or shut window resets.
+	const [ detailBucket, setDetailBucket ] = usePageState( 'url_buckets', {
+		writes: true,
 	} );
-	const badRid = !! selectedRequest && ! isValidRequestId( selectedRequest );
-	const requestDetailSlice = useMemo(
-		() => ( {
-			data: badRid ? null : requestRead.model,
-			error: badRid ? 'Invalid request ID format' : requestRead.error,
-		} ),
-		[ badRid, requestRead.model, requestRead.error ]
+	const [ detailChips, setDetailChips ] = usePageState( 'url_chips', {
+		writes: true,
+	} );
+	const [ , setDetailMetric ] = usePageState( 'url_metric', {
+		writes: true,
+	} );
+	const [ , setDetailBreakdown ] = usePageState( 'url_breakdown', {
+		writes: true,
+	} );
+	const [ , setDetailThenBy ] = usePageState( 'url_then', {
+		writes: true,
+	} );
+	// Same values, same object: the graph re-asks on a new one.
+	const detailFilters = useMemo(
+		() => ( { bucket: detailBucket } ),
+		[ detailBucket ]
 	);
+	// @longform The window's reads, asking nothing until its subject answers:
+	// the URL's answer stays on screen while a narrowed one is asked, but
+	// never under another subject's title, and a hash no command may carry
+	// shows as the window's refusal instead of asking. Its blocks read the
+	// same keys, so one fetch serves the header and the body.
+	const urlDetailSlice = useUrlDetail( !! selectedSubject );
+	const requestDetailSlice = useRequestDetail( !! selectedRequest );
 	const urlDetail = urlDetailSlice.data;
 	const requestDetail = requestDetailSlice.data;
 	// The URL window's model on screen, which a one-request click records.
@@ -495,8 +404,8 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		( bucket, chips ) => {
 			setDetailBucket( bucket );
 			setDetailChips( chips );
-			setDetailBreakdown( NO_DETAIL_CHART.breakdown );
-			setDetailThenBy( NO_DETAIL_CHART.thenBy );
+			setDetailBreakdown( WINDOW_BREAKDOWN );
+			setDetailThenBy( '' );
 			setDetailMetric( DEFAULT_CHART_METRIC );
 		},
 		[
@@ -545,10 +454,10 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 				? {
 						...urlFilters,
 						...detailFilters,
-						filter: detailChart.chips,
+						filter: detailChips,
 				  }
 				: urlFilters,
-		[ selectedSubject, urlFilters, detailFilters, detailChart.chips ]
+		[ selectedSubject, urlFilters, detailFilters, detailChips ]
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
@@ -597,25 +506,32 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 	 * @param {Object} row The row: a page or a shape, with its `count`.
 	 */
 	const openSubject = useCallback(
-		( row ) => {
-			const subject = subjectOfRow( row );
-			setOneRequest(
-				1 === row.count
-					? { subject, before: urlDetailSliceRef.current }
-					: null
-			);
-			selectRequest( null );
-			const chips = withoutChips(
-				urlFilters?.filter ?? [],
-				subject.field
-			);
-			resetDetail(
-				urlFilters?.bucket ?? '',
-				chips.length ? chips : NO_CHIPS
-			);
-			selectSubjectNow( subject );
-		},
-		[ selectRequest, selectSubjectNow, urlFilters, resetDetail ]
+		( row ) =>
+			leaveWindow( () => {
+				const subject = subjectOfRow( row );
+				setOneRequest(
+					1 === row.count
+						? { subject, before: urlDetailSliceRef.current }
+						: null
+				);
+				selectRequest( null );
+				const chips = withoutChips(
+					urlFilters?.filter ?? [],
+					subject.field
+				);
+				resetDetail(
+					urlFilters?.bucket ?? '',
+					chips.length ? chips : NO_CHIPS
+				);
+				selectSubjectNow( subject );
+			} ),
+		[
+			leaveWindow,
+			selectRequest,
+			selectSubjectNow,
+			urlFilters,
+			resetDetail,
+		]
 	);
 
 	// @longform A row of one request opens that request, its rid named by the
@@ -667,23 +583,6 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		setOneRequest( null );
 		selectSubject( null );
 	}, [ selectSubject ] );
-
-	/**
-	 * Sort the URL modal's request table by one column. Clicking the column
-	 * already sorted descending flips it to ascending; every other click sorts
-	 * descending.
-	 *
-	 * @param {string} field Field key to sort by.
-	 */
-	const handleRequestSort = useCallback(
-		( field ) => {
-			setSortDir(
-				sortField === field && 'desc' === sortDir ? 'asc' : 'desc'
-			);
-			setSortField( field );
-		},
-		[ sortField, sortDir, setSortField, setSortDir ]
-	);
 
 	/**
 	 * Ask `dump_url` for the title of a hash the loaded catalog page does not
@@ -849,19 +748,24 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 				} );
 				return;
 			}
-			applyFoundRequest( args[ 0 ], result );
-			// A narrowed window could hide the very request searched for.
-			resetDetail( '', NO_CHIPS );
-			setSearchQuery( '' );
-			// Drops ?search= too; the selection's push then adds nothing.
-			setQueryParams(
-				{
-					search: null,
-					...subjectLink( { field: 'url', hash: result.url_hash } ),
-					request: args[ 0 ],
-				},
-				{ push: true }
-			);
+			leaveWindow( () => {
+				applyFoundRequest( args[ 0 ], result );
+				// A narrowed window could hide the very request searched for.
+				resetDetail( '', NO_CHIPS );
+				setSearchQuery( '' );
+				// Drops ?search= too; the selection's push then adds nothing.
+				setQueryParams(
+					{
+						search: null,
+						...subjectLink( {
+							field: 'url',
+							hash: result.url_hash,
+						} ),
+						request: args[ 0 ],
+					},
+					{ push: true }
+				);
+			} );
 		},
 	} );
 
@@ -976,49 +880,6 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 			}
 		},
 		[ abandonRequestSearch, abandonGrep ]
-	);
-
-	/**
-	 * The URL's requests in the order the modal's table shows them.
-	 *
-	 * Sorting happens here rather than on the server because the modal already
-	 * holds the rows `dump_url` returned, so a column click costs no fetch. A
-	 * row missing the sort field counts as 0 and still takes a position; a
-	 * duration that was never measured ranks last (`compareRequests()`).
-	 */
-	const sortedRequests = useMemo( () => {
-		if ( ! urlDetail?.requests ) {
-			return [];
-		}
-		const sorted = [ ...urlDetail.requests ];
-		sorted.sort( ( a, b ) => compareRequests( a, b, requestSort ) );
-		return sorted;
-	}, [ urlDetail?.requests, requestSort ] );
-
-	// The list is asked afresh, so the rows it holds answer the old filters.
-	const detailListing = !! urlDetailSlice?.loading;
-
-	// `Flame_Builder_Node` builds the tree; nothing here derives one.
-	const requestFlameData = requestDetail?.flame_data ?? null;
-
-	/**
-	 * The entry rows the table renders, and how many of them are real.
-	 *
-	 * Every stored entry is numbered `i` first, which the table finds rows by,
-	 * and a folded request's merged tree splices in where its entries were, so
-	 * the indent walk reads one list either way. `realEntryCount` excludes the
-	 * placeholder rows `computeIndentedEntries` inserts to span time gaps,
-	 * which is what the header counts.
-	 */
-	const { entries: indentedEntries, realCount: realEntryCount } = useMemo(
-		() =>
-			computeIndentedEntries(
-				spliceFoldedSpans(
-					requestDetail?.entries,
-					requestDetail?.flame
-				)
-			),
-		[ requestDetail?.entries, requestDetail?.flame ]
 	);
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
@@ -1181,6 +1042,51 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		busySubject: holdingWindow ? oneRequest.subject : null,
 	};
 
+	// The request window's log publishes its `reveal` here for the flame.
+	const revealRef = useRef( null );
+	// A link straight to a request asks no URL chart while it is being found.
+	const windowAsks = ! deepLink.requestId;
+	// One object while its inputs hold: no poll behind it re-renders a block.
+	const windowStanding = useMemo(
+		() => ( {
+			selectRequest,
+			revealRef,
+			requestSort,
+			sortRequests,
+			windowAsks,
+		} ),
+		[ selectRequest, requestSort, sortRequests, windowAsks ]
+	);
+	// The window header's box its layout menu goes in, once it mounts.
+	const [ windowSlot, setWindowSlot ] = useState( null );
+	/**
+	 * A window's layout, standing on the window and its header's box.
+	 *
+	 * @param {string} context The window's context.
+	 * @param {string} page    Its name, which `?edit=` names.
+	 * @param {string} group   The surface its commands are sent for.
+	 * @return {import('react').ReactElement} The layout.
+	 */
+	const windowLayout = ( context, page, group ) => (
+		<WindowFrame
+			context={ context }
+			page={ page }
+			pages={ PERFORMANCE_PAGES }
+			group={ group }
+			canTune={ canTune }
+			canManage={ canManage }
+			layout={ compositions[ context ] }
+			views={ BLOCK_VIEWS }
+			standing={ windowStanding }
+			headerControlsSlot={ windowSlot }
+			guardLeave={ guardWindowLeave }
+		/>
+	);
+	// The box closing each header's actions, which the layout menu fills.
+	const windowSlotBox = (
+		<div ref={ setWindowSlot } style={ { display: 'contents' } } />
+	);
+
 	return (
 		<div className="event-logger-performance-dashboard">
 			{ /* Facts only, no instructions: anything reading this page gets
@@ -1201,7 +1107,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 								url: ruleUrl,
 							},
 							urlDetail,
-							detailChips: detailChart.chips,
+							detailChips,
 							detailFilters,
 							selectedRequest,
 							requestDetail,
@@ -1266,8 +1172,10 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 						if ( ruleDraft ) {
 							return;
 						}
-						selectSubject( null );
-						selectRequest( null );
+						leaveWindow( () => {
+							selectSubject( null );
+							selectRequest( null );
+						} );
 					} }
 					className={ `event-logger-performance-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }` }
 					headerActions={
@@ -1277,7 +1185,11 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 								<button
 									type="button"
 									className="button is-plain event-logger-modal-back-button"
-									onClick={ () => selectRequest( null ) }
+									onClick={ () =>
+										leaveWindow( () =>
+											selectRequest( null )
+										)
+									}
 									aria-label={ __(
 										'Back to URL details',
 										'newspack-event-logger-nodes'
@@ -1285,11 +1197,14 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 								>
 									&larr;
 								</button>
+								{ windowSlotBox }
 							</>
 						) : (
 							<>
 								{ urlDetail && (
-									<WindowStats model={ detailRead.model } />
+									<WindowStats
+										model={ urlDetailSlice.model }
+									/>
 								) }
 								<AskButton ask={ ask } />
 								<div className="event-logger-rule-control">
@@ -1325,6 +1240,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 										</span>
 									) }
 								</div>
+								{ windowSlotBox }
 							</>
 						)
 					}
@@ -1352,41 +1268,22 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 						</p>
 					) }
 
-					{ ! selectedRequest && urlDetail && (
-						<UrlWindow
-							serverFilter={ serverFilter }
-							urlDetail={ urlDetail }
-							sortedRequests={ sortedRequests }
-							requestSort={ requestSort }
-							onRequestSort={ handleRequestSort }
-							onSelectRequest={ selectRequest }
-							subject={ selectedSubject }
-							filters={ detailFilters }
-							onBucketChange={ setDetailBucket }
-							listing={ detailListing }
-							listError={ urlDetailSlice.error }
-							chart={ detailChart }
-							onBreakdownChange={ setDetailBreakdown }
-							onThenByChange={ setDetailThenBy }
-							onChipsChange={ setDetailChips }
-							metric={ detailMetric }
-							onMetricChange={ setDetailMetric }
-						/>
-					) }
-
-					{ /* Request Details View */ }
-					{ selectedRequest && requestDetail && (
-						<RequestDetailView
-							requestDetail={ requestDetail }
-							flameData={ requestFlameData }
-							indentedEntries={ indentedEntries }
-							realEntryCount={ realEntryCount }
-							rid={ selectedRequest }
-						/>
+					{ /* Each window's layout stands while the window does. */ }
+					{ ! selectedRequest && (
+						<div
+							className="event-logger-sections"
+							data-ask={ subjectDescriptor( selectedSubject ) }
+						>
+							{ windowLayout(
+								URL_WINDOW_CONTEXT,
+								URL_WINDOW,
+								GROUPS.url
+							) }
+						</div>
 					) }
 
 					{ /* A selected request with nothing to show is a state,
-					     never a blank panel: both sections gate on the pair. */ }
+					     never a blank panel. */ }
 					{ selectedRequest && ! requestDetail && (
 						<p
 							className={ `newspack-nodes-status${
@@ -1407,6 +1304,19 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 										'newspack-event-logger-nodes'
 								  ) }
 						</p>
+					) }
+					{ /* The picker chain: DOM nesting names the request. */ }
+					{ selectedRequest && (
+						<div
+							className="event-logger-request-detail event-logger-sections"
+							data-ask={ `request:${ selectedRequest }` }
+						>
+							{ windowLayout(
+								REQUEST_WINDOW_CONTEXT,
+								REQUEST_WINDOW,
+								GROUPS.request
+							) }
+						</div>
 					) }
 				</Modal>
 			) }

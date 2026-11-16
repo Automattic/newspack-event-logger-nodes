@@ -73,6 +73,20 @@ export const subjectLink = ( subject ) =>
 	);
 
 /**
+ * The subject a window's page state names: its URL, else its page.
+ *
+ * @param {string} url  The `url` key.
+ * @param {string} page The `page_hash` key.
+ * @return {?{field: string, hash: string}} The subject, or null for none.
+ */
+export const subjectOfLink = ( url, page ) => {
+	if ( url ) {
+		return { field: 'url', hash: url };
+	}
+	return page ? { field: 'page', hash: page } : null;
+};
+
+/**
  * The subject the address bar links, the first of `SUBJECT_PARAMS` it holds.
  *
  * @return {?{field: string, hash: string}} The subject, or null for none.

@@ -184,3 +184,124 @@ export const sentOn = ( wire, name ) =>
 		.flat()
 		.filter( ( m ) => name === m[ VALUE ]?.name )
 		.map( ( m ) => m[ VALUE ].arguments ?? [] );
+
+/** The request the URL window lists and the request window opens. */
+export const RID = 'rid-kokako-7921';
+
+/** What `dump_url` answers for the first row's URL. */
+export const DUMP_URL = {
+	stats: {
+		hash: 'a17e',
+		url: URL_ROWS[ 0 ].url,
+		count: 3,
+		requests_per_second: 0.07,
+		errors: 1,
+		error_rate: 0.3333,
+		avg_ms: 212,
+		p50_ms: 140,
+		p95_ms: 700,
+		p99_ms: 880,
+		avg_peak_mb: 6.5,
+	},
+	requests: [
+		{
+			rid: RID,
+			timestamp: NOW_MS / 1000 - 300,
+			method: 'GET',
+			status_code: 200,
+			error_status: '-',
+			duration_ms: 904,
+			peak_mb: 7.5,
+		},
+		{
+			rid: 'rid-hoiho-7922',
+			timestamp: NOW_MS / 1000 - 200,
+			method: 'POST',
+			status_code: 500,
+			error_status: 'F',
+			duration_ms: 31,
+			peak_mb: 5.5,
+		},
+	],
+	aggregate_flame: {
+		name: 'root',
+		value: 212,
+		children: [ { name: 'hooks', value: 140, children: [] } ],
+	},
+	aggregate_profiles: {
+		categories: {
+			db: { time: 95.1, count: 3 },
+			hooks: { time: 40.5, count: 7 },
+		},
+		total_time: 135.6,
+		count: 3,
+	},
+	aggregate_owners: [
+		{
+			owner: 'plugin:heron-7923',
+			ms_per_request: 187.5,
+			share: 0.424,
+			calls_per_request: 41,
+		},
+	],
+};
+
+/** What `dump_request` answers for `RID`. */
+export const DUMP_REQUEST = {
+	request_url: '/piwakawaka-7915/?kea=7924',
+	request_method: 'GET',
+	timestamp: NOW_MS / 1000 - 300,
+	duration_ms: 904,
+	peak_mb: 7.5,
+	status_code: 200,
+	error_status: 'T',
+	profiles: {
+		db: { time: 95.1, count: 3 },
+		hooks: { time: 40.5, count: 7 },
+	},
+	owners: [
+		{
+			owner: 'plugin:heron-7923',
+			ms: 187.5,
+			share: 0.424,
+			calls: 41,
+		},
+	],
+	findings: [],
+	entries: [
+		{ n: 1, k: 'process (start)', m: 'kea 7925', ts: NOW_MS / 1000 - 300 },
+		{ n: 2, k: 'init (start)', ts: NOW_MS / 1000 - 299.9 },
+		{ n: 3, k: 'init (complete)', ts: NOW_MS / 1000 - 299.5 },
+		{
+			n: 4,
+			k: 'process (complete)',
+			m: '(904ms)',
+			ts: NOW_MS / 1000 - 299.1,
+		},
+	],
+	flame_data: {
+		name: 'root',
+		value: 904,
+		children: [ { name: 'init', value: 400, n: 2, children: [] } ],
+	},
+};
+
+/**
+ * The seeded answer to a command the URL and request windows send, else
+ * what `replyFor()` answers; the ruleset names no rule, so the window
+ * offers one.
+ *
+ * @param {Array} m A posted command Message.
+ * @return {*} The answer.
+ */
+export function windowReplyFor( m ) {
+	const { name } = m[ VALUE ] ?? {};
+	return (
+		{
+			dump_url: DUMP_URL,
+			dump_request: DUMP_REQUEST,
+			search_requests: { url_hash: 'a17e' },
+			dump: { rules: [] },
+		}[ name ] ?? replyFor( m )
+	);
+}

@@ -10,7 +10,7 @@
  * added later is held to the contract without being named here. A
  * `@wordpress/components` Modal carries the canonical modal, skin-root, theme and UI
  * classes on its own `className`; the substrate's shared Modal portals
- * through `ModalPortal`, whose host wears the skin, theme and UI roots.
+ * through `BodyPortal`, whose host wears the skin, theme and UI roots.
  * Neither context borrows `.topology-app`. The skin, theme and UI classes are
  * the substrate's `SKIN_ROOT_CLASSES`, so a frame composes them from that
  * import and spells none of the three by hand.
@@ -318,7 +318,7 @@ describe( 'dashboard Modal theme class', () => {
 			'utf8'
 		);
 		const portal = shared.slice(
-			shared.indexOf( 'export function ModalPortal' ),
+			shared.indexOf( 'export function BodyPortal' ),
 			shared.indexOf( 'export const ModalTitleId' )
 		);
 		expect( portal ).toContain( 'className={ SKIN_ROOT_CLASSES }' );

@@ -5,15 +5,18 @@
  *
  * One table names every composed page — Performance, the Request Log, the
  * Error Log and the Gyroscope — by the name `?edit=` gives it: its admin
- * slug and titles, the bundle its screen loads, its block cap, and what its
- * page data adds to what every page reads. Each lays out the context
- * `newspack-event-logger-nodes/<page>`, whose default layout is
- * `layouts/<page>.html` and which admits every shared block a source here
+ * slug and titles, the bundle its screen loads, the layouts it lays out
+ * with each one's block cap, and what its page data adds to what every page
+ * reads. A page lays out its own layout, and Performance its URL and
+ * request windows beside it. Each layout is the context
+ * `newspack-event-logger-nodes/<layout>`, whose default layout is
+ * `layouts/<layout>.html` and which admits every shared block a source here
  * feeds, which leaves out the table. `declare()`, on
  * `Composition::FILTER`, declares those contexts and the blocks the
- * Performance page owns. A page's load sets `page_data()` before its bundle,
- * as an inline script of its own, and loads its bundle's layout editor on a
- * load whose `?edit=` names the page, for a `tune` caller alone.
+ * Performance page and its windows own. A page's load sets `page_data()`
+ * before its bundle, as an inline script of its own, and loads its bundle's
+ * layout editor on a load whose `?edit=` names one of its layouts, for a
+ * `tune` caller alone.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -49,18 +52,35 @@ final class Compositions {
 		'newspack-nodes/section',
 	];
 
-	/** Each block the Performance page owns => its title; each stands once. */
+	/**
+	 * Each block the Performance page and its windows own => its title and
+	 * the layout it stands on; each stands once.
+	 */
 	private const BLOCKS = [
-		'breakdown-bar'   => 'Breakdown bar',
-		'aggregate-chart' => 'Aggregate chart',
-		'category-chart'  => 'Category charts',
-		'profile'         => 'Time breakdown',
-		'url-table'       => 'URL table',
+		'breakdown-bar'      => [ 'Breakdown bar', 'performance' ],
+		'aggregate-chart'    => [ 'Aggregate chart', 'performance' ],
+		'category-chart'     => [ 'Category charts', 'performance' ],
+		'profile'            => [ 'Time breakdown', 'performance' ],
+		'url-table'          => [ 'URL table', 'performance' ],
+		'url-narrowing'      => [ 'Narrowing note', 'url-detail' ],
+		'url-chart'          => [ 'Request chart', 'url-detail' ],
+		'url-category-chart' => [ 'Category charts', 'url-detail' ],
+		'url-response-times' => [ 'Response times', 'url-detail' ],
+		'url-trace'          => [ 'Aggregate flame graph', 'url-detail' ],
+		'url-flame-cut'      => [ 'Flame lookup note', 'url-detail' ],
+		'url-profile'        => [ 'Time breakdown', 'url-detail' ],
+		'url-requests'       => [ 'Recent requests', 'url-detail' ],
+		'request-summary'    => [ 'Summary', 'request-detail' ],
+		'request-findings'   => [ 'Findings', 'request-detail' ],
+		'request-trace'      => [ 'Request trace', 'request-detail' ],
+		'request-flame-cut'  => [ 'Flame lookup note', 'request-detail' ],
+		'request-profile'    => [ 'Time breakdown', 'request-detail' ],
+		'request-entries'    => [ 'Log entries', 'request-detail' ],
 	];
 
 	/**
-	 * Declare the namespace on `Composition::FILTER`: every page's context,
-	 * and the blocks the Performance page owns.
+	 * Declare the namespace on `Composition::FILTER`: every layout's context,
+	 * and the blocks the Performance page and its windows own.
 	 *
 	 * @param array<mixed> $declared What the filter holds so far.
 	 * @return array<mixed>
@@ -68,17 +88,19 @@ final class Compositions {
 	public static function declare( array $declared ): array {
 		$contexts = [];
 		foreach ( self::pages() as $page ) {
-			$contexts[ $page['context'] ] = [
-				'default'    => $page['default'],
-				'max_blocks' => $page['max_blocks'],
-				'admits'     => self::ADMITS,
-			];
+			foreach ( $page['layouts'] as $layout ) {
+				$contexts[ $layout['context'] ] = [
+					'default'    => $layout['default'],
+					'max_blocks' => $layout['max_blocks'],
+					'admits'     => self::ADMITS,
+				];
+			}
 		}
 		$blocks = [];
-		foreach ( self::BLOCKS as $name => $title ) {
+		foreach ( self::BLOCKS as $name => [ $title, $layout ] ) {
 			$blocks[ self::NAMESPACE . "/{$name}" ] = [
 				'title'      => $title,
-				'contexts'   => [ self::pages()['performance']['context'] ],
+				'contexts'   => [ self::NAMESPACE . "/{$layout}" ],
 				'attributes' => [],
 				'multiple'   => false,
 			];
@@ -107,7 +129,7 @@ final class Compositions {
 	/**
 	 * Set the page data of the page at `$slug` ahead of its bundle `$handle`,
 	 * escaped for a script element, then load its bundle's layout editor when
-	 * `?edit=` names the page, for a `tune` caller alone.
+	 * `?edit=` names one of its layouts, for a `tune` caller alone.
 	 *
 	 * @param string $slug      The admin page's slug.
 	 * @param string $handle    The page bundle's script handle.
@@ -126,13 +148,13 @@ final class Compositions {
 		\wp_add_inline_script( $handle, 'window.' . self::GLOBAL . " = {$json};", 'before' );
 		$row    = self::pages()[ $page ];
 		$editor = "{$row['bundle']}-editor";
-		Composition::enqueue_editor( [ $page => $row['context'] ], self::NAMESPACE . "-{$editor}", "{$build_dir}/{$editor}", "{$build_url}/{$editor}" );
+		Composition::enqueue_editor( \array_column( $row['layouts'], 'context', 'name' ), self::NAMESPACE . "-{$editor}", "{$build_dir}/{$editor}", "{$build_url}/{$editor}" );
 	}
 
 	/**
 	 * What a page reads: which page it is, whether the caller may curate its
-	 * layout and read a refusal's own words, its context's layout or its
-	 * refusal, and what its row adds — the Performance page's stats window.
+	 * layouts and read a refusal's own words, each layout or its refusal by
+	 * context, and what its row adds — the Performance page's stats window.
 	 *
 	 * @param string $page The page, as `?edit=` names it.
 	 * @return array<string,mixed>
@@ -149,7 +171,7 @@ final class Compositions {
 			'page'         => $page,
 			'canTune'      => Capabilities::can( Capabilities::TUNE ),
 			'canManage'    => Capabilities::can( Capabilities::MANAGE ),
-			'compositions' => Composition_Store::page_data( [ $row['context'] ] ),
+			'compositions' => Composition_Store::page_data( \array_column( $row['layouts'], 'context' ) ),
 		] + ( null === $row['data'] ? [] : ( $row['data'] )() );
 	}
 
@@ -173,34 +195,43 @@ final class Compositions {
 	/**
 	 * Each page, as `?edit=` names it => its row: its admin slug and titles;
 	 * the bundle its screen loads, whose `<bundle>-editor` is its layout
-	 * editor; its block cap; what its page data adds, or null; and the
-	 * context it lays out and that context's default layout.
+	 * editor; what its page data adds, or null; and its layouts, its own
+	 * first, each by the name `?edit=` gives it, with its block cap, the
+	 * context it is and that context's default layout.
 	 *
 	 * The Performance page holds 64 blocks, its default's six with room for a
-	 * curator's own; a log page 16, its stream and the notes and figures
-	 * around it, because each log-stream block on another source opens a
-	 * stream of its own on the page's one link.
+	 * curator's own; each of its windows 32, room past its default's eight
+	 * or six; a log page 16, its stream and the notes and figures around it,
+	 * because each log-stream block on another source opens a stream of its
+	 * own on the page's one link.
 	 *
-	 * @return array<string,array{slug: string, title: string, menu_title: string, bundle: string, max_blocks: int, data: ?\Closure(): array<string,mixed>, context: string, default: string}>
+	 * @return array<string,array{slug: string, title: string, menu_title: string, bundle: string, data: ?\Closure(): array<string,mixed>, layouts: list<array{name: string, max_blocks: int, context: string, default: string}>}>
 	 */
 	private static function pages(): array {
 		$rows  = [
-			'performance' => [ 'event-logger-overview', 'Performance Dashboard', 'Performance', 'overview', 64, static fn (): array => [ 'window' => self::window() ] ],
-			'request-log' => [ 'event-logger-requests', 'Request Log', 'Request Log', 'log-pages', 16, null ],
-			'error-log'   => [ 'event-logger-errors', 'Error Log', 'Errors', 'log-pages', 16, null ],
-			'gyroscope'   => [ 'event-logger-gyroscope', 'Gyroscope', 'Gyroscope', 'log-pages', 16, null ],
+			'performance' => [ 'event-logger-overview', 'Performance Dashboard', 'Performance', 'overview', [ 'performance' => 64, 'url-detail' => 32, 'request-detail' => 32 ], static fn (): array => [ 'window' => self::window() ] ],
+			'request-log' => [ 'event-logger-requests', 'Request Log', 'Request Log', 'log-pages', [ 'request-log' => 16 ], null ],
+			'error-log'   => [ 'event-logger-errors', 'Error Log', 'Errors', 'log-pages', [ 'error-log' => 16 ], null ],
+			'gyroscope'   => [ 'event-logger-gyroscope', 'Gyroscope', 'Gyroscope', 'log-pages', [ 'gyroscope' => 16 ], null ],
 		];
 		$pages = [];
-		foreach ( $rows as $page => [ $slug, $title, $menu_title, $bundle, $max_blocks, $data ] ) {
+		foreach ( $rows as $page => [ $slug, $title, $menu_title, $bundle, $caps, $data ] ) {
+			$layouts = [];
+			foreach ( $caps as $name => $max_blocks ) {
+				$layouts[] = [
+					'name'       => $name,
+					'max_blocks' => $max_blocks,
+					'context'    => self::NAMESPACE . "/{$name}",
+					'default'    => \dirname( __DIR__, 2 ) . "/layouts/{$name}.html",
+				];
+			}
 			$pages[ $page ] = [
 				'slug'       => $slug,
 				'title'      => $title,
 				'menu_title' => $menu_title,
 				'bundle'     => $bundle,
-				'max_blocks' => $max_blocks,
 				'data'       => $data,
-				'context'    => self::NAMESPACE . "/{$page}",
-				'default'    => \dirname( __DIR__, 2 ) . "/layouts/{$page}.html",
+				'layouts'    => $layouts,
 			];
 		}
 		return $pages;

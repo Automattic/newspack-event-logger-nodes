@@ -8,8 +8,12 @@
  * which narrow the charts, the URL table and the totals; the chart's
  * `metric`, `breakdown` and `then`; the URL table's `sort`, `order`, `q`,
  * `workers` and `paged`; the window's subject, `url` or `page_hash`, and its
- * `request`, each a Back entry; and the cadence every poll asks at,
+ * `request`, each a Back entry; the URL window's own narrowing and chart,
+ * `url_buckets`, `url_chips`, `url_metric`, `url_breakdown` and `url_then`,
+ * each under its `url_` param; and the cadence every poll asks at,
  * `refresh`, which a first visit reads from the choice the browser kept.
+ * The list's order, `?url_sort=` and `?url_order=`, is the page's own,
+ * which it keeps off the bar while the window is shut.
  *
  * Four polls answer the page, in the `overview` group, at that cadence:
  * `eln/overview`, the site's servers, leaderboard and owners; `eln/urls`,
@@ -21,8 +25,10 @@
  * same cadence: `eln/url-detail`, keyed by its subject and its own
  * narrowing, and its two charts, `eln/url-chart` and `eln/url-categories`;
  * each keeps nothing of another subject. A command answers the request
- * window, `eln/request-detail`, keyed by its request. A key naming nothing a
- * command may carry asks nothing. Every stats poll asks once however long
+ * window, `eln/request-detail`, keyed by its request. Each window source
+ * declares the page state it is read with, so any block on a window's layout
+ * reads it as the window's own blocks do. A key naming nothing a command may
+ * carry asks nothing. Every stats poll asks once however long
  * its answer takes, a chipped page answering in tens of seconds, and the
  * poll that retires the ask asks again.
  */
@@ -35,7 +41,8 @@ import { readStorage } from '@newspack-nodes/shared/utils/storage';
 import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 import { serverName } from '../log-table/urlIdentity';
 import { chipRefusal, chipsOf } from './components/BreakdownControls';
-import { windowSpan } from './chartSlots';
+import { linkedSubject } from './detailSubject';
+import { thenUnder, windowSpan } from './chartSlots';
 import { ADMITTED_VIEWS } from '../admittedBlocks';
 import { composedPage } from '../composedPageData';
 import {
@@ -46,14 +53,15 @@ import {
 	DEFAULT_CHART_METRIC,
 	FILTER_FIELD_OPTIONS,
 	GROUPS,
+	SCOPED_BREAKDOWN_OPTIONS,
 	SORT_ORDERS,
+	SUBJECT_CHIP_OPTIONS,
 	wholeMs,
 } from './constants';
 import {
 	categoryArgs,
 	chartArgs,
 	detailArgs,
-	isValidHash,
 	isValidRequestId,
 	overviewArgs,
 	urlsArgs,
@@ -63,6 +71,10 @@ import aggregateChart from './blocks/aggregate-chart';
 import categoryChart from './blocks/category-chart';
 import profile from './blocks/profile';
 import urlTable from './blocks/url-table';
+import { URL_WINDOW_VIEWS } from './blocks/url-window';
+import { REQUEST_WINDOW_VIEWS } from './blocks/request-window';
+import { WINDOW_PARAMS, windowSubject } from './blocks/windowQuestions';
+import { getQueryParam } from '@newspack-nodes/shared/utils/queryParams';
 import { SORT_FIELDS } from './UrlTable';
 
 /** The server CI every command this page sends goes to. */
@@ -91,13 +103,74 @@ const FILTERS = [ 'server', 'chips', 'buckets' ];
  *
  * @param {string[]} values   What the param may hold.
  * @param {string}   fallback What it holds otherwise.
- * @return {(raw: string) => string} The parse.
+ * @return {(raw: *) => string} The parse.
  */
 const oneOf = ( values, fallback ) => ( raw ) =>
 	values.includes( raw ) ? raw : fallback;
 
 /** Every dimension the chart offers. */
 const BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map( ( option ) => option.value );
+
+/** Every dimension the URL window's chart offers: a URL names its host. */
+const WINDOW_BREAKDOWNS = SCOPED_BREAKDOWN_OPTIONS.map(
+	( option ) => option.value
+);
+
+/** The URL window chart's first dimension until someone changes it. */
+export const WINDOW_BREAKDOWN = 'status_class';
+
+/**
+ * A chart's Breakdown and Then by parses over the dimensions it offers: the
+ * Breakdown one of them, else `fallback`; the Then by one of them, else
+ * none, and none where it repeats the Breakdown the bar names under
+ * `breakdownKey`, so a link holding both reads it as none before any chart
+ * asks.
+ *
+ * @param {string[]} values       The dimensions it offers.
+ * @param {string}   fallback     Its Breakdown otherwise.
+ * @param {string}   breakdownKey The param its Breakdown is linked under.
+ * @return {{breakdown: (raw: *) => string, then: (raw: *) => string}} The parses.
+ */
+const chartParses = ( values, fallback, breakdownKey ) => {
+	const breakdown = oneOf( values, fallback );
+	const then = oneOf( values, '' );
+	return {
+		breakdown,
+		then: ( raw ) =>
+			thenUnder(
+				breakdown( getQueryParam( breakdownKey ) ),
+				then( raw )
+			),
+	};
+};
+
+/** The page chart's Breakdown and Then by parses. */
+const PAGE_CHART = chartParses(
+	BREAKDOWNS,
+	DEFAULT_CHART_BREAKDOWN,
+	'breakdown'
+);
+
+/** The URL window chart's Breakdown and Then by parses. */
+const WINDOW_CHART = chartParses(
+	WINDOW_BREAKDOWNS,
+	WINDOW_BREAKDOWN,
+	'url_breakdown'
+);
+
+/**
+ * Chips kept where `chipRefusal()` takes them under `options`, each once.
+ *
+ * @param {string[]}                              raw     Every chip, each `field=value`.
+ * @param {Array<{label: string, value: string}>} options The fields a chip may name.
+ * @return {string[]} The chips kept, or `NO_CHIPS` for none.
+ */
+const keptChips = ( raw, options ) => {
+	const kept = chipsOf(
+		raw.filter( ( chip ) => null === chipRefusal( chip, options ) )
+	);
+	return kept.length ? kept : NO_CHIPS;
+};
 
 definePageState( {
 	server: {
@@ -108,15 +181,8 @@ definePageState( {
 	chips: {
 		default: NO_CHIPS,
 		query: 'chip',
-		parse: ( raw ) => {
-			const kept = chipsOf(
-				/** @type {string[]} */ ( raw ).filter(
-					( chip ) =>
-						null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
-				)
-			);
-			return kept.length ? kept : NO_CHIPS;
-		},
+		parse: ( raw ) =>
+			keptChips( /** @type {string[]} */ ( raw ), FILTER_FIELD_OPTIONS ),
 	},
 	buckets: { default: '', query: 'bucket' },
 	metric: {
@@ -130,9 +196,9 @@ definePageState( {
 	breakdown: {
 		default: DEFAULT_CHART_BREAKDOWN,
 		query: 'breakdown',
-		parse: oneOf( BREAKDOWNS, DEFAULT_CHART_BREAKDOWN ),
+		parse: PAGE_CHART.breakdown,
 	},
-	then: { default: '', query: 'then', parse: oneOf( BREAKDOWNS, '' ) },
+	then: { default: '', query: 'then', parse: PAGE_CHART.then },
 	sort: {
 		default: 'count',
 		query: 'sort',
@@ -168,6 +234,31 @@ definePageState( {
 		// Echoed into the bar and sent to the server, so only the id alphabet.
 		parse: ( raw ) => ( isValidRequestId( raw ) ? raw : '' ),
 	},
+	url_buckets: { default: '', query: 'url_bucket' },
+	// A linked window's chips are judged by the field its link keys on.
+	url_chips: {
+		default: NO_CHIPS,
+		query: 'url_chip',
+		parse: ( raw ) =>
+			keptChips(
+				/** @type {string[]} */ ( raw ),
+				SUBJECT_CHIP_OPTIONS[ linkedSubject()?.field ?? 'url' ]
+			),
+	},
+	url_metric: {
+		default: DEFAULT_CHART_METRIC,
+		query: 'url_metric',
+		parse: oneOf(
+			CHART_METRIC_OPTIONS.map( ( option ) => option.value ),
+			DEFAULT_CHART_METRIC
+		),
+	},
+	url_breakdown: {
+		default: WINDOW_BREAKDOWN,
+		query: 'url_breakdown',
+		parse: WINDOW_CHART.breakdown,
+	},
+	url_then: { default: '', query: 'url_then', parse: WINDOW_CHART.then },
 	refresh: {
 		default:
 			DASHBOARD_REFRESH_OPTIONS.find(
@@ -229,11 +320,25 @@ const answered = ( answer ) => ( { data: answer ?? null } );
  * The subject a window's source is read for, so its model never stands in
  * for another subject's.
  *
- * @param {{subject: ?{field: string, hash: string}}} params The params.
- * @return {string} `<field>:<hash>`, or '' for none.
+ * @param {Object} params The params.
+ * @return {string} `<field>:<hash>`, or '' for none a command may carry.
  */
-const subjectScope = ( { subject } ) =>
-	subject ? `${ subject.field }:${ subject.hash }` : '';
+const subjectScope = ( params ) => {
+	const subject = windowSubject( params );
+	return subject?.valid ? `${ subject.field }:${ subject.hash }` : '';
+};
+
+/**
+ * A window source's question, asking nothing without a subject.
+ *
+ * @param {(question: Object) => string[]} ask      The question's args.
+ * @param {(params: Object) => Object}     question The question, from the params and the subject.
+ * @return {(params: Object) => ?string[]} The source's args.
+ */
+const ofSubject = ( ask, question ) => ( params ) => {
+	const subject = windowSubject( params );
+	return subject?.valid ? ask( { subject, ...question( params ) } ) : null;
+};
 
 /** What every poll on the page declares beside its question. */
 const POLL = {
@@ -377,10 +482,14 @@ registerSource( 'eln/url-detail', {
 	label: __( 'URL detail', 'newspack-event-logger-nodes' ),
 	group: GROUPS.url,
 	command: 'dump_url',
-	args: ( params ) =>
-		isValidHash( params.subject?.hash ) ? detailArgs( params ) : null,
+	args: ofSubject( detailArgs, ( params ) => ( {
+		server: params.server,
+		buckets: params.url_buckets,
+		chips: params.url_chips,
+	} ) ),
 	transform: answered,
 	scope: subjectScope,
+	params: [ ...WINDOW_PARAMS, 'url_buckets', 'url_chips' ],
 	fields: {
 		requests_per_second: windowFigure(
 			'requests_per_second',
@@ -431,9 +540,15 @@ registerSource( 'eln/url-chart', {
 	label: __( 'URL request chart', 'newspack-event-logger-nodes' ),
 	group: GROUPS.url,
 	command: 'query',
-	args: chartArgs,
+	args: ofSubject( chartArgs, ( params ) => ( {
+		server: params.server,
+		chips: params.url_chips,
+		breakdown: params.url_breakdown,
+		then: params.url_then,
+	} ) ),
 	transform: answered,
 	scope: subjectScope,
+	params: [ ...WINDOW_PARAMS, 'url_chips', 'url_breakdown', 'url_then' ],
 } );
 
 registerSource( 'eln/url-categories', {
@@ -441,9 +556,12 @@ registerSource( 'eln/url-categories', {
 	label: __( 'URL category chart', 'newspack-event-logger-nodes' ),
 	group: GROUPS.url,
 	command: 'query',
-	args: categoryArgs,
+	args: ofSubject( categoryArgs, ( params ) => ( {
+		server: params.server,
+	} ) ),
 	transform: answered,
 	scope: subjectScope,
+	params: WINDOW_PARAMS,
 } );
 
 registerSource( 'eln/request-detail', {
@@ -454,10 +572,13 @@ registerSource( 'eln/request-detail', {
 	command: 'dump_request',
 	args: ( { request } ) =>
 		isValidRequestId( request ) ? formatCommandArgs( [ request ] ) : null,
+	// Each request's record stands for its own request alone.
+	scope: ( { request = '' } ) => request,
+	params: [ 'request' ],
 } );
 
 /**
- * Every block the Performance layout may hold, by block name.
+ * Every block the Performance page and its windows may hold, by block name.
  *
  * @type {Object<string,import('@newspack-nodes/shared/composition/CompositionView').CompositionBlockView>}
  */
@@ -468,4 +589,6 @@ export const BLOCK_VIEWS = {
 	'newspack-event-logger-nodes/category-chart': categoryChart,
 	'newspack-event-logger-nodes/profile': profile,
 	'newspack-event-logger-nodes/url-table': urlTable,
+	...URL_WINDOW_VIEWS,
+	...REQUEST_WINDOW_VIEWS,
 };

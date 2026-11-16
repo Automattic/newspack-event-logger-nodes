@@ -244,6 +244,31 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
+	it( 'keeps the open request selected in every render while its subject is retitled', () => {
+		setLocation( 'http://localhost/wp-admin/?url=aaa' );
+		const seen = [];
+		const { result, unmount } = renderHook( () => {
+			const nav = useUrlNavigation( URLS );
+			seen.push( nav.selectedRequest );
+			return nav;
+		} );
+		act( () => result.current.selectRequest( 'rid-kea-7930' ) );
+		seen.length = 0;
+
+		act( () =>
+			result.current.selectSubject( {
+				field: 'url',
+				hash: 'aaa',
+				url: '/foo-7930',
+			} )
+		);
+
+		expect( seen.length ).toBeGreaterThan( 0 );
+		expect( new Set( seen ) ).toEqual( new Set( [ 'rid-kea-7930' ] ) );
+		expect( result.current.selectedSubject.url ).toBe( '/foo-7930' );
+		unmount();
+	} );
+
 	it( 'updates URL on popstate (back to dashboard with no params)', () => {
 		setLocation( 'http://localhost/wp-admin/?url=aaa' );
 		const { result, unmount } = renderHook( () =>

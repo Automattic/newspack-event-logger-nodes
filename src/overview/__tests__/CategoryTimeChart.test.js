@@ -268,8 +268,9 @@ describe( 'CategoryTimeChart', () => {
 				data: cats( { [ bucketKeyNow() ]: { db: [ 1500, 30 ] } } ),
 			} )
 		);
+		// Each chart portals its tooltip to the body.
 		expect(
-			drawn.container.querySelectorAll( '.newspack-nodes-chart__tooltip' )
+			document.querySelectorAll( '.newspack-nodes-chart__tooltip' )
 		).toHaveLength( VIEW_COUNT );
 		drawn.unmount();
 	} );
@@ -284,7 +285,7 @@ describe( 'CategoryTimeChart', () => {
 			},
 		} );
 
-		const { container, unmount } = renderComponent(
+		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
 			} )
@@ -294,7 +295,7 @@ describe( 'CategoryTimeChart', () => {
 		expect( globalThis.__lastRenderFn ).toEqual( expect.any( Function ) );
 		// d3.select must have been called (chart rendered).
 		expect( d3Mock.select ).toHaveBeenCalled();
-		const tooltips = container.querySelectorAll(
+		const tooltips = document.querySelectorAll(
 			'.newspack-nodes-chart__tooltip'
 		);
 		expect( tooltips ).toHaveLength( VIEW_COUNT );

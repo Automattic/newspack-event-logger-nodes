@@ -628,8 +628,8 @@ describe( 'AggregateTimeChart', () => {
 		);
 		expect( container.textContent ).toContain( 'Request Volume' );
 		expect( d3Mock.select ).toHaveBeenCalled();
-		// The tooltip is the substrate's elevated card, painted by its role.
-		const tooltip = container.querySelector(
+		// The substrate's elevated tooltip card, portalled to the body.
+		const tooltip = document.querySelector(
 			'.newspack-nodes-chart__tooltip'
 		);
 		expect( tooltip ).not.toBeNull();

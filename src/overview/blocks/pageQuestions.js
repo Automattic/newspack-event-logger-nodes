@@ -9,7 +9,7 @@
 import { useCallback, useMemo } from '@wordpress/element';
 import { usePageState } from '@newspack-nodes/shared/composition/page/pageState';
 import { useSource } from '@newspack-nodes/shared/sources';
-import { activeChart, answerSlots } from '../chartSlots';
+import { activeChart, answerSlots, thenUnder } from '../chartSlots';
 
 /**
  * A filter's value and its setter, which starts the URL table's new set on
@@ -90,8 +90,8 @@ export function useChartQuestion() {
 		serverFilter: server,
 		serverNames: servers,
 	} );
-	// A Then by repeating the Breakdown does not add a dimension.
-	const thenBy = active.thenBy === active.breakdown ? '' : active.thenBy;
+	// The server fallback can make the Then by repeat the Breakdown.
+	const thenBy = thenUnder( active.breakdown, active.thenBy );
 	const params = useMemo(
 		() => ( {
 			server,
