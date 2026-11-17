@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.168.1] - 2026-11-17
+
+### Changed
+
+- **Built against newspack-nodes 2.163.0.** The log pages' Key column holds a whole request id, the column headers line up with the rows they head, and a trash button with no label is a red glyph that fills on hover rather than a filled slab.
+
 ## [0.168.0] - 2026-11-15
 
 ### Added
