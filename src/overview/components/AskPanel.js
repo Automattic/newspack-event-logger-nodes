@@ -303,7 +303,6 @@ export default function AskPanel( { ask } ) {
 								briefs.length
 						  )
 				}
-				onClose={ close }
 				closeLabel={ __( 'Close', 'newspack-event-logger-nodes' ) }
 			/>
 
