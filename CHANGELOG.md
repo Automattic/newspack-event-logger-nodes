@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.1] - 2026-11-22
+
+### Fixed
+
+- **A console dialog the station opens sits under the debug overlay, and every console dialog blurs the page behind it.** The bundled debug overlay is rebuilt against newspack-nodes 2.164.1, whose console dialog rises over the overlay's panel only when it opens inside that panel.
+
 ## [0.169.0] - 2026-11-22
 
 ### Changed
