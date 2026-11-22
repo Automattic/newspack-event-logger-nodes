@@ -26,6 +26,8 @@ beforeAll( () => {
 	window.newspackNodesOwnerTimeEvents = [ 'kea_7746_boot', 'kea_7746_done' ];
 } );
 
+import { throughExit } from '@newspack-nodes/shared/test-utils/answerConfirm';
+
 let React;
 let HookSelectorModal;
 beforeAll( () => {
@@ -119,7 +121,7 @@ describe( 'HookSelectorModal', () => {
 		);
 	} );
 
-	it( 'uses the exact standalone product modal root classes', () => {
+	it( 'draws on the shared medium box under the skinned portal host', () => {
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
@@ -132,10 +134,14 @@ describe( 'HookSelectorModal', () => {
 		expect( frame ).toBeTruthy();
 		expect( productRootClasses( frame ) ).toEqual( [
 			'newspack-nodes-modal',
-			'newspack-nodes-skin-root',
-			'newspack-nodes-theme',
-			'newspack-nodes-ui',
+			'newspack-nodes-modal--medium',
 		] );
+		// The shared portal host wears the skin, so the box needs none.
+		expect(
+			frame.parentElement.closest(
+				'.newspack-nodes-skin-root.newspack-nodes-theme.newspack-nodes-ui'
+			)
+		).not.toBeNull();
 	} );
 
 	it( 'renders categories from the hook model', () => {
@@ -192,11 +198,13 @@ describe( 'HookSelectorModal', () => {
 			( b ) => b.textContent.includes( 'Apply' )
 		);
 		const { act } = require( '../../../test-helpers/renderHook' );
-		act( () => {
-			apply.click();
-		} );
+		throughExit( () =>
+			act( () => {
+				apply.click();
+			} )
+		);
 		expect( onSelect ).toHaveBeenCalledWith( [ 'init' ] );
-		expect( onClose ).toHaveBeenCalled();
+		expect( onClose ).toHaveBeenCalledTimes( 1 );
 	} );
 
 	it( 'Recommended button replaces selection with recommended set', () => {

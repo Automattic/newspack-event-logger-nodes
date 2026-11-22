@@ -20,6 +20,7 @@ beforeAll( () => {
 	CustomEventSelectorModal = require( '../CustomEventSelectorModal' ).default;
 } );
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { MODAL_EXIT_MS } from '@newspack-nodes/shared/hooks/useModalExit';
 
 function productRootClasses( element ) {
 	return Array.from( element.classList ).filter(
@@ -79,7 +80,7 @@ describe( 'CustomEventSelectorModal', () => {
 		).toBe( false );
 	} );
 
-	it( 'uses the exact standalone product modal root classes', () => {
+	it( 'draws on the shared medium box under the skinned portal host', () => {
 		mount( {
 			isOpen: true,
 			onClose: jest.fn(),
@@ -92,10 +93,14 @@ describe( 'CustomEventSelectorModal', () => {
 		expect( frame ).toBeTruthy();
 		expect( productRootClasses( frame ) ).toEqual( [
 			'newspack-nodes-modal',
-			'newspack-nodes-skin-root',
-			'newspack-nodes-theme',
-			'newspack-nodes-ui',
+			'newspack-nodes-modal--medium',
 		] );
+		// The shared portal host wears the skin, so the box needs none.
+		expect(
+			frame.parentElement.closest(
+				'.newspack-nodes-skin-root.newspack-nodes-theme.newspack-nodes-ui'
+			)
+		).not.toBeNull();
 	} );
 
 	it( 'pre-checks the selected events when the modal opens', () => {
@@ -112,7 +117,7 @@ describe( 'CustomEventSelectorModal', () => {
 		expect( checked[ 0 ].id ).toBe( 'event-wp-cron-event' );
 	} );
 
-	it( 'fires onSelect with selected names when Apply is clicked', () => {
+	it( 'Apply hands the selection back at once and closes through the exit', () => {
 		const onSelect = jest.fn();
 		const onClose = jest.fn();
 		mount( {
@@ -128,11 +133,18 @@ describe( 'CustomEventSelectorModal', () => {
 		const applyBtn = Array.from(
 			document.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.includes( 'Apply' ) );
-		act( () => {
-			applyBtn.click();
-		} );
-		expect( onSelect ).toHaveBeenCalledWith( [ 'wp.cron.event' ] );
-		expect( onClose ).toHaveBeenCalled();
+		jest.useFakeTimers();
+		try {
+			act( () => {
+				applyBtn.click();
+			} );
+			expect( onSelect ).toHaveBeenCalledWith( [ 'wp.cron.event' ] );
+			expect( onClose ).not.toHaveBeenCalled();
+			act( () => jest.advanceTimersByTime( MODAL_EXIT_MS ) );
+			expect( onClose ).toHaveBeenCalledTimes( 1 );
+		} finally {
+			jest.useRealTimers();
+		}
 	} );
 
 	it( 'Select All adds every visible event', () => {

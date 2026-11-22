@@ -67,23 +67,6 @@ const declarations = ( rule ) =>
 			.map( ( declaration ) => [ declaration.prop, declaration.value ] )
 	);
 
-const cascadeDeclarations = ( stylesheet, selector ) => {
-	const result = {};
-	stylesheet.walkRules( ( rule ) => {
-		const selectors = rule.selectors || [ rule.selector ];
-		if (
-			! selectors.some(
-				( candidate ) =>
-					normalize( candidate ) === normalize( selector )
-			)
-		) {
-			return;
-		}
-		Object.assign( result, declarations( rule ) );
-	} );
-	return result;
-};
-
 const sharedComponents = compileShared( 'styles/_components.scss' );
 const sharedButtons = compileShared( 'styles/_buttons.scss' );
 
@@ -321,57 +304,29 @@ describe( 'Event Logger layout cascade', () => {
 		} );
 	} );
 
-	it( 'sizes the always-skinned modal frame in one rule', () => {
+	it.each( [
+		'overview/styles/modal.scss',
+		'rules/rule-edit-modal.scss',
+		'settings/styles/selector-modal.scss',
+		'settings/styles/hook-selector.scss',
+		'settings/styles/custom-event-selector.scss',
+	] )(
+		'%s keys no layout on WordPress’s modal DOM and leaves the shared header and close to the shell',
+		( file ) => {
+			local( file ).walkRules( ( rule ) => {
+				expect( rule.selector ).not.toContain( 'components-modal' );
+				expect( rule.selector ).not.toContain(
+					'newspack-nodes-modal__header'
+				);
+				expect( rule.selector ).not.toContain(
+					'newspack-nodes-modal__close'
+				);
+			} );
+		}
+	);
+
+	it( 'leaves the picker chrome to selector-modal.scss', () => {
 		const stylesheet = local( 'rules/rule-edit-modal.scss' );
-		const widths = [];
-		stylesheet.walkDecls( 'width', ( decl ) => {
-			if ( /components-modal__frame$/.test( decl.parent.selector ) ) {
-				widths.push( `${ decl.parent.selector } ${ decl.value }` );
-			}
-		} );
-		expect( widths ).toEqual( [
-			'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame 600px',
-		] );
-		expect(
-			cascadeDeclarations(
-				stylesheet,
-				'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame'
-			)
-		).toMatchObject( {
-			'min-width': '560px',
-			'max-width': 'calc(100% - 32px)',
-			display: 'flex',
-			'flex-direction': 'column',
-			'grid-template': 'none',
-			gap: '0',
-			width: '600px',
-			height: 'auto',
-			'min-height': '0',
-			'max-height': 'calc(100vh - 64px)',
-		} );
-		expect(
-			declarations(
-				findRule(
-					stylesheet,
-					'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame .components-modal__content'
-				)
-			)
-		).toMatchObject( {
-			width: '100%',
-			'box-sizing': 'border-box',
-			'overflow-y': 'auto',
-		} );
-		expect(
-			declarations(
-				findRule(
-					stylesheet,
-					'.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame .components-modal__header'
-				)
-			)
-		).toMatchObject( {
-			padding: '0 18px',
-			height: '64px',
-		} );
 		// The picker chrome is `selector-modal.scss`'s block. Reaching into it
 		// from here gave the one SelectorModal two dialog geometries, decided
 		// by which stylesheet the bundle happened to emit second.
@@ -385,7 +340,7 @@ describe( 'Event Logger layout cascade', () => {
 	it.each( [
 		[
 			'overview/styles/modal.scss',
-			'.event-logger-performance-modal.event-logger-performance-modal.components-modal__frame .event-logger-modal-back-button',
+			'.newspack-nodes-modal__backdrop > .newspack-nodes-modal.event-logger-performance-modal .event-logger-modal-back-button',
 			{
 				width: '36px',
 				height: '36px',

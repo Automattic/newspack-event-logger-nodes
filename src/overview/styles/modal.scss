@@ -1,53 +1,30 @@
-.event-logger-performance-modal.event-logger-performance-modal {
-	&.components-modal__frame {
+// The URL and request window fills the viewport, steady as panes load.
+.newspack-nodes-modal__backdrop
+	> .newspack-nodes-modal.event-logger-performance-modal {
+	width: 95vw;
+	max-width: 95vw;
+	height: 95vh;
+	max-height: 95vh;
+
+	.event-logger-modal-back-button {
+		width: 36px;
+		height: 36px;
+		min-height: 36px;
+		padding: 0;
+		margin: 0;
 		display: flex;
-		flex-direction: column;
-		grid-template: none;
-		gap: 0;
-		width: 95vw;
-		max-width: 95vw;
-		height: 95vh;
-		max-height: 95vh;
-		margin: 2.5vh auto;
-
-		.event-logger-modal-back-button {
-			width: 36px;
-			height: 36px;
-			min-height: 36px;
-			padding: 0;
-			margin: 0;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			font-size: 18px;
-			line-height: inherit;
-			white-space: normal;
-			margin-bottom: 0;
-			vertical-align: baseline;
-		}
-	}
-
-	.components-modal__content {
-		overflow-y: auto;
-	}
-
-	.components-modal__header {
-		flex-wrap: nowrap;
-		gap: 16px;
-	}
-
-	// Request detail has no stat grid to carry the gap, so whatever follows
-	// the title pushes the header actions off it. Keyed on POSITION, not on
-	// which control it is: naming one gives that control a style of its own,
-	// and it stops matching the buttons beside it.
-	.components-modal__header-heading-container + * {
-		margin-left: auto;
+		align-items: center;
+		justify-content: center;
+		font-size: 18px;
+		line-height: inherit;
+		white-space: normal;
+		margin-bottom: 0;
+		vertical-align: baseline;
 	}
 
 	.event-logger-header-stats {
 		display: flex;
 		gap: 16px;
-		margin-left: auto;
 		white-space: nowrap;
 		font-size: 14px;
 

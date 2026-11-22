@@ -48,12 +48,11 @@ import {
 	useCallback,
 	useRef,
 } from '@wordpress/element';
-import { Modal } from '@wordpress/components';
-import { SKIN_ROOT_CLASSES } from '@newspack-nodes/shared/components/ThemedRoot';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
+import Modal, { ModalHeader } from '@newspack-nodes/shared/components/Modal';
 import ComposedPageFrame from '@newspack-nodes/shared/composition/page/ComposedPageFrame';
 import { editTarget } from '@newspack-nodes/shared/composition/page/editMode';
 import {
@@ -139,18 +138,16 @@ import './styles/charts.scss';
 /** A window's layout, rendered again only when what it stands on moves. */
 const WindowFrame = memo( ComposedPageFrame );
 
-/** A held click has no element of its own, so only Escape dismisses it. */
-const NO_ELEMENT = { current: null };
-
 /**
- * A one-request click held until its request opens, which Escape cancels.
+ * A one-request click held until its request opens, which Escape cancels. It
+ * has no element of its own, so it listens for Escape alone.
  *
  * @param {Object}     props          Component props.
  * @param {() => void} props.onCancel Cancels the held click.
  * @return {null} Nothing: it only listens.
  */
 function HeldClick( { onCancel } ) {
-	useDismissable( NO_ELEMENT, onCancel );
+	useDismissable( null, onCancel );
 	return null;
 }
 
@@ -483,7 +480,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 			if ( rid ) {
 				// Entering request detail — save current scroll position.
 				const modalContent = document.querySelector(
-					'.event-logger-performance-modal .components-modal__content'
+					'.event-logger-performance-modal'
 				);
 				if ( modalContent ) {
 					urlDetailScrollRef.current = modalContent.scrollTop;
@@ -884,6 +881,8 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
+	// The open editor's animated close, which a write's answer plays.
+	const ruleEditor = useRef( null );
 	// The whole ruleset as the server last reported it; null until it answers.
 	const [ rules, setRules ] = useState( null );
 	const [ ruleError, setRuleError ] = useState( null );
@@ -955,7 +954,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		// The rule DOCUMENT is the first token; the rule it names is the id.
 		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: ( { result, error } ) => {
-			setRuleDraft( null );
+			ruleEditor.current?.close();
 			if ( result ) {
 				dumpRules( [] );
 				return;
@@ -988,7 +987,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 		command: 'delete',
 		sendsOnRemoval: true,
 		onDone: ( { result, error } ) => {
-			setRuleDraft( null );
+			ruleEditor.current?.close();
 			if ( result ) {
 				dumpRules( [] );
 				return;
@@ -1022,7 +1021,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 	// Manage modal scroll when switching URL detail ↔ request detail.
 	useEffect( () => {
 		const modalContent = document.querySelector(
-			'.event-logger-performance-modal .components-modal__content'
+			'.event-logger-performance-modal'
 		);
 		if ( ! modalContent ) {
 			return;
@@ -1155,96 +1154,99 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 			     is known, so it opens on the request. */ }
 			{ selectedSubject && ! holdingWindow && (
 				<Modal
-					title={
-						selectedRequest && requestDetail
-							? sprintf(
-									// translators: %s: the request ID.
-									__(
-										'Request: %s',
-										'newspack-event-logger-nodes'
-									),
-									selectedRequest
-							  )
-							: requestedUrl( ruleUrl )
-					}
-					onRequestClose={ () => {
-						// Keep URL modal open while the nested editor is open.
-						if ( ruleDraft ) {
-							return;
-						}
+					onClose={ () =>
 						leaveWindow( () => {
 							selectSubject( null );
 							selectRequest( null );
-						} );
-					} }
-					className={ `event-logger-performance-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }` }
-					headerActions={
-						selectedRequest ? (
-							<>
-								<AskButton ask={ ask } />
-								<button
-									type="button"
-									className="button is-plain event-logger-modal-back-button"
-									onClick={ () =>
-										leaveWindow( () =>
-											selectRequest( null )
-										)
-									}
-									aria-label={ __(
-										'Back to URL details',
-										'newspack-event-logger-nodes'
-									) }
-								>
-									&larr;
-								</button>
-								{ windowSlotBox }
-							</>
-						) : (
-							<>
-								{ urlDetail && (
-									<WindowStats
-										model={ urlDetailSlice.model }
-									/>
-								) }
-								<AskButton ask={ ask } />
-								<div className="event-logger-rule-control">
+						} )
+					}
+					className="event-logger-performance-modal"
+				>
+					<ModalHeader
+						title={
+							selectedRequest && requestDetail
+								? sprintf(
+										// translators: %s: the request ID.
+										__(
+											'Request: %s',
+											'newspack-event-logger-nodes'
+										),
+										selectedRequest
+								  )
+								: requestedUrl( ruleUrl )
+						}
+						closeLabel={ __(
+							'Close',
+							'newspack-event-logger-nodes'
+						) }
+						actions={
+							selectedRequest ? (
+								<>
+									<AskButton ask={ ask } />
 									<button
 										type="button"
-										className="button"
-										// @longform Disabled until the
-										// ruleset is KNOWN: with `rules`
-										// still null the button reads "Log
-										// this URL" and opens a blank draft,
-										// and an id-less upsert matches by
-										// PATTERN — so saving it would
-										// replace a configured rule's hooks
-										// and thresholds with nothing.
-										disabled={
-											! canLogUrl || null === rules
+										className="button is-plain event-logger-modal-back-button"
+										onClick={ () =>
+											leaveWindow( () =>
+												selectRequest( null )
+											)
 										}
-										onClick={ openRuleEditor }
+										aria-label={ __(
+											'Back to URL details',
+											'newspack-event-logger-nodes'
+										) }
 									>
-										{ existingRule
-											? __(
-													'Edit logging rule',
-													'newspack-event-logger-nodes'
-											  )
-											: __(
-													'Log this URL',
-													'newspack-event-logger-nodes'
-											  ) }
+										&larr;
 									</button>
-									{ ruleError && (
-										<span className="event-logger-rule-error newspack-nodes-status is-error">
-											{ ruleError }
-										</span>
+									{ windowSlotBox }
+								</>
+							) : (
+								<>
+									{ urlDetail && (
+										<WindowStats
+											model={ urlDetailSlice.model }
+										/>
 									) }
-								</div>
-								{ windowSlotBox }
-							</>
-						)
-					}
-				>
+									<AskButton ask={ ask } />
+									<div className="event-logger-rule-control">
+										<button
+											type="button"
+											className="button"
+											// @longform Disabled until the
+											// ruleset is KNOWN: with `rules`
+											// still null the button reads
+											// "Log this URL" and opens a
+											// blank draft, and an id-less
+											// upsert matches by PATTERN — so
+											// saving it would replace a
+											// configured rule's hooks and
+											// thresholds with nothing.
+											disabled={
+												! canLogUrl || null === rules
+											}
+											onClick={ openRuleEditor }
+										>
+											{ existingRule
+												? __(
+														'Edit logging rule',
+														'newspack-event-logger-nodes'
+												  )
+												: __(
+														'Log this URL',
+														'newspack-event-logger-nodes'
+												  ) }
+										</button>
+										{ ruleError && (
+											<span className="event-logger-rule-error newspack-nodes-status is-error">
+												{ ruleError }
+											</span>
+										) }
+									</div>
+									{ windowSlotBox }
+								</>
+							)
+						}
+					/>
 					{ /* URL Details View */ }
 					{ ! selectedRequest && ! urlDetail && (
 						<p
@@ -1328,6 +1330,7 @@ function PerformanceSurface( { onError, headerControlsSlot } ) {
 					onSave={ saveRule }
 					onCancel={ () => setRuleDraft( null ) }
 					onDelete={ ruleDraft.id ? deleteRule : undefined }
+					handleRef={ ruleEditor }
 				/>
 			) }
 

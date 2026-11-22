@@ -1,6 +1,6 @@
 /**
- * RuleEditModal tests — the single-rule draft editor. Renders a @wordpress/components
- * Modal editing pattern / action / (for log rules) hooks / custom events /
+ * RuleEditModal tests — the single-rule draft editor. Renders the shared
+ * dialog editing pattern / action / (for log rules) hooks / custom events /
  * significant events / auto-tune thresholds. `onSave(draft)` emits the edited
  * rule; the parent decides upsert vs save. Skip rules hide the log-only fields.
  *
@@ -59,7 +59,14 @@ jest.mock( '../../settings/settings/CustomEventSelectorModal', () => ( {
 	},
 } ) );
 
+import { MODAL_EXIT_MS } from '@newspack-nodes/shared/hooks/useModalExit';
+import { throughExit } from '@newspack-nodes/shared/test-utils/answerConfirm';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import {
+	compileLocal,
+	compileShared,
+	resolved,
+} from '../../test-helpers/cascade';
 import RuleEditModal from '../RuleEditModal';
 import { BLANK_RULE } from '../constants';
 
@@ -125,7 +132,7 @@ function setInput( input, value ) {
 	} );
 }
 
-// @wordpress/components Modals portal to document.body; scope queries there.
+// The shared dialog portals to document.body; scope queries there.
 function inDialog( selector ) {
 	const dialog = document.querySelector( '[role="dialog"]' ) || document;
 	return dialog.querySelector( selector );
@@ -188,20 +195,53 @@ describe( 'RuleEditModal — log rule fields', () => {
 		return r;
 	}
 
-	test( 'owns every skin class its own stylesheet needs', () => {
-		// rule-edit-modal.scss gates a whole layout block on
-		// `.newspack-nodes-skin-root` — flex column, 600px, scrolling content.
-		// Leaving that one class to an optional `className` meant the modal
-		// rendered two different layouts depending on which caller opened it.
+	test( 'draws on the shared medium box under the regular header', () => {
 		mount( LOG_RULE );
 		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
-		expect( frame ).toBeTruthy();
+		expect( frame.getAttribute( 'role' ) ).toBe( 'dialog' );
 		expect( productRootClasses( frame ) ).toEqual( [
 			'newspack-nodes-modal',
-			'newspack-nodes-skin-root',
-			'newspack-nodes-theme',
-			'newspack-nodes-ui',
+			'newspack-nodes-modal--medium',
 		] );
+		const header = frame.querySelector(
+			':scope > .newspack-nodes-modal__header'
+		);
+		expect(
+			header.classList.contains( 'newspack-nodes-modal__header--compact' )
+		).toBe( false );
+		expect(
+			header.querySelector( '.newspack-nodes-modal__title' ).textContent
+		).toBe( 'Edit rule' );
+	} );
+
+	test( 'keeps its own 600px width over the shared medium box', () => {
+		mount( LOG_RULE );
+		const style = resolved(
+			document.querySelector( '.event-logger-rule-edit-modal' ),
+			[
+				compileShared( 'components/Modal.scss' ),
+				compileLocal( 'rules/rule-edit-modal.scss' ),
+			]
+		);
+		expect( style.width ).toBe( '600px' );
+		// Sass writes the `calc()` inside `min()` as its bare sum.
+		expect( style[ 'min-width' ] ).toBe( 'min(560px, 100vw - 32px)' );
+		expect( style[ 'max-width' ] ).toBe( 'calc(100vw - 32px)' );
+	} );
+
+	test( 'hands its animated close to the caller through handleRef', () => {
+		const handleRef = { current: null };
+		const r = renderComponent(
+			<RuleEditModal
+				rule={ LOG_RULE }
+				onSave={ onSave }
+				onCancel={ onCancel }
+				handleRef={ handleRef }
+			/>
+		);
+		mounted.push( r );
+		throughExit( () => act( () => handleRef.current.close() ) );
+		expect( onCancel ).toHaveBeenCalledTimes( 1 );
 	} );
 
 	test( 'labels the significant-events box and links its help', () => {
@@ -216,23 +256,6 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( label.htmlFor ).toBe( box.id );
 		expect( label.textContent ).toBe( 'Significant events' );
 		expect( help.textContent ).toMatch( /^Press Enter to add one\./ );
-	} );
-
-	test( 'still appends a caller class without dropping its own', () => {
-		const r = renderComponent(
-			<RuleEditModal
-				rule={ LOG_RULE }
-				onSave={ onSave }
-				onCancel={ onCancel }
-				className="extra-thing"
-			/>
-		);
-		mounted.push( r );
-		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
-		expect( Array.from( frame.classList ) ).toContain( 'extra-thing' );
-		expect( productRootClasses( frame ) ).toContain(
-			'newspack-nodes-skin-root'
-		);
 	} );
 
 	test( 'the Delete button is a two-click confirm before onDelete fires', () => {
@@ -783,15 +806,25 @@ describe( 'RuleEditModal — log rule fields', () => {
 		] );
 	} );
 
-	test( 'onCancel fires when Cancel is clicked and does not save', () => {
-		mount( LOG_RULE );
-		const dialog = document.querySelector( '[role="dialog"]' );
-		const cancel = Array.from( dialog.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.trim() === 'Cancel'
-		);
-		click( cancel );
-		expect( onCancel ).toHaveBeenCalledTimes( 1 );
-		expect( onSave ).not.toHaveBeenCalled();
+	test( 'Cancel plays the exit, then fires onCancel without saving', () => {
+		jest.useFakeTimers();
+		try {
+			mount( LOG_RULE );
+			const dialog = document.querySelector( '[role="dialog"]' );
+			const cancel = Array.from(
+				dialog.querySelectorAll( 'button' )
+			).find( ( b ) => b.textContent.trim() === 'Cancel' );
+			click( cancel );
+			expect( onCancel ).not.toHaveBeenCalled();
+			expect(
+				dialog.closest( '.newspack-nodes-modal__backdrop' ).className
+			).toContain( 'is-closing' );
+			act( () => jest.advanceTimersByTime( MODAL_EXIT_MS ) );
+			expect( onCancel ).toHaveBeenCalledTimes( 1 );
+			expect( onSave ).not.toHaveBeenCalled();
+		} finally {
+			jest.useRealTimers();
+		}
 	} );
 } );
 

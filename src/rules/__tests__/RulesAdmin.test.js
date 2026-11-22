@@ -3,8 +3,9 @@
  *
  * useRulesGraph is owned + tested separately; here it's mocked to hand back a
  * model + spy CRUD callbacks. RuleEditModal is mocked to a trivial "emit a fixed
- * draft on Save" stub so this suite tests RulesAdmin's table + add/edit/delete
- * wiring, not the modal (which has its own suite).
+ * draft on Save" stub, whose handle records that a close came through it, so
+ * this suite tests RulesAdmin's table + add/edit/delete wiring, not the modal
+ * (which has its own suite).
  */
 
 jest.mock( '../useRulesGraph', () => ( {
@@ -14,8 +15,16 @@ jest.mock( '../useRulesGraph', () => ( {
 
 jest.mock( '../RuleEditModal', () => ( {
 	__esModule: true,
-	default: ( { rule, onSave, onCancel } ) => {
-		const el = require( 'react' ).createElement;
+	default: function RuleEditStub( { rule, onSave, onCancel, handleRef } ) {
+		const React = require( 'react' );
+		const el = React.createElement;
+		React.useImperativeHandle( handleRef, () => ( {
+			close: () => {
+				global.__editorClosedThroughHandle = true;
+				onCancel();
+			},
+			closeWith: ( run ) => run(),
+		} ) );
 		return el( 'div', { role: 'dialog', 'data-testid': 'rule-edit' }, [
 			el( 'span', { key: 'p' }, `editing:${ rule?.pattern ?? '' }` ),
 			el(
@@ -47,6 +56,10 @@ jest.mock( '../RuleEditModal', () => ( {
 	},
 } ) );
 
+import {
+	answerConfirm,
+	throughExit,
+} from '@newspack-nodes/shared/test-utils/answerConfirm';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import RulesAdmin from '../RulesAdmin';
 
@@ -131,6 +144,7 @@ describe( 'RulesAdmin', () => {
 	beforeEach( () => {
 		useRulesGraph.mockClear();
 		setGraph();
+		global.__editorClosedThroughHandle = false;
 	} );
 
 	afterEach( () => {
@@ -351,9 +365,11 @@ describe( 'RulesAdmin', () => {
 			);
 		} );
 		expect( upsert ).toHaveBeenCalledTimes( 1 );
-		// The modal closes on the ANSWER, not on the click.
+		// The modal closes on the ANSWER, not on the click, through its exit.
+		expect( dialogButton( 'rule-edit' ) ).not.toBeNull();
 		await answer( 'upsert' );
 		expect( dialogButton( 'rule-edit' ) ).toBeNull();
+		expect( global.__editorClosedThroughHandle ).toBe( true );
 	} );
 
 	test( 'Edit opens the modal prefilled with that rule', () => {
@@ -396,7 +412,7 @@ describe( 'RulesAdmin', () => {
 		expect( remove ).not.toHaveBeenCalled();
 	} );
 
-	test( 'confirming delete calls remove(id)', async () => {
+	test( 'confirming delete closes the confirm and calls remove(id)', () => {
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
 		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
@@ -406,17 +422,16 @@ describe( 'RulesAdmin', () => {
 		const confirm = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
-		await act( async () => {
-			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
-		} );
+		answerConfirm( confirm );
 		expect( remove ).toHaveBeenCalledWith( 'r1' );
+		// No answer has landed: the yes alone closes it.
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 
-	test( 'a failed delete reports it and keeps the confirm open', async () => {
+	test( 'a refused delete reports it on the page, the confirm already gone', async () => {
 		// useRulesGraph's contract: a mutation's refusal arrives on
-		// `onMutation` and leaves the `error` banner clean. RulesAdmin is the
-		// sole writer of the ruleset; closing on the click would leave the dialog
-		// gone, the row present, and no trace of the failure at all.
+		// `onMutation` and leaves the `error` banner clean, so the page's
+		// alert is the only trace of the failure once the confirm has closed.
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
 		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
@@ -426,16 +441,19 @@ describe( 'RulesAdmin', () => {
 		const confirm = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
-		await act( async () => {
-			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
-		} );
-		await answer( 'delete', 'gone' );
+		answerConfirm( confirm );
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
+		await answer( 'delete', 'kea 7951 gone' );
 
-		expect( container.textContent ).toContain( 'gone' );
+		expect( container.textContent ).toContain( 'kea 7951 gone' );
 		expect(
 			container.querySelector( '.notice-error' ).getAttribute( 'role' )
 		).toBe( 'alert' );
-		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
+		// The refused rule is still listed.
+		expect(
+			container.querySelector( 'tr[data-rule-id="r1"]' )
+		).not.toBeNull();
 	} );
 
 	test( 'Tab stays inside the confirm dialog', () => {
@@ -484,7 +502,7 @@ describe( 'RulesAdmin', () => {
 		down( document.querySelector( CONFIRM ) );
 		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
 
-		down( backdrop );
+		throughExit( () => down( backdrop ) );
 		expect( document.querySelector( CONFIRM ) ).toBeNull();
 		expect( remove ).not.toHaveBeenCalled();
 	} );
@@ -501,9 +519,7 @@ describe( 'RulesAdmin', () => {
 		const confirm = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Delete' );
-		await act( async () => {
-			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
-		} );
+		answerConfirm( confirm );
 		await answer( 'delete', 'plain string' );
 
 		expect( container.textContent ).toContain( 'plain string' );
@@ -553,7 +569,7 @@ describe( 'RulesAdmin', () => {
 		const cancel = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Cancel' );
-		click( cancel );
+		answerConfirm( cancel );
 		expect( remove ).not.toHaveBeenCalled();
 		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
@@ -671,39 +687,34 @@ describe( 'RulesAdmin', () => {
 		expect( reset ).not.toHaveBeenCalled();
 	} );
 
-	test( 'confirming the reset calls reset()', async () => {
+	test( 'confirming the reset closes the confirm and calls reset()', () => {
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
 		const confirm = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Reset' );
-		await act( async () => {
-			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
-		} );
+		answerConfirm( confirm );
 		expect( reset ).toHaveBeenCalledTimes( 1 );
-		await answer( 'reset' );
 		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 
-	test( 'a failed reset reports it and keeps the confirm open', async () => {
+	test( 'a refused reset reports it on the page, the confirm already gone', async () => {
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
 		const confirm = Array.from(
 			document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent.trim() === 'Reset' );
-		await act( async () => {
-			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
-		} );
-		await answer( 'reset', 'option locked' );
+		answerConfirm( confirm );
+		await answer( 'reset', 'kea 7952 option locked' );
 
-		expect( container.textContent ).toContain( 'option locked' );
-		expect( document.querySelector( CONFIRM ) ).not.toBeNull();
+		expect( container.textContent ).toContain( 'kea 7952 option locked' );
+		expect( document.querySelector( CONFIRM ) ).toBeNull();
 	} );
 
 	test( 'cancelling the reset confirm does not reset', () => {
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
-		click(
+		answerConfirm(
 			Array.from(
 				document.querySelector( CONFIRM ).querySelectorAll( 'button' )
 			).find( ( b ) => b.textContent.trim() === 'Cancel' )

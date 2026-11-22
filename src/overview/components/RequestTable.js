@@ -3,8 +3,8 @@
  * a sortable heading names, each row opening its request, with the Time
  * field holding the buckets the list narrows to.
  *
- * Footgun: the list virtualizes against the window's scroll container
- * (`.components-modal__content`). Mounted outside a `Modal`,
+ * Footgun: the list virtualizes against the window's scroll container, its
+ * dialog box (`.event-logger-performance-modal`). Mounted outside the window,
  * `useVirtualization` finds no such ancestor and throws — which is why the
  * tests mock that hook.
  */
@@ -272,7 +272,7 @@ export default function RequestTable( {
 			listRef,
 			ROW_HEIGHT,
 			sortedRequests.length,
-			'.components-modal__content'
+			'.event-logger-performance-modal'
 		);
 	const visibleRequests = sortedRequests.slice( startIndex, endIndex );
 	const maxBar = useMemo(

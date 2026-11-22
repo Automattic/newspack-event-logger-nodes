@@ -19,7 +19,7 @@
  * defer a mark to.
  */
 
-import { useCallback, useState } from '@wordpress/element';
+import { useCallback, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Confirm } from '@newspack-nodes/shared/components/Modal';
@@ -183,6 +183,7 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 export default function RulesAdmin() {
 	// Rule open in the editor: null = closed, object = editing/adding.
 	const [ editing, setEditing ] = useState( null );
+	const editor = useRef( null );
 	// The rule pending delete confirmation.
 	const [ deleting, setDeleting ] = useState( null );
 	// Whether the reset-to-defaults confirmation is open.
@@ -190,18 +191,12 @@ export default function RulesAdmin() {
 	// A mutation's failure; `error` belongs to the table's own `dump`.
 	const [ mutationError, setMutationError ] = useState( null );
 
-	// The reply names its verb, so it closes the surface that asked.
+	// A refusal lands on the page; a saved rule closes the editor that asked.
 	const onMutation = useCallback( ( { verb, error: refusal } ) => {
 		if ( refusal ) {
 			setMutationError( refusal );
-			return;
-		}
-		if ( 'upsert' === verb ) {
-			setEditing( null );
-		} else if ( 'delete' === verb ) {
-			setDeleting( null );
-		} else if ( 'reset' === verb ) {
-			setResetting( false );
+		} else if ( 'upsert' === verb ) {
+			editor.current?.close();
 		}
 	}, [] );
 
@@ -209,7 +204,7 @@ export default function RulesAdmin() {
 		onMutation,
 	} );
 
-	// Each leaves its surface OPEN; the answer is what closes it.
+	// The editor stays open until its answer; a confirm closes on its yes.
 	const handleSave = ( draft ) => {
 		setMutationError( null );
 		upsert( draft );
@@ -221,11 +216,13 @@ export default function RulesAdmin() {
 		}
 		setMutationError( null );
 		remove( deleting.id );
+		setDeleting( null );
 	};
 
 	const confirmReset = () => {
 		setMutationError( null );
 		reset();
+		setResetting( false );
 	};
 
 	// Resolve the table body once (avoids a nested ternary in JSX).
@@ -331,6 +328,7 @@ export default function RulesAdmin() {
 					rule={ editing }
 					onSave={ handleSave }
 					onCancel={ () => setEditing( null ) }
+					handleRef={ editor }
 				/>
 			) }
 

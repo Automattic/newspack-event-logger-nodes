@@ -586,17 +586,11 @@ export default function LogEntriesTable( {
 	 */
 	useEffect( () => {
 		const handleKeyDown = ( e ) => {
-			// Escape: clear search, refocus so next Escape closes modal.
+			// Escape clears a search; the next one reaches the window's close.
 			if ( e.key === 'Escape' && searchQuery ) {
 				e.preventDefault();
 				e.stopPropagation();
 				clearSearch();
-				const modal = /** @type {HTMLElement|null} */ (
-					document.querySelector( '.components-modal__frame' )
-				);
-				if ( modal ) {
-					modal.focus();
-				}
 				return;
 			}
 

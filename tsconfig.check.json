@@ -37,7 +37,8 @@
   },
   "include": [
     "src/**/*.js",
-    "types/**/*.d.ts"
+    "types/**/*.d.ts",
+    "../newspack-nodes/types/react-inert.d.ts"
   ],
   "exclude": [
     "**/__tests__/**",

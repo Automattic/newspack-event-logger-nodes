@@ -349,12 +349,20 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => true,
 } ) );
 
-// Stub RuleEditModal: capture props to assert prefill + drive onSave.
+// Stub RuleEditModal: capture props to assert prefill + drive onSave. Its
+// handle's close records that the close came through it, then cancels.
 jest.mock( '../../rules/RuleEditModal', () => ( {
 	__esModule: true,
-	default: ( props ) => {
+	default: function RuleEditStub( props ) {
 		const React = require( 'react' );
 		globalThis.__ruleEditProps = props;
+		React.useImperativeHandle( props.handleRef, () => ( {
+			close: () => {
+				globalThis.__ruleEditClosedThroughHandle = true;
+				props.onCancel();
+			},
+			closeWith: ( run ) => run(),
+		} ) );
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'rule-edit-modal' },
@@ -364,7 +372,31 @@ jest.mock( '../../rules/RuleEditModal', () => ( {
 	},
 } ) );
 
-// Modal — render its children inline so we can assert on them.
+// The window renders inline, so `container` holds it; every other dialog is
+// the real shared one. Its props land on `__windowProps`.
+jest.mock( '@newspack-nodes/shared/components/Modal', () => {
+	const React = require( 'react' );
+	const actual = jest.requireActual(
+		'@newspack-nodes/shared/components/Modal'
+	);
+	const Modal = ( props ) => {
+		if ( 'event-logger-performance-modal' !== props.className ) {
+			return React.createElement( actual.default, props );
+		}
+		globalThis.__windowProps = props;
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'modal', className: props.className },
+			React.createElement(
+				actual.ModalTitleId.Provider,
+				{ value: 'window-title' },
+				props.children
+			)
+		);
+	};
+	return { ...actual, __esModule: true, default: Modal };
+} );
+
 jest.mock( '@wordpress/components', () => ( {
 	__esModule: true,
 	Spinner: () => {
@@ -377,27 +409,6 @@ jest.mock( '@wordpress/components', () => ( {
 			'button',
 			{ onClick, disabled, className },
 			children
-		);
-	},
-	Modal: ( {
-		children,
-		title,
-		headerActions,
-		onRequestClose,
-		className,
-	} ) => {
-		const React = require( 'react' );
-		globalThis.__modalOnRequestClose = onRequestClose;
-		return React.createElement(
-			'div',
-			{ 'data-testid': 'modal', className },
-			React.createElement( 'h2', null, title ),
-			React.createElement(
-				'div',
-				{ className: 'components-modal__content' },
-				headerActions,
-				children
-			)
 		);
 	},
 } ) );
@@ -483,7 +494,7 @@ const mountDash = () => {
  * @param {Function} rerender The mount's rerender.
  */
 const closeModal = async ( rerender ) => {
-	act( () => globalThis.__modalOnRequestClose() );
+	act( () => globalThis.__windowProps.onClose() );
 	await act( async () => rerender( dashboard() ) );
 };
 
@@ -523,6 +534,7 @@ describe( 'PerformancePage', () => {
 			( k ) => delete mockCommands[ k ]
 		);
 		globalThis.__ruleEditProps = null;
+		globalThis.__ruleEditClosedThroughHandle = false;
 		mockNavState.deepLink = { requestId: null, subject: null };
 		mockNavState.selectedSubject = null;
 		mockNavState.selectedRequest = null;
@@ -1104,7 +1116,7 @@ describe( 'PerformancePage', () => {
 				setWindowBar( { url_metric: null } );
 				expect( param( 'url_metric' ) ).toBeNull();
 
-				act( () => globalThis.__modalOnRequestClose() );
+				act( () => globalThis.__windowProps.onClose() );
 				await flushEffects();
 				expect( window.location.search ).toBe( '?page=perf' );
 
@@ -1656,9 +1668,6 @@ describe( 'PerformancePage', () => {
 		expect( container.textContent ).toContain( 'req/s' );
 		const modal = container.querySelector( '[data-testid="modal"]' );
 		expect( modal ).toBeTruthy();
-		expect( modal.className ).toBe(
-			'event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
-		);
 		const headerStats = Array.from(
 			modal.querySelectorAll(
 				'.event-logger-header-stats > .newspack-nodes-stat'
@@ -2895,7 +2904,7 @@ describe( 'PerformancePage', () => {
 		const { unmount } = mountDash();
 		await flushEffects();
 		act( () => {
-			globalThis.__modalOnRequestClose();
+			globalThis.__windowProps.onClose();
 		} );
 		expect( mockNavState.selectSubject ).toHaveBeenCalledWith( null );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
@@ -2942,11 +2951,10 @@ describe( 'PerformancePage', () => {
 		unmount();
 	} );
 
-	// @longform The brief is summoned FROM the request-detail modal, so it has
-	// to paint over it. That modal is a `@wordpress/components` one, portaled
-	// to the body on z-index 100000; this dialog renders inside the dashboard's
-	// own root, so document order can never win it and the backdrop — where the
-	// layer lives — carries the class that raises it.
+	// @longform The brief is summoned FROM the request-detail window, so it
+	// has to paint over it. Both are shared dialogs on the body's one modal
+	// layer, and the backdrop — where the layer lives — carries the class that
+	// raises the brief.
 	it( 'raises the assembled brief above the modal that summoned it', async () => {
 		mockNavState.selectedSubject = {
 			field: 'url',
@@ -3168,8 +3176,6 @@ describe( 'PerformancePage', () => {
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( '/foo?' );
 			expect( globalThis.__ruleEditProps.rule.action ).toBe( 'log' );
 			expect( globalThis.__ruleEditProps.rule.id ).toBe( '' );
-			// The modal owns its own skin classes; callers pass none.
-			expect( globalThis.__ruleEditProps.className ).toBeUndefined();
 			unmount();
 		} );
 
@@ -3196,6 +3202,7 @@ describe( 'PerformancePage', () => {
 			expect(
 				container.querySelector( '[data-testid="rule-edit-modal"]' )
 			).toBeNull();
+			expect( globalThis.__ruleEditClosedThroughHandle ).toBe( true );
 			unmount();
 		} );
 
@@ -3271,6 +3278,7 @@ describe( 'PerformancePage', () => {
 			expect(
 				container.querySelector( '[data-testid="rule-edit-modal"]' )
 			).toBeNull();
+			expect( globalThis.__ruleEditClosedThroughHandle ).toBe( true );
 			// Success = button label flips (no status banner).
 			expect( container.textContent ).toContain( 'Edit logging rule' );
 			unmount();
@@ -3568,7 +3576,7 @@ describe( 'PerformancePage', () => {
 			await flushEffects();
 			expect( param( 'page_hash' ) ).toBe( 'd00dfeed6610' );
 
-			act( () => globalThis.__modalOnRequestClose() );
+			act( () => globalThis.__windowProps.onClose() );
 			await flushEffects();
 
 			expect( graphOpts().selectedSubject ).toBeNull();
@@ -3874,6 +3882,28 @@ describe( 'PerformancePage', () => {
 			await act( async () => rerender( dashboard() ) );
 			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
 			expect( globalThis.__urlTableProps.busy ).toBeNull();
+			unmount();
+		} );
+
+		it( 'holds the click on Escape alone, listening for no press', async () => {
+			mockRealNavigation = true;
+			mockView = loadedView();
+			const { unmount } = mountDash();
+			await flushEffects();
+			const listen = jest.spyOn( document, 'addEventListener' );
+			act( () =>
+				globalThis.__urlTableProps.onSelect( {
+					hash: KIWI,
+					url: KIWI_URL,
+					count: 1,
+				} )
+			);
+			await flushEffects();
+			expect( globalThis.__urlTableProps.busy ).not.toBeNull();
+			const events = listen.mock.calls.map( ( [ type ] ) => type );
+			listen.mockRestore();
+			expect( events ).toContain( 'keydown' );
+			expect( events ).not.toContain( 'mousedown' );
 			unmount();
 		} );
 

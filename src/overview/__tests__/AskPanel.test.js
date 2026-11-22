@@ -9,6 +9,7 @@
  * only the wire is stood in for.
  */
 
+import { throughExit } from '@newspack-nodes/shared/test-utils/answerConfirm';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import AskPanel, { AskButton, useAsk } from '../components/AskPanel';
 
@@ -481,14 +482,16 @@ test( 'escape closes the open panel', () => {
 	pick();
 	answer( { result: BRIEF } );
 
-	act( () => {
-		document.dispatchEvent(
-			new window.KeyboardEvent( 'keydown', {
-				key: 'Escape',
-				bubbles: true,
-			} )
-		);
-	} );
+	throughExit( () =>
+		act( () => {
+			document.dispatchEvent(
+				new window.KeyboardEvent( 'keydown', {
+					key: 'Escape',
+					bubbles: true,
+				} )
+			);
+		} )
+	);
 
 	expect( dialog() ).toBeNull();
 } );
@@ -505,9 +508,11 @@ test( 'the brief is headed by the shared header, whose close icon closes it', ()
 	expect( title.textContent ).toBe( 'About this span' );
 	expect( dialog().hasAttribute( 'aria-label' ) ).toBe( false );
 	expect( dialog().getAttribute( 'aria-labelledby' ) ).toBe( title.id );
-	act( () => {
-		header.querySelector( 'button[aria-label="Cerrar"]' ).click();
-	} );
+	throughExit( () =>
+		act( () => {
+			header.querySelector( 'button[aria-label="Cerrar"]' ).click();
+		} )
+	);
 
 	expect( dialog() ).toBeNull();
 } );

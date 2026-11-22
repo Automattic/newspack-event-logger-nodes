@@ -26,20 +26,19 @@
  * which is the only thing telling `upsert` which entry this edit replaces.
  */
 
-import { useId, useState } from '@wordpress/element';
+import { useId, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	BaseControl,
 	useBaseControlProps,
-	Modal,
 	TextControl,
 	SelectControl,
 	CheckboxControl,
 	VisuallyHidden,
 } from '@wordpress/components';
 
+import Modal, { ModalHeader } from '@newspack-nodes/shared/components/Modal';
 import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
-import { SKIN_ROOT_CLASSES } from '@newspack-nodes/shared/components/ThemedRoot';
 import HookSelectorModal, {
 	PLUGIN_TIME_HOOKS,
 } from '../settings/settings/HookSelectorModal';
@@ -47,17 +46,6 @@ import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorMo
 import TagInputField from '../settings/settings/TagInputField';
 
 import './rule-edit-modal.scss';
-
-/**
- * Every skin class this modal's own stylesheet needs.
- *
- * `rule-edit-modal.scss` gates a whole layout block on
- * `.newspack-nodes-skin-root` — flex column, 600px wide, scrolling content — so
- * that class is structure, not decoration a caller opts into. Leaving it to the
- * optional `className` gives the same modal two layouts, one per tree that
- * mounts it.
- */
-const SKIN_CLASSES = `event-logger-rule-edit-modal newspack-nodes-modal ${ SKIN_ROOT_CLASSES }`;
 
 /**
  * Parse one numeric field, reading a blank or unparseable value as 0.
@@ -149,12 +137,15 @@ function RuleSwitch( { name, label, help, checked, onChange } ) {
  * passes one only once the draft has an id. The button that appears arms a
  * confirm on its first click rather than stacking a second modal over this one.
  *
- * @param {Object}                  props             Component props.
- * @param {Object}                  props.rule        The rule draft to edit, in `Rule::to_array()`'s wire shape; an empty `id` titles the modal "Add rule".
- * @param {(draft: Object) => void} props.onSave      Called with the assembled draft once the pattern validates.
- * @param {() => void}              props.onCancel    Dismiss handler (Cancel / ESC / backdrop).
- * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitting it hides the delete button.
- * @param {string}                  [props.className] EXTRA class names; the modal supplies its own skin classes.
+ * The owner closes the editor once its write is answered, through
+ * `handleRef`, so that close plays the exit as Cancel's does.
+ *
+ * @param {Object}                                                                    props             Component props.
+ * @param {Object}                                                                    props.rule        The rule draft to edit, in `Rule::to_array()`'s wire shape; an empty `id` titles the modal "Add rule".
+ * @param {(draft: Object) => void}                                                   props.onSave      Called with the assembled draft once the pattern validates.
+ * @param {() => void}                                                                props.onCancel    Runs once a close (Cancel, ESC, backdrop, the header's close, the handle) has played the exit.
+ * @param {(() => void)|undefined}                                                    [props.onDelete]  Delete handler; omitting it hides the delete button.
+ * @param {{current: ?import('@newspack-nodes/shared/hooks/useDialog').DialogHandle}} [props.handleRef] Takes the editor's animated close.
  * @return {import('react').ReactElement} The modal.
  */
 export default function RuleEditModal( {
@@ -162,8 +153,10 @@ export default function RuleEditModal( {
 	onSave,
 	onCancel,
 	onDelete,
-	className = '',
+	handleRef,
 } ) {
+	const ownHandle = useRef( null );
+	const handle = handleRef ?? ownHandle;
 	const [ pattern, setPattern ] = useState( rule?.pattern ?? '' );
 	const [ action, setAction ] = useState(
 		/** @type {'log'|'skip'} */ ( 'skip' === rule?.action ? 'skip' : 'log' )
@@ -310,14 +303,18 @@ export default function RuleEditModal( {
 
 	return (
 		<Modal
-			title={
-				rule?.id
-					? __( 'Edit rule', 'newspack-event-logger-nodes' )
-					: __( 'Add rule', 'newspack-event-logger-nodes' )
-			}
-			onRequestClose={ onCancel }
-			className={ `${ SKIN_CLASSES } ${ className }`.trim() }
+			onClose={ onCancel }
+			handleRef={ handle }
+			className="event-logger-rule-edit-modal"
 		>
+			<ModalHeader
+				title={
+					rule?.id
+						? __( 'Edit rule', 'newspack-event-logger-nodes' )
+						: __( 'Add rule', 'newspack-event-logger-nodes' )
+				}
+				closeLabel={ __( 'Close', 'newspack-event-logger-nodes' ) }
+			/>
 			<form { ...submitProps( handleSave ) }>
 				<div className="rule-edit-body">
 					<TextControl
@@ -744,7 +741,7 @@ export default function RuleEditModal( {
 					<button
 						type="button"
 						className="button"
-						onClick={ onCancel }
+						onClick={ () => handle.current.close() }
 					>
 						{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
 					</button>
@@ -760,14 +757,12 @@ export default function RuleEditModal( {
 				selected={ hooks }
 				onSelect={ setHooks }
 				mode="include"
-				className={ className }
 			/>
 			<CustomEventSelectorModal
 				isOpen={ isCustomOpen }
 				onClose={ () => setIsCustomOpen( false ) }
 				selected={ customEvents }
 				onSelect={ setCustomEvents }
-				className={ className }
 			/>
 		</Modal>
 	);

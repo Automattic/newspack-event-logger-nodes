@@ -278,11 +278,9 @@ export default function AskPanel( { ask } ) {
 		return <AskPageRing active={ active } />;
 	}
 
-	// @longform Summoned FROM the URL and request detail views, which are
-	// `@wordpress/components` modals portalled to the body at 100000. The
-	// shared Modal portals there too, so both sit in the same stacking context
-	// and the raise below is what settles the order between them. The backdrop
-	// is where that layer lives, so it is raised there.
+	// @longform Summoned FROM the URL and request windows, shared dialogs on
+	// the same body layer, so the raise below settles the order between them.
+	// The backdrop is where that layer lives, so it is raised there.
 	return (
 		<Modal backdropClassName="event-logger-ask__backdrop" onClose={ close }>
 			<ModalHeader

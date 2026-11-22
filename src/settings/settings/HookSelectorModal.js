@@ -8,7 +8,7 @@
  * the search filter, the per-category counts and the tree itself.
  */
 
-import { useState, useMemo, useCallback } from '@wordpress/element';
+import { useState, useMemo, useCallback, useRef } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { CheckboxControl, Spinner } from '@wordpress/components';
 
@@ -54,13 +54,12 @@ export const PLUGIN_TIME_HOOKS = window.newspackNodesOwnerTimeEvents || [];
  * Matches" takes every match that is not noisy either way, and counts the
  * ones it would add: those not chosen already.
  *
- * @param {Object}                 props             Component props.
- * @param {boolean}                props.isOpen      Whether the modal is open.
- * @param {() => void}             props.onClose     Close callback.
- * @param {Array}                  props.selected    Hooks the modal opens with; reopening resets to these.
- * @param {(hooks: Array) => void} props.onSelect    Called on Apply with the selected hook names.
- * @param {string}                 props.mode        Title wording: 'exclude' asks which hooks to skip, 'include' which to log.
- * @param {string}                 [props.className] Extra classes for the modal frame (skin theming).
+ * @param {Object}                 props          Component props.
+ * @param {boolean}                props.isOpen   Whether the modal is open.
+ * @param {() => void}             props.onClose  Runs once a close has played the exit.
+ * @param {Array}                  props.selected Hooks the modal opens with; reopening resets to these.
+ * @param {(hooks: Array) => void} props.onSelect Called on Apply with the selected hook names.
+ * @param {string}                 props.mode     Title wording: 'exclude' asks which hooks to skip, 'include' which to log.
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function HookSelectorModal( {
@@ -69,11 +68,11 @@ export default function HookSelectorModal( {
 	selected = [],
 	onSelect,
 	mode = 'exclude',
-	className = '',
 } ) {
 	const [ search, setSearch ] = useState( '' );
 	const [ expandedCategories, setExpandedCategories ] = useState( new Set() );
 	const chosen = useMultiSelect( { selected, isOpen } );
+	const handle = useRef( null );
 
 	// The taxonomy arrives on a batched poll that `isOpen` gates.
 	const {
@@ -203,8 +202,9 @@ export default function HookSelectorModal( {
 					  )
 					: __( 'Select Hooks to Log', 'newspack-event-logger-nodes' )
 			}
-			className={ `event-logger-hook-selector-modal ${ className }`.trim() }
+			className="event-logger-hook-selector-modal"
 			onClose={ onClose }
+			handleRef={ handle }
 			search={ search }
 			onSearch={ setSearch }
 			placeholder={ __( 'Search hooks…', 'newspack-event-logger-nodes' ) }
@@ -260,7 +260,11 @@ export default function HookSelectorModal( {
 					<button
 						type="button"
 						className="button button-primary"
-						onClick={ () => chosen.apply( onSelect, onClose ) }
+						onClick={ () =>
+							chosen.apply( onSelect, () =>
+								handle.current.close()
+							)
+						}
 					>
 						{ sprintf(
 							// translators: %d: number of currently selected hooks.

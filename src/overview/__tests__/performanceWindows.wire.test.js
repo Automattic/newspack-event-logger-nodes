@@ -2,7 +2,8 @@
  * The URL and request windows as composed layouts, on the real graph against
  * the fake command wire: each window's body is its context's stored layout,
  * a curator finds Edit layout in the window's header, and on an edit load
- * the window holds its context's editor, which a leave asks about first.
+ * the window holds its context's editor, which a leave asks about first. The
+ * rule editor the URL window opens is a dialog of its own above it.
  */
 
 import { useEffect } from '@wordpress/element';
@@ -23,6 +24,13 @@ import {
 	contextOf,
 	localizeComposedPage,
 } from '../../test-helpers/localizeComposedPage';
+import { MODAL_EXIT_MS } from '@newspack-nodes/shared/hooks/useModalExit';
+import { throughExit } from '@newspack-nodes/shared/test-utils/answerConfirm';
+import {
+	compileLocal,
+	compileShared,
+	resolved,
+} from '../../test-helpers/cascade';
 import { PERFORMANCE_PAGES } from '../performancePageData';
 import Page from '../PerformancePage';
 
@@ -83,7 +91,7 @@ async function ticks( count ) {
  * @return {string[]} The headings.
  */
 const headings = ( modal ) =>
-	[ ...modal.querySelectorAll( '.components-modal__content h3' ) ].map(
+	[ ...modal.querySelectorAll( '.event-logger-sections h3' ) ].map(
 		( one ) => one.textContent
 	);
 
@@ -225,7 +233,7 @@ it( 'reads the URL window’s subject in a shared stats block laid out on it', a
 	const modal = await windowOn( 'url=a17e' );
 	const tiles = [
 		...modal.querySelectorAll(
-			'.components-modal__content .newspack-nodes-stat-tile'
+			'.event-logger-sections .newspack-nodes-stat-tile'
 		),
 	].map( ( one ) => one.textContent );
 	expect( tiles ).toEqual( [ '700msp95', '1errors' ] );
@@ -285,7 +293,7 @@ it( 'reads a linked Then by repeating its Breakdown as none, and a new Breakdown
 		'url=a17e&url_breakdown=method&url_then=method'
 	);
 	const [ , breakdown, thenBy ] = modal.querySelectorAll(
-		'.components-modal__content select'
+		'.event-logger-sections select'
 	);
 	expect( thenBy.value ).toBe( '' );
 	expect( barParam( 'url_then' ) ).toBeNull();
@@ -319,10 +327,9 @@ it( 'keeps the list’s order off the bar while the window is shut, and back on 
 	);
 	expect( barParam( 'url_sort' ) ).toBe( 'duration_ms' );
 
-	await act( async () => {
-		modal.querySelector( 'button[aria-label="Close"]' ).click();
-		await new Promise( ( resolve ) => setTimeout( resolve, 300 ) );
-	} );
+	throughExit( () =>
+		act( () => modal.querySelector( 'button[aria-label="Close"]' ).click() )
+	);
 	expect(
 		document.body.querySelector( '.event-logger-performance-modal' )
 	).toBeNull();
@@ -395,7 +402,7 @@ it( 'offers a curator Edit layout in each window’s header, and a reader none',
 	localizeComposedPage( 'performance', { canTune: true } );
 	const url = await windowOn( 'url=a17e' );
 	const menu = url.querySelector(
-		'.components-modal__header [aria-label="Layout actions"]'
+		'.newspack-nodes-modal__header-actions [aria-label="Layout actions"]'
 	);
 	expect( menu ).not.toBeNull();
 	// Blocks portal block-level controls into the box the menu closes.
@@ -408,6 +415,167 @@ it( 'offers a curator Edit layout in each window’s header, and a reader none',
 	localizeComposedPage( 'performance' );
 	const read = await windowOn( `url=a17e&request=${ RID }` );
 	expect( read.querySelector( '[aria-label="Layout actions"]' ) ).toBeNull();
+} );
+
+it( 'keeps the window at 95% of the viewport over the shared box', async () => {
+	localizeComposedPage( 'performance' );
+	const style = resolved( await windowOn( 'url=a17e' ), [
+		compileShared( 'components/Modal.scss' ),
+		compileLocal( 'overview/styles/modal.scss' ),
+	] );
+	expect( style.width ).toBe( '95vw' );
+	expect( style[ 'max-width' ] ).toBe( '95vw' );
+	expect( style.height ).toBe( '95vh' );
+	expect( style[ 'max-height' ] ).toBe( '95vh' );
+} );
+
+it( 'heads each window with the shared header, its actions in the shared row', async () => {
+	localizeComposedPage( 'performance', { canTune: true } );
+	const url = await windowOn( 'url=a17e' );
+	const header = url.querySelector(
+		':scope > .newspack-nodes-modal__header'
+	);
+	const actions = header.querySelector(
+		'.newspack-nodes-modal__header-actions'
+	);
+	expect(
+		actions.querySelector( '.event-logger-header-stats' )
+	).not.toBeNull();
+	expect( actions.querySelector( '[data-ask-trigger]' ) ).not.toBeNull();
+	expect( actions.textContent ).toContain( 'Log this URL' );
+	expect(
+		actions.querySelector( '[aria-label="Layout actions"]' )
+	).not.toBeNull();
+	expect(
+		header.querySelector( ':scope > .newspack-nodes-modal__close' )
+	).not.toBeNull();
+	mounted.splice( 0 ).forEach( ( mount ) => mount.unmount() );
+	document.body.innerHTML = '';
+
+	localizeComposedPage( 'performance' );
+	const request = await windowOn( `url=a17e&request=${ RID }` );
+	const requestActions = request.querySelector(
+		':scope > .newspack-nodes-modal__header .newspack-nodes-modal__header-actions'
+	);
+	expect(
+		requestActions.querySelector( '[aria-label="Back to URL details"]' )
+	).not.toBeNull();
+	expect(
+		requestActions.querySelector( '[data-ask-trigger]' )
+	).not.toBeNull();
+	expect(
+		request.querySelector( '.newspack-nodes-modal__title' ).textContent
+	).toBe( `Request: ${ RID }` );
+} );
+
+it( 'abandons an Ask pick on Escape and leaves the URL window open', async () => {
+	localizeComposedPage( 'performance' );
+	const modal = await windowOn( 'url=a17e' );
+	const trigger = modal.querySelector( '[data-ask-trigger]' );
+	act( () => trigger.click() );
+	expect( trigger.getAttribute( 'aria-pressed' ) ).toBe( 'true' );
+
+	throughExit( () =>
+		act( () => {
+			document.dispatchEvent(
+				new window.KeyboardEvent( 'keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				} )
+			);
+		} )
+	);
+
+	expect( trigger.getAttribute( 'aria-pressed' ) ).toBe( 'false' );
+	expect(
+		document.body.querySelector( '.event-logger-performance-modal' )
+	).toBe( modal );
+	expect(
+		modal.closest( '.newspack-nodes-modal__backdrop' ).className
+	).not.toContain( 'is-closing' );
+} );
+
+describe( 'the rule editor over the URL window', () => {
+	/**
+	 * Open the URL window, then its rule editor.
+	 *
+	 * @return {Promise<Element>} The window.
+	 */
+	async function editorOverWindow() {
+		localizeComposedPage( 'performance' );
+		const modal = await windowOn( 'url=a17e' );
+		const logThis = [ ...modal.querySelectorAll( 'button' ) ].find(
+			( one ) => 'Log this URL' === one.textContent
+		);
+		await act( async () => logThis.click() );
+		expect(
+			document.body.querySelector( '.event-logger-rule-edit-modal' )
+		).not.toBeNull();
+		return modal;
+	}
+
+	it( 'closes only the editor on Escape', async () => {
+		await editorOverWindow();
+		throughExit( () =>
+			act( () => {
+				document.dispatchEvent(
+					new window.KeyboardEvent( 'keydown', {
+						key: 'Escape',
+						bubbles: true,
+					} )
+				);
+			} )
+		);
+		expect(
+			document.body.querySelector( '.event-logger-rule-edit-modal' )
+		).toBeNull();
+		expect(
+			document.body.querySelector( '.event-logger-performance-modal' )
+		).not.toBeNull();
+	} );
+
+	it( 'closes the editor through its exit once a save is answered, the window left open', async () => {
+		installFakeCommandWire( ( m ) =>
+			'upsert' === m[ VALUE ]?.name
+				? { rule: { id: 'kea-7953', pattern: '/piwakawaka-7915?' } }
+				: windowReplyFor( m )
+		);
+		await editorOverWindow();
+		const editor = document.body.querySelector(
+			'.event-logger-rule-edit-modal'
+		);
+		const save = [ ...editor.querySelectorAll( 'button' ) ].find(
+			( one ) => 'Save rule' === one.textContent
+		);
+		// Only the exit's timeout is faked; the wire's promises run as ever.
+		jest.useFakeTimers( {
+			doNotFake: [
+				'Date',
+				'nextTick',
+				'queueMicrotask',
+				'setImmediate',
+				'setInterval',
+				'requestAnimationFrame',
+			],
+		} );
+		try {
+			await act( async () => save.click() );
+			await ticks( 2 );
+			expect(
+				editor.closest( '.newspack-nodes-modal__backdrop' ).className
+			).toContain( 'is-closing' );
+			act( () => jest.advanceTimersByTime( MODAL_EXIT_MS ) );
+		} finally {
+			jest.useRealTimers();
+		}
+		expect(
+			document.body.querySelector( '.event-logger-rule-edit-modal' )
+		).toBeNull();
+		expect(
+			document.body.querySelector( '.event-logger-performance-modal' )
+		).not.toBeNull();
+	} );
 } );
 
 it( 'edits a window’s layout on its subject, every other link kept', () => {
@@ -482,9 +650,14 @@ describe( 'on an edit load', () => {
 		);
 		mounted.push( mount );
 		await ticks( 6 );
-		await act( async () => {
-			window.history.back();
-			await new Promise( ( resolve ) => setTimeout( resolve, 50 ) );
+		// Back, as the browser lands it: the earlier entry, then its popstate.
+		act( () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=x'
+			);
+			window.dispatchEvent( new window.PopStateEvent( 'popstate' ) );
 		} );
 		expect( document.body.textContent ).toContain(
 			'Discard your changes to this layout?'
@@ -539,10 +712,11 @@ describe( 'on an edit load', () => {
 
 	it( 'asks before closing a window whose editor holds a change', async () => {
 		const modal = await windowOn( 'url=a17e&edit=url-detail' );
-		await act( async () => {
-			modal.querySelector( 'button[aria-label="Close"]' ).click();
-			await new Promise( ( resolve ) => setTimeout( resolve, 300 ) );
-		} );
+		throughExit( () =>
+			act( () =>
+				modal.querySelector( 'button[aria-label="Close"]' ).click()
+			)
+		);
 		expect( document.body.textContent ).toContain(
 			'Discard your changes to this layout?'
 		);

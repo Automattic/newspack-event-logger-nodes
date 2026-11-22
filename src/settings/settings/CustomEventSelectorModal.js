@@ -7,7 +7,7 @@
  * both places.
  */
 
-import { useState, useMemo } from '@wordpress/element';
+import { useState, useMemo, useRef } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { CheckboxControl } from '@wordpress/components';
 import { useMultiSelect } from '../../hooks/useMultiSelect';
@@ -36,12 +36,11 @@ const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
  * footer numbers ignore the search, because the selection Apply hands back is
  * the whole one — a count of what survived the search would understate it.
  *
- * @param {Object}                  props             Component props.
- * @param {boolean}                 props.isOpen      Whether the modal is open.
- * @param {() => void}              props.onClose     Close callback.
- * @param {Array}                   props.selected    Events the modal opens with; reopening resets to these.
- * @param {(events: Array) => void} props.onSelect    Called on Apply with the selected event names.
- * @param {string}                  [props.className] Extra classes for the modal frame (skin theming).
+ * @param {Object}                  props          Component props.
+ * @param {boolean}                 props.isOpen   Whether the modal is open.
+ * @param {() => void}              props.onClose  Runs once a close has played the exit.
+ * @param {Array}                   props.selected Events the modal opens with; reopening resets to these.
+ * @param {(events: Array) => void} props.onSelect Called on Apply with the selected event names.
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function CustomEventSelectorModal( {
@@ -49,10 +48,10 @@ export default function CustomEventSelectorModal( {
 	onClose,
 	selected = [],
 	onSelect,
-	className = '',
 } ) {
 	const [ search, setSearch ] = useState( '' );
 	const chosen = useMultiSelect( { selected, isOpen } );
+	const handle = useRef( null );
 
 	const allEvents = useMemo( () => Object.keys( CUSTOM_COLORS ), [] );
 
@@ -76,8 +75,9 @@ export default function CustomEventSelectorModal( {
 				'Select Custom Events to Log',
 				'newspack-event-logger-nodes'
 			) }
-			className={ `event-logger-custom-event-modal ${ className }`.trim() }
+			className="event-logger-custom-event-modal"
 			onClose={ onClose }
+			handleRef={ handle }
 			search={ search }
 			onSearch={ setSearch }
 			placeholder={ __(
@@ -103,7 +103,11 @@ export default function CustomEventSelectorModal( {
 					<button
 						type="button"
 						className="button button-primary"
-						onClick={ () => chosen.apply( onSelect, onClose ) }
+						onClick={ () =>
+							chosen.apply( onSelect, () =>
+								handle.current.close()
+							)
+						}
 					>
 						{ sprintf(
 							// translators: %d: number of currently selected events.

@@ -59,7 +59,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-stats-grid',
 		'newspack-nodes-stat',
 		'newspack-nodes-stat-label',
-		'newspack-nodes-modal',
 		'newspack-nodes-status',
 		'is-error',
 	],
@@ -143,9 +142,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table--undivided',
 		'newspack-nodes-status-badge is-pill',
 	],
-	// The frame class rides with the shared chrome; each picker keeps the
-	// canonical roles of what IT renders.
-	'settings/settings/SelectorModal.js': [ 'newspack-nodes-modal' ],
+	// Each picker keeps the canonical roles of what IT renders.
 	'settings/settings/CustomEventSelectorModal.js': [
 		'newspack-nodes-status',
 	],
@@ -155,7 +152,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 	],
 	'rules/RuleEditModal.js': [
 		'newspack-nodes-error-banner',
-		'newspack-nodes-modal',
 		'newspack-nodes-status',
 	],
 };

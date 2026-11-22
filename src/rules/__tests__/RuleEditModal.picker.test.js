@@ -12,6 +12,7 @@ jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 	default: () => null,
 } ) );
 
+import { throughExit } from '@newspack-nodes/shared/test-utils/answerConfirm';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import RuleEditModal from '../RuleEditModal';
 
@@ -72,5 +73,22 @@ describe( 'RuleEditModal — the custom-event picker', () => {
 		} );
 		expect( onSave ).not.toHaveBeenCalled();
 		expect( search() ).toBeTruthy();
+	} );
+
+	test( 'Escape closes the picker alone, leaving the editor open', () => {
+		throughExit( () =>
+			act( () => {
+				document.dispatchEvent(
+					new window.KeyboardEvent( 'keydown', {
+						key: 'Escape',
+						bubbles: true,
+					} )
+				);
+			} )
+		);
+		expect( search() ).toBeNull();
+		expect(
+			document.querySelector( '.event-logger-rule-edit-modal' )
+		).not.toBeNull();
 	} );
 } );
