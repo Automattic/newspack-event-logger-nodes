@@ -474,7 +474,9 @@ test( 'the header icon is the panel’s one Close button', () => {
 			[ 'Close', 'Cerrar' ].includes( b.getAttribute( 'aria-label' ) )
 	);
 	expect( closes ).toHaveLength( 1 );
-	expect( closes[ 0 ].closest( 'header' ) ).not.toBeNull();
+	expect(
+		closes[ 0 ].closest( '.newspack-nodes-modal__header' )
+	).not.toBeNull();
 } );
 
 test( 'escape closes the open panel', () => {
@@ -502,7 +504,7 @@ test( 'the brief is headed by the shared header, whose close icon closes it', ()
 	answer( { result: BRIEF } );
 
 	const header = dialog().querySelector(
-		':scope > header.newspack-nodes-modal__header'
+		':scope > div.newspack-nodes-modal__header'
 	);
 	const title = header.querySelector( 'h2.newspack-nodes-modal__title' );
 	expect( title.textContent ).toBe( 'About this span' );
