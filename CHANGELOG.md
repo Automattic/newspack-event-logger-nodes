@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.0] - 2026-11-22
+
 ### Changed
 
 - **Needs newspack-nodes 2.164.0. Every dialog is the substrate's shared one.** The hook and custom-event pickers, the rule editor and the Performance dashboard's URL and request windows leave `@wordpress/components`' `Modal` for the shared `Modal` and `ModalHeader`: the pickers under the compact header, their search and footer still while the list scrolls under the 85vh cap (70vh for the hook catalog), the rule editor under the regular header, and the windows with their stats, Ask, rule control, back button and layout menu in the header's actions row. Each keeps its width through its own class over the shared box's size: 680px for the custom-event picker, 1100px for the hook catalog, 600px for the rule editor, and 95% of the viewport, wide and tall, for the windows. Every close plays the shared exit: Escape, a click outside, the header's close, a picker's Apply, the editor's Cancel, and the editor closing once its save or delete is answered. Escape and a click outside reach only the topmost dialog, so Escape in the rule editor closes the editor and leaves the URL window open, and Escape in a picker leaves the editor open. Below the floor the plugin goes dormant behind an admin notice naming both versions.
