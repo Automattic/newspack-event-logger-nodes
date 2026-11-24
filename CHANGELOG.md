@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Needs newspack-nodes 2.165.0.** The bundled debug overlay is rebuilt against it, with a force canvas beside the schematic on its Console tab. That canvas asks `dump_metadata -s`, which an older substrate reads as a node name, so the loader's `version_at_least()` floor rises to it.
+
 ## [0.169.1] - 2026-11-22
 
 ### Fixed
