@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.6] - 2026-11-26
+
+### Changed
+
+- **The debug overlay's console carries the force graph of newspack-nodes 2.169.2:** a part of the graph cut off from the rest, or a node joined to nothing, is held beside the rest rather than pushed out to the end of the charge's reach.
+
 ## [0.169.5] - 2026-11-26
 
 ### Changed
