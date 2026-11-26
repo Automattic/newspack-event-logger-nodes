@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.3] - 2026-11-25
+
+### Changed
+
+- **The bundled debug overlay is rebuilt against newspack-nodes 2.167.0.** Its force canvas draws each node as a circle holding its message rate, sized by its share of the highest rate on the canvas, and keeps the graph above the REPL transcript; a press of the canvas clears the selection before it fits the view. The loader's floor stays at 2.165.0, since nothing the overlay asks is newer.
+
 ## [0.169.2] - 2026-11-24
 
 ### Changed
