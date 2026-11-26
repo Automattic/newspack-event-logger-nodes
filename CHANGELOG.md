@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.4] - 2026-11-26
+
+### Changed
+
+- **The debug overlay's console carries the force graph of newspack-nodes 2.169.0:** sink lines that pull, the command interpreter held at the centre, circles sized to their rate written out whole, and the visualizer's colors on the dark skins that take color.
+
 ## [0.169.3] - 2026-11-25
 
 ### Changed
