@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.169.5] - 2026-11-26
+
+### Changed
+
+- **The debug overlay's console carries the force graph of newspack-nodes 2.169.1:** no collision between two nodes and sink lines drawn loose, so it settles into rings again; idle connections visible on the dark skins that take color; and `_stdout` sunk into the command interpreter.
+
 ## [0.169.4] - 2026-11-26
 
 ### Changed
